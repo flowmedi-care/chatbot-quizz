@@ -249,6 +249,39 @@ export async function getQuestionResult(shortId: string): Promise<QuestionResult
   };
 }
 
+export type QuestionRepeatPayload = {
+  shortId: string;
+  creatorName: string;
+  statementText: string | null;
+  statementMediaUrl: string | null;
+  statementMediaMimeType: string | null;
+};
+
+export async function getQuestionForRepeat(shortId: string): Promise<QuestionRepeatPayload | null> {
+  const normalizedId = shortId.toUpperCase();
+  const { data, error } = await supabase
+    .from("questions")
+    .select("short_id, creator_name, statement_text, statement_media_url, statement_media_mime_type")
+    .eq("short_id", normalizedId)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Erro ao buscar questao: ${error.message}`);
+  }
+
+  if (!data) return null;
+
+  const statementText = data.statement_text && String(data.statement_text).trim() ? String(data.statement_text).trim() : null;
+
+  return {
+    shortId: String(data.short_id ?? normalizedId).toUpperCase(),
+    creatorName: data.creator_name ? String(data.creator_name) : "Autor",
+    statementText,
+    statementMediaUrl: data.statement_media_url ?? null,
+    statementMediaMimeType: data.statement_media_mime_type ?? null
+  };
+}
+
 export type RankingEntry = {
   userLabel: string;
   userJid: string;

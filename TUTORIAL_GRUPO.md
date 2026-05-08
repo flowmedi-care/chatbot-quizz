@@ -12,7 +12,8 @@ Este grupo usa um **bot de questões** para treinar com alternativas e ver ranki
 
 | O que fazer | Como |
 |-------------|------|
-| Ver **gabarito e resultado** de uma questão (distribuição, quem acertou, comentário do autor) | Envie: `gabarito` + espaço + **número da questão** (ex.: `gabarito 5`) |
+| Ver **gabarito e resultado** de uma questão (distribuição, quem acertou, comentário do autor) | Envie: `/gabarito` + espaço + **número da questão** (ex.: `/gabarito 5`) |
+| **Repetir o enunciado** (texto/imagem/PDF salvos) | Envie: `/questao` + espaço + número (ex.: `/questao 5`) |
 | Ver **ranking** de quem mais acertou | Envie: `ranking` |
 | Ver o **guia completo** de uso no grupo ou no privado | Envie: `/ajuda` |
 
@@ -58,7 +59,7 @@ A questão é publicada automaticamente no grupo.
 
 ## Resumo rápido
 
-- **Grupo:** `gabarito ID` · `ranking` · **`/ajuda`**
+- **Grupo:** `/gabarito ID` · `ranking` · **`/ajuda`**
 - **Privado:** **`/quiz`** para ligar · **`/quizoff`** para sair · **`/ajuda`** para o guia
 
 Qualquer dúvida, mandem **`/ajuda`** aqui no grupo ou no privado com o bot.

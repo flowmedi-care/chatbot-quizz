@@ -19,6 +19,8 @@ import {
   normalizeInput,
   parseAnswerKeyByType,
   parsePrivateCommand,
+  parseGabaritoCommand,
+  parseRepeatQuestionCommand,
   parseSlashSessionCommand,
   parseTypeSelection
 } from "./message-utils";
@@ -29,6 +31,7 @@ import {
   formatRankingMessage,
   getQuestionResult,
   getRankingForGroup,
+  getQuestionForRepeat,
   getQuizModePrivate,
   insertAnswer,
   getUserAnswer,
@@ -198,6 +201,53 @@ async function sendExplanationMedia(
   });
 }
 
+function mimeToStatementFileExt(mimeType: string): string {
+  if (mimeType.includes("pdf")) return "pdf";
+  if (mimeType.includes("png")) return "png";
+  if (mimeType.includes("jpeg")) return "jpg";
+  if (mimeType.includes("webp")) return "webp";
+  return "bin";
+}
+
+async function repeatQuestionStatement(sock: WASocket, jid: string, shortId: string): Promise<void> {
+  const row = await getQuestionForRepeat(shortId);
+  if (!row) {
+    await sock.sendMessage(jid, { text: `Questao #${shortId.toUpperCase()} nao encontrada.` });
+    return;
+  }
+
+  const header = `Questao #${row.shortId} (repeticao)\nPor: ${row.creatorName}`;
+  const body = row.statementText?.trim() ?? "";
+
+  if (row.statementMediaUrl && row.statementMediaMimeType) {
+    const caption = [header, body].filter(Boolean).join("\n\n");
+    if (row.statementMediaMimeType.startsWith("image/")) {
+      await sock.sendMessage(jid, {
+        image: { url: row.statementMediaUrl },
+        caption
+      });
+      return;
+    }
+
+    await sock.sendMessage(jid, {
+      document: { url: row.statementMediaUrl },
+      mimetype: row.statementMediaMimeType,
+      fileName: `questao-${row.shortId}.${mimeToStatementFileExt(row.statementMediaMimeType)}`,
+      caption
+    });
+    return;
+  }
+
+  if (body) {
+    await sock.sendMessage(jid, { text: `${header}\n\n${body}` });
+    return;
+  }
+
+  await sock.sendMessage(jid, {
+    text: `${header}\n(Sem enunciado armazenado para esta questao.)`
+  });
+}
+
 async function startBot(): Promise<void> {
   if (isStarting) return;
   isStarting = true;
@@ -272,7 +322,15 @@ async function startBot(): Promise<void> {
         if (!msg.key.remoteJid || !msg.message) continue;
 
         const text = extractText(msg);
-        if (msg.key.fromMe && !isSlashSessionCommand(text)) continue;
+        const repeatQuestionCmd = parseRepeatQuestionCommand(text);
+        if (
+          msg.key.fromMe &&
+          !isSlashSessionCommand(text) &&
+          !repeatQuestionCmd &&
+          !parseGabaritoCommand(text)
+        ) {
+          continue;
+        }
 
         const remoteJid = msg.key.remoteJid;
         const fromGroup = remoteJid.endsWith("@g.us");
@@ -285,6 +343,11 @@ async function startBot(): Promise<void> {
         console.log(
           `[msg] tipo=${messageKind} remote=${remoteJid} sender=${sender} id=${messageId} texto="${text || "(sem texto)"}"`
         );
+
+        if (repeatQuestionCmd && (fromGroup || fromPrivate)) {
+          await repeatQuestionStatement(sock, remoteJid, repeatQuestionCmd.shortId);
+          continue;
+        }
 
         if (fromPrivate) {
           const quizEnabled = await getQuizModePrivate(sender);

@@ -9,7 +9,7 @@ Fluxo MVP implementado:
 - Bot salva no Supabase, gera ID curto e publica no grupo configurado
 - Usuarios respondem no privado (`a 182`, `c 182` etc.)
 - Apenas 1 resposta por usuario por questao
-- Comando `gabarito 182` funciona no grupo e no privado
+- Comando `/gabarito 182` funciona no grupo e no privado
 
 ## 1) Requisitos
 
@@ -75,7 +75,7 @@ No primeiro start:
 | **Grupo** | Mostra o **mesmo guia** no chat do grupo. |
 | **Privado** (modo ligado) | Guia completo. |
 
-Com o modo **desligado**, no privado o bot **nao responde** a nada exceto `/quiz`. No grupo, `gabarito`, `ranking` e `/ajuda` estao sempre disponiveis.
+Com o modo **desligado**, no privado o bot **nao responde** a nada exceto `/quiz`. No grupo, `/gabarito`, `ranking` e `/ajuda` estao sempre disponiveis.
 
 ### Criar questao (privado, com modo quiz ativo)
 
@@ -104,9 +104,13 @@ Com o modo **desligado**, no privado o bot **nao responde** a nada exceto `/quiz
 - No privado: usa o grupo configurado em `TARGET_GROUP_JIDS`.
 - Ordena por quantidade de acertos (maior primeiro).
 
+### Repetir enunciado (grupo ou privado)
+
+- `/questao 182` ou `questao 182` — republica o enunciado salvo (texto e/ou midia), independente do modo `/quiz` no privado.
+
 ### Resultado completo (grupo ou privado)
 
-- `gabarito 182`
+- `/gabarito 182` (sem slash `gabarito 182` ainda funciona)
 - Retorna:
   - gabarito correto
   - distribuicao de respostas

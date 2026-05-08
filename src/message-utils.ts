@@ -61,6 +61,22 @@ export function isSlashSessionCommand(text: string): boolean {
   return parseSlashSessionCommand(text) !== null;
 }
 
+/** Ver resultado completo: /gabarito 5 (aceita tambem gabarito 5 sem slash) */
+export function parseGabaritoCommand(text: string): string | null {
+  const normalized = normalizeInput(text.trim());
+  const m =
+    normalized.match(/^\/gabarito\s+([a-z0-9]+)$/i) ?? normalized.match(/^gabarito\s+([a-z0-9]+)$/i);
+  return m ? m[1].toUpperCase() : null;
+}
+
+/** Repetir enunciado salvo: /questao 5 ou questao 7B */
+export function parseRepeatQuestionCommand(text: string): { shortId: string } | null {
+  const t = text.trim();
+  const m = t.match(/^\/questao\s+([a-z0-9]+)$/i) ?? t.match(/^questao\s+([a-z0-9]+)$/i);
+  if (!m) return null;
+  return { shortId: m[1].toUpperCase() };
+}
+
 export function hasSupportedMedia(msg: WAMessage): boolean {
   return Boolean(msg.message?.imageMessage) || Boolean(msg.message?.documentMessage);
 }
@@ -90,9 +106,9 @@ export function parsePrivateCommand(text: string):
     };
   }
 
-  const answerKeyMatch = normalized.match(/^gabarito\s+([a-z0-9]+)$/i);
-  if (answerKeyMatch) {
-    return { kind: "answer_key", questionId: answerKeyMatch[1].toUpperCase() };
+  const gabaritoId = parseGabaritoCommand(text);
+  if (gabaritoId) {
+    return { kind: "answer_key", questionId: gabaritoId };
   }
 
   return { kind: "unknown" };
