@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Papa Vagas — Quiz</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/css/site.css" />
+  </head>
+  <body>
+    <div class="wrap">
+      <header class="hero">
+        <h1>Papa Vagas</h1>
+        <p>
+          Quiz do grupo — ranking geral e banco de questões. Responda, veja o gabarito e o comentário do
+          autor.
+        </p>
+      </header>
+
+      <div id="load-error" class="error-banner hidden" role="alert"></div>
+
+      <section class="panel">
+        <h2><span class="badge">Ranking</span> Geral</h2>
+        <p id="ranking-warning" class="empty-state hidden"></p>
+        <div id="ranking-podium" class="ranking-podium"></div>
+        <div id="ranking-table-wrap" class="table-wrap">
+          <table class="ranking-table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Participante</th>
+                <th>Acertos</th>
+              </tr>
+            </thead>
+            <tbody id="ranking-table-body"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2><span class="badge">Questões</span> Clique para responder</h2>
+        <div id="questions-grid" class="grid-questions"></div>
+      </section>
+
+      <footer class="note">
+        Papa Vagas · o bot WhatsApp roda em servidor próprio; esta página usa as APIs publicadas no Vercel.
+      </footer>
+    </div>
+
+    <div id="modal-overlay" class="modal-overlay" aria-hidden="true">
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+        <div class="modal-header">
+          <div>
+            <h3 id="modal-title"></h3>
+            <p id="modal-author" style="margin: 0.25rem 0 0; font-size: 0.9rem; color: var(--muted)"></p>
+          </div>
+          <button type="button" id="modal-close" class="btn-close" aria-label="Fechar">×</button>
+        </div>
+        <div id="modal-statement" class="statement-box"></div>
+        <div id="modal-choices" class="choice-grid"></div>
+        <div id="modal-feedback" class="feedback hidden"></div>
+        <button type="button" id="modal-reveal-btn" class="btn-reveal hidden">
+          Ver gabarito e comentário do autor
+        </button>
+        <div id="modal-reveal-box" class="reveal-box hidden">
+          <h4>Resolução</h4>
+          <div id="modal-gabarito" class="gabarito-line"></div>
+          <div id="modal-comment" class="comment"></div>
+          <div id="modal-comment-media"></div>
+        </div>
+      </div>
+    </div>
+
+    <script src="/js/app.js" defer></script>
+  </body>
+</html>
