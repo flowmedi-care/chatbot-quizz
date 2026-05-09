@@ -51,6 +51,7 @@ Notas:
 - Com **um** JID apenas, esse é o grupo do quiz.
 - Opcional: `AUTO_GABARITO_WHEN_ALL=false` desliga o envio **automatico** do `/gabarito` no grupo quando o fechamento por **engajamento** aconteceria (ver abaixo).
 - Tabela `group_member_engagement` no Supabase: rode o SQL em `supabase-migration-engagement.sql` se ainda nao existir.
+- Depois rode `supabase-migration-engagement-quiz-display-name.sql` para a coluna `quiz_display_name` (nome gravado ao responder/criar questao).
 
 ## 5) Rodar em desenvolvimento
 

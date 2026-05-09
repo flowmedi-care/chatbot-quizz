@@ -95,13 +95,96 @@ export async function createQuestion(input: CreateQuestionInput): Promise<{ shor
     throw new Error(`Erro ao atualizar short_id: ${updateError.message}`);
   }
 
+  try {
+    await persistEngagementQuizDisplayName(input.targetGroupJid, input.creatorJid, input.creatorName);
+  } catch (e) {
+    console.warn("[engagement] quiz_display_name (criador):", (e as Error).message);
+  }
+
   return { shortId };
+}
+
+function looksLikeRawJidLabel(s: string): boolean {
+  const t = s.trim();
+  if (!t) return true;
+  if (/^\d{8,}$/.test(t)) return true;
+  return false;
+}
+
+function isBetterQuizDisplayName(current: string | null | undefined, candidate: string): boolean {
+  const c = candidate.trim();
+  if (!c || looksLikeRawJidLabel(c)) return false;
+  if (current == null || !String(current).trim()) return true;
+  const cur = String(current).trim();
+  if (looksLikeRawJidLabel(cur)) return true;
+  return c.length > cur.length;
+}
+
+/** Grava nome legível na tabela de engajamento (linha precisa existir ou é criada sem user_label até o /sync-membros). */
+export async function persistEngagementQuizDisplayName(
+  groupJid: string,
+  userJid: string,
+  candidateName: string
+): Promise<void> {
+  const c = candidateName.trim();
+  if (!c || looksLikeRawJidLabel(c)) return;
+
+  const { data: row, error: readErr } = await supabase
+    .from("group_member_engagement")
+    .select("engaged, quiz_display_name, user_label")
+    .eq("group_jid", groupJid)
+    .eq("user_jid", userJid)
+    .maybeSingle();
+
+  if (readErr) {
+    const msg = readErr.message.toLowerCase();
+    if (msg.includes("column") && msg.includes("does not exist")) return;
+    if (msg.includes("relation") && msg.includes("does not exist")) return;
+    throw new Error(`Erro ao ler engajamento para nome: ${readErr.message}`);
+  }
+
+  const currentName = row?.quiz_display_name != null ? String(row.quiz_display_name) : null;
+  if (row && !isBetterQuizDisplayName(currentName, c)) return;
+
+  const engaged = row ? Boolean(row.engaged) : false;
+  const userLabel = row?.user_label != null ? row.user_label : null;
+  const ts = new Date().toISOString();
+
+  if (row) {
+    const { error } = await supabase
+      .from("group_member_engagement")
+      .update({ quiz_display_name: c, updated_at: ts })
+      .eq("group_jid", groupJid)
+      .eq("user_jid", userJid);
+
+    if (error) {
+      const em = error.message.toLowerCase();
+      if (em.includes("column") && em.includes("does not exist")) return;
+      throw new Error(`Erro ao gravar nome no engajamento: ${error.message}`);
+    }
+    return;
+  }
+
+  const { error: insErr } = await supabase.from("group_member_engagement").insert({
+    group_jid: groupJid,
+    user_jid: userJid,
+    user_label: userLabel,
+    engaged,
+    quiz_display_name: c,
+    updated_at: ts
+  });
+
+  if (insErr) {
+    const em = insErr.message.toLowerCase();
+    if (em.includes("column") && em.includes("does not exist")) return;
+    throw new Error(`Erro ao criar linha de engajamento com nome: ${insErr.message}`);
+  }
 }
 
 export async function insertAnswer(input: AnswerInput): Promise<void> {
   const { data: question, error: findError } = await supabase
     .from("questions")
-    .select("id, question_type")
+    .select("id, question_type, target_group_jid, group_jid")
     .eq("short_id", input.questionShortId.toUpperCase())
     .maybeSingle();
 
@@ -130,6 +213,15 @@ export async function insertAnswer(input: AnswerInput): Promise<void> {
     }
     throw new Error(`Erro ao salvar resposta: ${error.message}`);
   }
+
+  const gj = question.target_group_jid || question.group_jid;
+  if (gj) {
+    try {
+      await persistEngagementQuizDisplayName(String(gj), input.userJid, input.userName);
+    } catch (e) {
+      console.warn("[engagement] quiz_display_name:", (e as Error).message);
+    }
+  }
 }
 
 export async function getUserAnswer(
@@ -154,7 +246,7 @@ export async function getUserAnswer(
 export async function updateUserAnswer(input: AnswerInput): Promise<void> {
   const { data: question, error: findError } = await supabase
     .from("questions")
-    .select("id")
+    .select("id, target_group_jid, group_jid")
     .eq("short_id", input.questionShortId.toUpperCase())
     .maybeSingle();
 
@@ -195,6 +287,15 @@ export async function updateUserAnswer(input: AnswerInput): Promise<void> {
     });
     if (insErr) {
       throw new Error(`Erro ao gravar resposta (fallback): ${insErr.message}`);
+    }
+  }
+
+  const gj = question.target_group_jid || question.group_jid;
+  if (gj) {
+    try {
+      await persistEngagementQuizDisplayName(String(gj), input.userJid, input.userName);
+    } catch (e) {
+      console.warn("[engagement] quiz_display_name:", (e as Error).message);
     }
   }
 }
@@ -456,6 +557,7 @@ export async function setQuizModePrivate(userJid: string, enabled: boolean): Pro
 export type GroupMemberEngagementRow = {
   userJid: string;
   userLabel: string | null;
+  quizDisplayName: string | null;
   engaged: boolean;
   updatedAt: string | null;
 };
@@ -501,7 +603,7 @@ export async function getEngagedUserJidsForGroup(groupJid: string): Promise<stri
 export async function listGroupMembersEngagementRows(groupJid: string): Promise<GroupMemberEngagementRow[]> {
   const { data, error } = await supabase
     .from("group_member_engagement")
-    .select("user_jid, user_label, engaged, updated_at")
+    .select("user_jid, user_label, quiz_display_name, engaged, updated_at")
     .eq("group_jid", groupJid)
     .order("user_label", { ascending: true, nullsFirst: false });
 
@@ -512,6 +614,7 @@ export async function listGroupMembersEngagementRows(groupJid: string): Promise<
   return (data ?? []).map((r) => ({
     userJid: String(r.user_jid),
     userLabel: r.user_label ? String(r.user_label) : null,
+    quizDisplayName: r.quiz_display_name != null ? String(r.quiz_display_name) : null,
     engaged: Boolean(r.engaged),
     updatedAt: r.updated_at ? String(r.updated_at) : null
   }));
@@ -536,12 +639,14 @@ export async function upsertGroupMembersFromSync(
   for (const m of members) {
     const { data: existing } = await supabase
       .from("group_member_engagement")
-      .select("engaged")
+      .select("engaged, quiz_display_name")
       .eq("group_jid", groupJid)
       .eq("user_jid", m.userJid)
       .maybeSingle();
 
     const engaged = existing ? Boolean(existing.engaged) : false;
+    const quizDisplayName =
+      existing && existing.quiz_display_name != null ? String(existing.quiz_display_name) : null;
 
     const { error } = await supabase.from("group_member_engagement").upsert(
       {
@@ -549,6 +654,7 @@ export async function upsertGroupMembersFromSync(
         user_jid: m.userJid,
         user_label: m.userLabel || null,
         engaged,
+        quiz_display_name: quizDisplayName,
         updated_at: new Date().toISOString()
       },
       { onConflict: "group_jid,user_jid" }

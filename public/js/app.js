@@ -50,7 +50,7 @@
 
   let currentShortId = null;
   let submitPayload = null;
-  /** @type {{ userJid: string, userLabel: string | null, engaged: boolean }[]} */
+  /** @type {{ userJid: string, userLabel: string | null, displayLabel?: string | null, engaged: boolean }[]} */
   let engagementMembersCache = [];
 
   async function fetchJson(url, options = {}) {
@@ -675,7 +675,9 @@
       <li class="engagement-row" data-jid="${escAttr(m.userJid)}">
         <label class="engagement-label">
           <input type="checkbox" class="engagement-cb" ${m.engaged ? "checked" : ""} aria-label="Engajado" />
-          <span class="engagement-name">${esc(m.userLabel || m.userJid)}</span>
+          <span class="engagement-name" title="${escAttr(m.userJid)}">${esc(
+          m.displayLabel || m.userLabel || m.userJid
+        )}</span>
         </label>
       </li>`
       )
@@ -723,12 +725,17 @@
     const want = cb.checked;
     cb.disabled = true;
     try {
-      await fetchJson(API.engagement, {
+      const patchRes = await fetchJson(API.engagement, {
         method: "PATCH",
         body: JSON.stringify({ userJid: jid, engaged: want })
       });
       const m = engagementMembersCache.find((x) => x.userJid === jid);
-      if (m) m.engaged = want;
+      if (m) {
+        m.engaged = want;
+        if (patchRes.member && patchRes.member.displayLabel) {
+          m.displayLabel = patchRes.member.displayLabel;
+        }
+      }
       if (els.engagementStatus && !els.engagementStatus.textContent.startsWith("Carregando")) {
         const n = engagementMembersCache.filter((x) => x.engaged).length;
         els.engagementStatus.textContent = `${engagementMembersCache.length} participante(s), ${n} engajado(s).`;
