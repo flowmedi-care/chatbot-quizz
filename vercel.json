@@ -2,5 +2,6 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "buildCommand": "npm run build",
   "outputDirectory": "public",
-  "installCommand": "npm install"
+  "installCommand": "npm install",
+  "rewrites": [{ "source": "/tutorial", "destination": "/tutorial/index.html" }]
 }

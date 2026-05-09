@@ -16,7 +16,8 @@
     <div class="wrap">
       <header class="hero">
         <div class="hero-toolbar" aria-label="Atalhos">
-          <a href="/tutorial.html" class="btn-tutorial">Como usar</a>
+          <a href="/tutorial" class="btn-tutorial">Como usar</a>
+          <button type="button" id="btn-report-open" class="btn-tutorial">Relatório</button>
         </div>
         <h1>Papa Vagas</h1>
         <p>
@@ -47,6 +48,19 @@
 
       <section class="panel">
         <h2><span class="badge">Questões</span> Clique para responder</h2>
+        <div id="questions-filters" class="questions-filters hidden">
+          <div class="filters-row">
+            <label class="filter-field">
+              <span>Pessoa</span>
+              <select id="filter-person" aria-label="Filtrar por pessoa"></select>
+            </label>
+            <label class="filter-field">
+              <span>Resultado</span>
+              <select id="filter-outcome" aria-label="Filtrar por acerto ou erro"></select>
+            </label>
+          </div>
+          <p id="filters-hint" class="filters-hint"></p>
+        </div>
         <div id="questions-grid" class="grid-questions"></div>
       </section>
 
@@ -79,6 +93,28 @@
       </div>
     </div>
 
+    <div id="report-overlay" class="modal-overlay" aria-hidden="true">
+      <div class="modal modal-report" role="dialog" aria-modal="true" aria-labelledby="report-title">
+        <div class="modal-header">
+          <div>
+            <h3 id="report-title">Gerar relatório</h3>
+            <p class="report-sub">
+              Markdown + pasta <code>midias/</code> no ZIP. Inclui gabarito, o que cada um marcou (via WhatsApp) e
+              referência a arquivos de imagem/PDF quando existirem.
+            </p>
+          </div>
+          <button type="button" id="report-close" class="btn-close" aria-label="Fechar">×</button>
+        </div>
+        <label class="report-field">
+          <span>Participante no relatório</span>
+          <select id="report-person" aria-label="Escopo do relatório"></select>
+        </label>
+        <p id="report-status" class="report-status" role="status" aria-live="polite"></p>
+        <button type="button" id="report-generate" class="btn-reveal">Baixar ZIP</button>
+      </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js" crossorigin="anonymous"></script>
     <script src="/js/app.js" defer></script>
   </body>
 </html>

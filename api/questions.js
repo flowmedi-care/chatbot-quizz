@@ -1,4 +1,4 @@
-const { getClient, applyCors } = require("./_lib.js");
+const { getClient, applyCors, pickTargetGroupJid, fetchQuestionsForGroup } = require("./_lib.js");
 
 module.exports = async (req, res) => {
   applyCors(res);
@@ -6,16 +6,16 @@ module.exports = async (req, res) => {
   if (req.method !== "GET") return res.status(405).json({ error: "Method not allowed" });
 
   try {
-    const supabase = getClient();
-    const { data, error } = await supabase
-      .from("questions")
-      .select(
-        "short_id, creator_name, statement_text, question_type, created_at, statement_media_url, statement_media_mime_type"
-      )
-      .order("created_at", { ascending: false })
-      .limit(100);
+    const groupJid = pickTargetGroupJid();
+    if (!groupJid) {
+      return res.status(200).json({
+        questions: [],
+        warning: "TARGET_GROUP_JIDS nao configurado no Vercel."
+      });
+    }
 
-    if (error) throw error;
+    const supabase = getClient();
+    const data = (await fetchQuestionsForGroup(supabase, groupJid)).slice(0, 100);
 
     const questions = (data || []).map((row) => ({
       shortId: String(row.short_id || "").toUpperCase(),
