@@ -20,7 +20,191 @@
           Quiz do grupo — ranking geral e banco de questões. Responda, veja o gabarito e o comentário do
           autor.
         </p>
+        <p class="hero-sub">
+          <a href="#como-usar">Ver tutorial passo a passo</a>
+          — como usar o WhatsApp, criar questões e comandos.
+        </p>
       </header>
+
+      <section class="panel tutorial-panel" id="como-usar" aria-labelledby="tutorial-heading">
+        <h2 id="tutorial-heading"><span class="badge">Guia</span> Como usar o quiz</h2>
+        <p class="tutorial-lead">
+          Tudo funciona em duas frentes: o <strong>WhatsApp</strong> (bot que cria questões, recebe respostas e
+          publica no grupo) e <strong>esta página</strong> (ranking e questões para responder no navegador). Leia
+          na ordem ou use o índice abaixo.
+        </p>
+
+        <nav class="tutorial-toc" aria-label="Índice do tutorial">
+          <a href="#tutorial-inicio">1. Iniciar o chat com o bot</a>
+          <a href="#tutorial-criar">2. Criar uma questão</a>
+          <a href="#tutorial-responder-wa">3. Responder pelo WhatsApp</a>
+          <a href="#tutorial-site">4. Usar esta página (ranking e questões)</a>
+          <a href="#tutorial-comandos">5. Todos os comandos</a>
+          <a href="#tutorial-grupo">6. No grupo do WhatsApp</a>
+        </nav>
+
+        <article class="tutorial-block" id="tutorial-inicio">
+          <h3>1. Iniciar o chat com o bot (privado)</h3>
+          <p>
+            O bot só interpreta comandos de quiz quando você <strong>ativa o modo</strong> no seu WhatsApp
+            pessoal. Assim suas mensagens normais não viram comando por engano.
+          </p>
+          <ol class="tutorial-steps">
+            <li>
+              Abra uma conversa <strong>no privado</strong> com o número do bot (o mesmo que publica no grupo).
+            </li>
+            <li>
+              Envie <code>/quiz</code>. O bot confirma e liga o modo; a partir daí ele entende criação de questões,
+              respostas e comandos de ajuda neste chat.
+            </li>
+            <li>
+              Para ver o guia de novo a qualquer momento: <code>/ajuda</code> ou a palavra <code>guia</code>.
+            </li>
+            <li>
+              Para <strong>voltar ao chat normal</strong> (sem o bot interpretar tudo): envie
+              <code>/quizoff</code>. Com o modo desligado, no privado só <code>/quiz</code> é respondido — útil
+              quando você só quer conversar.
+            </li>
+          </ol>
+          <aside class="tutorial-tip">
+            <strong>Dica:</strong> No <strong>grupo</strong>, qualquer pessoa pode usar <code>/ajuda</code> para ver
+            o mesmo guia no próprio grupo.
+          </aside>
+        </article>
+
+        <article class="tutorial-block" id="tutorial-criar">
+          <h3>2. Criar uma questão (privado, modo <code>/quiz</code> ligado)</h3>
+          <p>O bot guia você passo a passo. Responda cada etapa no privado.</p>
+          <ol class="tutorial-steps">
+            <li>Envie a frase <code>nova questao</code> (sem aspas).</li>
+            <li>
+              <strong>Tipo de questão:</strong> responda <code>1</code> para múltipla escolha (A–E) ou
+              <code>2</code> para certo ou errado.
+            </li>
+            <li>
+              <strong>Enunciado:</strong> pode ser texto, imagem, print ou PDF — o que o bot pedir, envie na
+              conversa.
+            </li>
+            <li>
+              <strong>Gabarito:</strong>
+              <ul>
+                <li>Múltipla escolha: uma letra <code>A</code>, <code>B</code>, <code>C</code>, <code>D</code> ou
+                  <code>E</code>.</li>
+                <li>Certo ou errado: <code>C</code> (certo) ou <code>E</code> (errado).</li>
+              </ul>
+            </li>
+            <li>
+              <strong>Comentário do autor (opcional):</strong> texto, imagem ou PDF com a resolução; ou envie
+              <code>pular</code> para não incluir.
+            </li>
+          </ol>
+          <p class="tutorial-note">
+            Depois de salvar, a questão ganha um <strong>número curto (ID)</strong>. Esse número aparece no grupo e
+            nas mensagens do bot — use-o para responder e para comandos como <code>/gabarito</code>.
+          </p>
+        </article>
+
+        <article class="tutorial-block" id="tutorial-responder-wa">
+          <h3>3. Responder pelo WhatsApp (privado)</h3>
+          <p>O formato é sempre: <strong>letra + espaço + número da questão</strong> (o ID que o bot mostrou).</p>
+          <ul class="tutorial-list">
+            <li>Múltipla escolha: <code>a 182</code>, <code>b 182</code>, … <code>e 182</code> (exemplo com questão
+              182).</li>
+            <li>Certo/errado: <code>c 182</code> (certo) ou <code>e 182</code> (errado).</li>
+          </ul>
+          <p>
+            Cada pessoa tem <strong>uma resposta por questão</strong>. Se tentar de novo, o bot pergunta se você quer
+            <strong>alterar</strong> a última resposta: responda <code>sim</code> para trocar ou <code>nao</code> para
+            manter.
+          </p>
+        </article>
+
+        <article class="tutorial-block" id="tutorial-site">
+          <h3>4. Usar esta página no navegador</h3>
+          <ol class="tutorial-steps">
+            <li>
+              <strong>Ranking:</strong> na primeira seção você vê o pódio e a tabela com posição, nome e quantidade
+              de acertos (dados do mesmo sistema do bot).
+            </li>
+            <li>
+              <strong>Questões:</strong> na grade abaixo, cada cartão é uma questão publicada. <strong>Clique no
+                cartão</strong> para abrir o enunciado.
+            </li>
+            <li>
+              Dentro da janela, escolha a alternativa (A–E ou certo/errado). O site diz se você acertou e permite
+              abrir o <strong>gabarito oficial</strong> e o <strong>comentário do autor</strong> quando existir.
+            </li>
+          </ol>
+          <aside class="tutorial-tip">
+            Responder aqui e pelo WhatsApp contam para o mesmo tipo de participação no projeto; use o que for mais
+            confortável para você.
+          </aside>
+        </article>
+
+        <article class="tutorial-block" id="tutorial-comandos">
+          <h3>5. Referência de comandos e palavras-chave</h3>
+          <p class="tutorial-table-caption">Privado (com modo quiz ligado), salvo onde indicado.</p>
+          <div class="table-wrap tutorial-table-wrap">
+            <table class="tutorial-table">
+              <thead>
+                <tr>
+                  <th>O que enviar</th>
+                  <th>O que acontece</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><code>/quiz</code></td>
+                  <td>Liga o modo quiz para o seu contato e mostra o guia.</td>
+                </tr>
+                <tr>
+                  <td><code>/quizoff</code></td>
+                  <td>Desliga o modo; mensagens normais deixam de ser comandos.</td>
+                </tr>
+                <tr>
+                  <td><code>/ajuda</code> ou <code>guia</code></td>
+                  <td>Mostra o guia completo de novo.</td>
+                </tr>
+                <tr>
+                  <td><code>nova questao</code></td>
+                  <td>Inicia o assistente para criar uma questão.</td>
+                </tr>
+                <tr>
+                  <td><code>a 182</code> … <code>e 182</code></td>
+                  <td>Responde a questão <strong>182</strong> com a letra indicada (troque pelo número real).</td>
+                </tr>
+                <tr>
+                  <td><code>/questao 182</code> ou <code>questao 182</code></td>
+                  <td>Repete o enunciado salvo (texto/mídia). Funciona também no grupo.</td>
+                </tr>
+                <tr>
+                  <td><code>/gabarito 182</code></td>
+                  <td>Mostra resultado completo: gabarito, estatísticas, quem acertou/errou, comentário. Grupo ou
+                    privado.</td>
+                </tr>
+                <tr>
+                  <td><code>ranking</code></td>
+                  <td>Lista ordenada por acertos. No privado usa o grupo configurado no servidor.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </article>
+
+        <article class="tutorial-block" id="tutorial-grupo">
+          <h3>6. No grupo do WhatsApp</h3>
+          <ul class="tutorial-list">
+            <li><code>/ajuda</code> — mesmo guia, para todos verem.</li>
+            <li><code>ranking</code> — ranking daquele grupo.</li>
+            <li><code>/gabarito</code> + número — resultado da questão.</li>
+            <li><code>/questao</code> + número — repetir o enunciado.</li>
+          </ul>
+          <p class="tutorial-note">
+            Com o modo quiz <strong>desligado</strong> no privado, no grupo esses comandos continuam disponíveis;
+            só o fluxo de criar questão e responder por comando costuma ser no privado com <code>/quiz</code> ativo.
+          </p>
+        </article>
+      </section>
 
       <div id="load-error" class="error-banner hidden" role="alert"></div>
 

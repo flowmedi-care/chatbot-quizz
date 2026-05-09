@@ -1,16 +1,19 @@
 :root {
-  --bg: #0c1222;
-  --bg-card: rgba(255, 255, 255, 0.06);
-  --bg-card-hover: rgba(255, 255, 255, 0.1);
-  --border: rgba(255, 255, 255, 0.08);
-  --text: #f1f5f9;
-  --muted: #94a3b8;
-  --accent: #38bdf8;
-  --accent-dim: rgba(56, 189, 248, 0.15);
-  --success: #34d399;
-  --danger: #fb7185;
+  /* Tema claro pastel inspirado no Claude: creme, pêssego suave, acento terracota */
+  --bg: #faf8f5;
+  --bg-soft: #f3eee6;
+  --bg-card: #ffffff;
+  --bg-card-hover: #fffdfb;
+  --border: rgba(61, 48, 36, 0.12);
+  --text: #292524;
+  --muted: #78716c;
+  --accent: #c2410c;
+  --accent-dim: rgba(194, 65, 12, 0.12);
+  --accent-soft-bg: #fff7ed;
+  --success: #047857;
+  --danger: #be123c;
   --radius: 14px;
-  --shadow: 0 18px 50px rgba(0, 0, 0, 0.35);
+  --shadow: 0 12px 40px rgba(61, 48, 36, 0.08);
   font-family: "Plus Jakarta Sans", system-ui, sans-serif;
 }
 
@@ -23,8 +26,11 @@
 body {
   margin: 0;
   min-height: 100vh;
-  background: radial-gradient(1200px 600px at 10% -10%, rgba(56, 189, 248, 0.18), transparent),
-    radial-gradient(900px 500px at 100% 20%, rgba(167, 139, 250, 0.12), transparent), var(--bg);
+  background:
+    radial-gradient(ellipse 900px 480px at 12% -8%, rgba(255, 237, 213, 0.95), transparent 55%),
+    radial-gradient(ellipse 800px 420px at 88% 15%, rgba(254, 243, 199, 0.65), transparent 50%),
+    radial-gradient(ellipse 700px 400px at 50% 100%, rgba(255, 228, 210, 0.45), transparent 55%),
+    linear-gradient(180deg, var(--bg) 0%, var(--bg-soft) 100%);
   color: var(--text);
   line-height: 1.55;
 }
@@ -55,6 +61,15 @@ header.hero p {
   color: var(--muted);
   margin: 0;
   font-size: 1rem;
+}
+
+header.hero .hero-sub {
+  margin-top: 1rem;
+  font-size: 0.95rem;
+}
+
+header.hero .hero-sub a {
+  font-weight: 600;
 }
 
 .panel {
@@ -95,17 +110,18 @@ header.hero p {
 }
 
 .rank-card {
-  background: rgba(0, 0, 0, 0.25);
+  background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 1rem;
   text-align: center;
   transition: transform 0.15s ease, border-color 0.15s;
+  box-shadow: 0 4px 14px rgba(61, 48, 36, 0.06);
 }
 
 .rank-card:hover {
   transform: translateY(-2px);
-  border-color: rgba(56, 189, 248, 0.35);
+  border-color: rgba(194, 65, 12, 0.28);
 }
 
 .rank-card .place {
@@ -128,16 +144,16 @@ header.hero p {
 }
 
 .rank-card.rank-1 {
-  border-color: rgba(250, 204, 21, 0.45);
-  background: linear-gradient(180deg, rgba(250, 204, 21, 0.12), transparent);
+  border-color: rgba(217, 119, 6, 0.35);
+  background: linear-gradient(180deg, rgba(255, 237, 213, 0.9), var(--bg-card));
 }
 
 .rank-card.rank-2 {
-  border-color: rgba(148, 163, 184, 0.4);
+  border-color: rgba(120, 113, 108, 0.25);
 }
 
 .rank-card.rank-3 {
-  border-color: rgba(180, 83, 9, 0.45);
+  border-color: rgba(194, 65, 12, 0.28);
 }
 
 .table-wrap {
@@ -183,7 +199,7 @@ table.ranking-table th {
 
 .q-card:hover {
   background: var(--bg-card-hover);
-  border-color: rgba(56, 189, 248, 0.25);
+  border-color: rgba(194, 65, 12, 0.22);
   transform: translateY(-2px);
 }
 
@@ -201,7 +217,7 @@ table.ranking-table th {
 
 .q-card .preview {
   font-size: 0.88rem;
-  color: #cbd5e1;
+  color: #57534e;
   display: -webkit-box;
   -webkit-line-clamp: 4;
   -webkit-box-orient: vertical;
@@ -218,22 +234,22 @@ table.ranking-table th {
 .error-banner {
   padding: 1rem;
   border-radius: var(--radius);
-  background: rgba(251, 113, 133, 0.12);
-  border: 1px solid rgba(251, 113, 133, 0.35);
-  color: #fecdd3;
+  background: #fff1f2;
+  border: 1px solid rgba(190, 18, 60, 0.2);
+  color: #9f1239;
   font-size: 0.92rem;
 }
 
 .empty-state.ok {
-  background: rgba(52, 211, 153, 0.1);
-  border-color: rgba(52, 211, 153, 0.35);
-  color: #a7f3d0;
+  background: #ecfdf5;
+  border-color: rgba(4, 120, 87, 0.25);
+  color: #065f46;
 }
 
 .modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(5, 8, 15, 0.82);
+  background: rgba(41, 37, 36, 0.45);
   display: flex;
   align-items: flex-end;
   justify-content: center;
@@ -250,7 +266,7 @@ table.ranking-table th {
 }
 
 .modal {
-  background: #121a2e;
+  background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: calc(var(--radius) + 4px) calc(var(--radius) + 4px) 0 0;
   max-width: 560px;
@@ -258,7 +274,7 @@ table.ranking-table th {
   max-height: min(92vh, 820px);
   overflow-y: auto;
   padding: 1.5rem;
-  box-shadow: 0 -8px 40px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 -12px 48px rgba(61, 48, 36, 0.18);
 }
 
 @media (min-width: 600px) {
@@ -299,11 +315,11 @@ table.ranking-table th {
 }
 
 .statement-box {
-  background: rgba(0, 0, 0, 0.3);
+  background: var(--accent-soft-bg);
   border-radius: var(--radius);
   padding: 1rem;
   margin-bottom: 1rem;
-  border: 1px solid var(--border);
+  border: 1px solid rgba(194, 65, 12, 0.12);
   white-space: pre-wrap;
   font-size: 0.95rem;
 }
@@ -338,7 +354,7 @@ table.ranking-table th {
   height: 2.75rem;
   border-radius: 10px;
   border: 1px solid var(--border);
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--bg-card);
   color: var(--text);
   font-weight: 700;
   font-size: 1rem;
@@ -369,20 +385,20 @@ table.ranking-table th {
 }
 
 .feedback.ok {
-  background: rgba(52, 211, 153, 0.15);
-  border: 1px solid rgba(52, 211, 153, 0.45);
+  background: #ecfdf5;
+  border: 1px solid rgba(4, 120, 87, 0.28);
   color: var(--success);
 }
 
 .feedback.bad {
-  background: rgba(251, 113, 133, 0.12);
-  border: 1px solid rgba(251, 113, 133, 0.4);
-  color: #fda4af;
+  background: #fff1f2;
+  border: 1px solid rgba(190, 18, 60, 0.25);
+  color: #9f1239;
 }
 
 .reveal-box {
-  background: rgba(56, 189, 248, 0.08);
-  border: 1px solid rgba(56, 189, 248, 0.25);
+  background: var(--accent-soft-bg);
+  border: 1px solid rgba(194, 65, 12, 0.2);
   border-radius: var(--radius);
   padding: 1rem;
   margin-top: 0.5rem;
@@ -402,7 +418,7 @@ table.ranking-table th {
 .reveal-box .comment {
   white-space: pre-wrap;
   font-size: 0.9rem;
-  color: #e2e8f0;
+  color: #44403c;
 }
 
 .reveal-box img {
@@ -415,8 +431,8 @@ table.ranking-table th {
   width: 100%;
   padding: 0.85rem 1rem;
   border-radius: var(--radius);
-  border: 1px solid var(--accent);
-  background: linear-gradient(135deg, rgba(56, 189, 248, 0.25), rgba(56, 189, 248, 0.08));
+  border: 1px solid rgba(194, 65, 12, 0.35);
+  background: linear-gradient(135deg, rgba(255, 237, 213, 0.95), #fffdfb);
   color: var(--text);
   font-weight: 600;
   font-size: 0.95rem;
@@ -425,7 +441,8 @@ table.ranking-table th {
 }
 
 .btn-reveal:hover {
-  filter: brightness(1.08);
+  filter: brightness(1.02);
+  border-color: var(--accent);
 }
 
 .hidden {
@@ -442,4 +459,189 @@ footer.note {
   margin-top: 3rem;
   font-size: 0.82rem;
   color: var(--muted);
+}
+
+#como-usar {
+  scroll-margin-top: 1rem;
+}
+
+/* Tutorial em página */
+.tutorial-lead {
+  margin: 0 0 1.25rem;
+  color: var(--muted);
+  font-size: 1rem;
+  max-width: 72ch;
+}
+
+.tutorial-lead strong {
+  color: var(--text);
+}
+
+.tutorial-toc {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.75rem;
+  margin-bottom: 2rem;
+  padding: 1rem 1.1rem;
+  border-radius: var(--radius);
+  background: var(--accent-soft-bg);
+  border: 1px solid rgba(194, 65, 12, 0.12);
+}
+
+.tutorial-toc a {
+  color: var(--accent);
+  font-weight: 600;
+  font-size: 0.88rem;
+  text-decoration: none;
+  padding: 0.35rem 0.6rem;
+  border-radius: 999px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.tutorial-toc a:hover {
+  border-color: rgba(194, 65, 12, 0.35);
+  background: var(--bg-card-hover);
+}
+
+.tutorial-block {
+  padding: 1.35rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.tutorial-block:last-of-type {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.tutorial-block:first-of-type {
+  padding-top: 0.25rem;
+}
+
+.tutorial-block[id] {
+  scroll-margin-top: 1.5rem;
+}
+
+.tutorial-block h3 {
+  margin: 0 0 0.75rem;
+  font-size: 1.08rem;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: -0.02em;
+}
+
+.tutorial-block p {
+  margin: 0 0 0.85rem;
+  color: #44403c;
+  max-width: 75ch;
+}
+
+.tutorial-steps {
+  margin: 0 0 1rem;
+  padding-left: 1.35rem;
+  color: #44403c;
+}
+
+.tutorial-steps li {
+  margin-bottom: 0.5rem;
+}
+
+.tutorial-steps ul {
+  margin: 0.4rem 0 0;
+  padding-left: 1.25rem;
+}
+
+.tutorial-list {
+  margin: 0 0 1rem;
+  padding-left: 1.35rem;
+  color: #44403c;
+}
+
+.tutorial-list li {
+  margin-bottom: 0.45rem;
+}
+
+.tutorial-panel code {
+  font-family: ui-monospace, "Cascadia Code", "Segoe UI Mono", monospace;
+  font-size: 0.88em;
+  font-weight: 600;
+  background: var(--accent-soft-bg);
+  padding: 0.12rem 0.45rem;
+  border-radius: 6px;
+  border: 1px solid rgba(194, 65, 12, 0.18);
+  color: #9a3412;
+}
+
+.tutorial-tip {
+  margin: 1rem 0 0;
+  padding: 0.9rem 1rem;
+  border-radius: var(--radius);
+  background: linear-gradient(135deg, rgba(255, 251, 235, 0.9), var(--bg-card));
+  border: 1px solid rgba(217, 119, 6, 0.22);
+  font-size: 0.92rem;
+  color: #57534e;
+}
+
+.tutorial-tip strong {
+  color: #92400e;
+}
+
+.tutorial-note {
+  margin: 0.75rem 0 0;
+  font-size: 0.9rem;
+  color: var(--muted);
+  font-style: italic;
+}
+
+.tutorial-table-caption {
+  margin: 0 0 0.65rem !important;
+  font-size: 0.9rem !important;
+  color: var(--muted) !important;
+}
+
+.tutorial-table-wrap {
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  box-shadow: 0 2px 12px rgba(61, 48, 36, 0.05);
+}
+
+table.tutorial-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+table.tutorial-table th,
+table.tutorial-table td {
+  padding: 0.7rem 0.85rem;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid var(--border);
+}
+
+table.tutorial-table th {
+  background: var(--accent-soft-bg);
+  color: #57534e;
+  font-weight: 600;
+}
+
+table.tutorial-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+table.tutorial-table code {
+  white-space: nowrap;
+}
+
+@media (max-width: 560px) {
+  .tutorial-toc {
+    flex-direction: column;
+  }
+
+  .tutorial-table-wrap {
+    margin-left: -0.25rem;
+    margin-right: -0.25rem;
+  }
 }
