@@ -503,11 +503,19 @@ async function startBot(): Promise<void> {
           if (activeSession?.stage === "awaiting_answer_key") {
             const answerKey = parseAnswerKeyByType(text, activeSession.draft.questionType);
             if (!answerKey) {
-              const hint =
+              const explain =
                 activeSession.draft.questionType === "true_false"
-                  ? "Gabarito invalido. Use C ou E."
-                  : "Gabarito invalido. Use A, B, C, D ou E.";
-              await sock.sendMessage(remoteJid, { text: hint });
+                  ? "Envie apenas C (certo) ou E (errado). Voce pode escrever so a letra, ou palavras: certo / errado."
+                  : 'Envie uma letra sozinha de A ate E (ex: "b" ou "B"). Sem numeros nem simbolos a mais.';
+              await sock.sendMessage(remoteJid, {
+                text: [
+                  "Nao entendi o gabarito.",
+                  "",
+                  explain,
+                  "",
+                  "Tente novamente."
+                ].join("\n")
+              });
               continue;
             }
 

@@ -125,12 +125,36 @@ export function isSkipCommand(text: string): boolean {
   return normalizeInput(text) === "pular";
 }
 
+function stripOuterPunctuation(s: string): string {
+  return s.replace(/^[\s.:;!?)\]]+|[\s.:;!?)\]]+$/g, "");
+}
+
+/** Interpreta texto do gabarito na criacao da questao (wizard). Aceita pontuacao trivial e grafias simples extras. */
 export function parseAnswerKeyByType(text: string, type: QuestionType): string | null {
-  const normalized = normalizeInput(text).toUpperCase();
-  if (type === "multiple_choice") {
-    return ["A", "B", "C", "D", "E"].includes(normalized) ? normalized : null;
+  const normalizedLine = normalizeInput(text);
+  const trimmed = normalizedLine.trim();
+  const stripped = stripOuterPunctuation(trimmed);
+  const noSpace = stripped.replace(/\s+/g, "");
+  const compact = stripped.replace(/\s+/g, " ").trim();
+
+  if (type === "true_false") {
+    if (/\bcerto\b|\bverdadeiro\b|^v$/i.test(compact)) return "C";
+    if (/\berrado\b|\bfalso\b|^f$/i.test(compact)) return "E";
+    if (/^(certo|[cv])$/i.test(noSpace.replace(/\./g, ""))) return "C";
+    if (/^(errado|[ef])(\.|\?)?$/i.test(noSpace.replace(/\./g, ""))) return "E";
+    const ce = /^([ce])(\.|\?|:)?$/i.exec(noSpace);
+    if (ce) return ce[1].toUpperCase() as "C" | "E";
+    return null;
   }
-  return ["C", "E"].includes(normalized) ? normalized : null;
+
+  const singleLetter = /^([a-e])(\.|\?|:)?$/i.exec(noSpace);
+  if (singleLetter) return singleLetter[1].toUpperCase();
+
+  const inWord = compact.match(/\b([a-e])\b/i);
+  if (inWord) return inWord[1].toUpperCase();
+
+  const onlyLetter = trimmed.replace(/\./g, "").replace(/\s+/g, "");
+  return ["a", "b", "c", "d", "e"].includes(onlyLetter) ? onlyLetter.toUpperCase() : null;
 }
 
 export function isValidUserAnswer(answer: string, type: QuestionType): boolean {
