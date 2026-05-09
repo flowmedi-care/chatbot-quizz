@@ -1,2 +1,3 @@
 cd /opt/chatbot-quizz
 ./deploy.sh
+log: /opt/chatbot-quizz# pm2 logs papa-vagas-bot
