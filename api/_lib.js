@@ -9,13 +9,21 @@ function getClient() {
   return createClient(url, key);
 }
 
-function pickTargetGroupJid() {
+/** Lista de JIDs (mesma convenção do bot). */
+function parseTargetGroupJids() {
   const raw = process.env.TARGET_GROUP_JIDS || "";
-  const first = raw
+  return raw
     .split(",")
     .map((s) => s.trim())
-    .filter(Boolean)[0];
-  return first || null;
+    .filter(Boolean);
+}
+
+/** Alvo do quiz no site/API: segundo JID se houver dois ou mais (primeiro pode ser slot reservado). */
+function pickTargetGroupJid() {
+  const list = parseTargetGroupJids();
+  if (!list.length) return null;
+  if (list.length >= 2) return list[1];
+  return list[0];
 }
 
 function applyCors(res) {

@@ -1,0 +1,2 @@
+cd /opt/chatbot-quizz
+./deploy.sh

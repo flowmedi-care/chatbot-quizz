@@ -78,9 +78,18 @@ function getDisplayName(msg: WAMessage, fallbackJid: string): string {
   return (msg.pushName && msg.pushName.trim()) || fallbackJid.split("@")[0];
 }
 
-function getTargetGroupJid(): string {
+/**
+ * Grupo do quiz (publicar no grupo + gravar `target_group_jid` no Supabase).
+ * Se houver **dois ou mais** JIDs em `TARGET_GROUP_JIDS`, usa o **segundo** —
+ * o primeiro pode ficar na env para outro uso (reservado).
+ * Com apenas um JID, usa esse (comportamento antigo).
+ */
+function getQuizTargetGroupJid(): string {
   if (config.targetGroupJids.length === 0) {
     throw new Error("Configure TARGET_GROUP_JIDS no .env para publicar as questoes.");
+  }
+  if (config.targetGroupJids.length >= 2) {
+    return config.targetGroupJids[1];
   }
   return config.targetGroupJids[0];
 }
@@ -407,7 +416,7 @@ async function startBot(): Promise<void> {
           }
 
           if (groupCommand.kind === "ranking") {
-            const groupJidForRanking = fromGroup ? remoteJid : getTargetGroupJid();
+            const groupJidForRanking = fromGroup ? remoteJid : getQuizTargetGroupJid();
             const entries = await getRankingForGroup(groupJidForRanking);
             await sock.sendMessage(remoteJid, { text: formatRankingMessage(entries) });
             continue;
@@ -534,7 +543,7 @@ async function startBot(): Promise<void> {
             };
 
             try {
-              const targetGroupJid = getTargetGroupJid();
+              const quizGroupJid = getQuizTargetGroupJid();
               const created = await createQuestion({
                 creatorJid: draft.creatorJid,
                 creatorName: draft.creatorName,
@@ -544,10 +553,10 @@ async function startBot(): Promise<void> {
                 answerKey: draft.answerKey,
                 explanationText: draft.explanationText,
                 explanationMedia: draft.explanationMedia,
-                targetGroupJid
+                targetGroupJid: quizGroupJid
               });
 
-              await publishQuestionToGroup(sock, targetGroupJid, created.shortId, draft);
+              await publishQuestionToGroup(sock, quizGroupJid, created.shortId, draft);
               creationSessions.delete(sender);
 
               await sock.sendMessage(remoteJid, {

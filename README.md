@@ -46,8 +46,9 @@ TARGET_GROUP_JIDS=1203630XXXXXXXXX@g.us
 ```
 
 Notas:
-- `TARGET_GROUP_JIDS` aceita lista separada por virgula.
-- Hoje o bot publica no primeiro grupo da lista.
+- `TARGET_GROUP_JIDS` aceita lista separada por virgula (`jid1,jid2,...`).
+- Com **dois ou mais** JIDs, o bot usa o **segundo** para o quiz (`target_group_jid`, publicação no grupo, ranking no privado e site quando aplicável). O **primeiro** pode ficar na env como reserva para outro uso.
+- Com **um** JID apenas, esse é o grupo do quiz.
 
 ## 5) Rodar em desenvolvimento
 
@@ -101,7 +102,7 @@ Com o modo **desligado**, no privado o bot **nao responde** a nada exceto `/quiz
 
 - Envie: `ranking`
 - No grupo: conta acertos nas questoes daquele grupo.
-- No privado: usa o grupo configurado em `TARGET_GROUP_JIDS`.
+- No privado: usa o JID do quiz (o **segundo** da lista em `TARGET_GROUP_JIDS` quando houver dois ou mais; caso contrario, o unico JID).
 - Ordena por quantidade de acertos (maior primeiro).
 
 ### Repetir enunciado (grupo ou privado)
