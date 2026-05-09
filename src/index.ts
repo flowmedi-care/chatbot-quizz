@@ -61,11 +61,29 @@ function isPrivateChatJid(jid: string): boolean {
   return jid.endsWith("@s.whatsapp.net") || jid.endsWith("@lid");
 }
 
-/** JID do usuario que enviou a mensagem. No grupo: `participant`. No privado: sempre `remoteJid` — usar participant em DM quebra multiplos usuarios. */
-function resolveActorJid(remoteJid: string, participant: string | undefined | null): string {
-  if (remoteJid.endsWith("@g.us")) {
-    return participant ?? remoteJid;
+/**
+ * JID do usuario que enviou a mensagem.
+ * - No privado: sempre `remoteJid` (participant em DM pode ser lixo e une varias pessoas).
+ * - No grupo: tenta `participantAlt` / `remoteJidAlt` (WhatsApp multi-device) e depois `participant`.
+ *   Se faltar tudo, cai em `remoteJid` (id do grupo — nao e pessoa; comandos podem falhar).
+ */
+function resolveActorJid(remoteJid: string, key: WAMessage["key"]): string {
+  if (!remoteJid.endsWith("@g.us")) {
+    return remoteJid;
   }
+
+  const ext = key as WAMessage["key"] & {
+    participantAlt?: string;
+    remoteJidAlt?: string;
+  };
+
+  const candidates = [ext.participantAlt, ext.remoteJidAlt, key.participant];
+  for (const c of candidates) {
+    if (c && typeof c === "string" && !c.endsWith("@g.us")) {
+      return c;
+    }
+  }
+
   return remoteJid;
 }
 
@@ -419,7 +437,8 @@ async function startBot(): Promise<void> {
       const nonReconnectStatuses = new Set<number>([
         DisconnectReason.loggedOut,
         DisconnectReason.connectionReplaced,
-        DisconnectReason.badSession
+        DisconnectReason.badSession,
+        440 /** Stream erro (conflict): outra instancia usando a mesma sessao WhatsApp */
       ]);
       const shouldReconnect = statusCode ? !nonReconnectStatuses.has(statusCode) : true;
       console.log(
@@ -468,9 +487,15 @@ async function startBot(): Promise<void> {
         const remoteJid = msg.key.remoteJid;
         const fromGroup = remoteJid.endsWith("@g.us");
         const fromPrivate = isPrivateChatJid(remoteJid);
-        const sender = resolveActorJid(remoteJid, msg.key.participant);
-        const sentAt = toIsoTimestamp(msg.messageTimestamp);
         const messageId = msg.key.id ?? "sem_id";
+        const sender = resolveActorJid(remoteJid, msg.key);
+        if (fromGroup && sender.endsWith("@g.us")) {
+          console.warn(
+            "[msg] Grupo sem participant resolvido para este evento; comandos podem ser ignorados. id=",
+            messageId
+          );
+        }
+        const sentAt = toIsoTimestamp(msg.messageTimestamp);
         const messageKind = fromGroup ? "grupo" : fromPrivate ? "privado" : "outro";
 
         console.log(
