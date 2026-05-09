@@ -17,6 +17,9 @@
       <header class="hero">
         <div class="hero-toolbar" aria-label="Atalhos">
           <a href="/tutorial" class="btn-tutorial">Como usar</a>
+          <button type="button" id="btn-engagement-open" class="btn-tutorial btn-engagement">
+            Engajamento
+          </button>
           <button type="button" id="btn-report-open" class="btn-tutorial">Relatório</button>
         </div>
         <h1>Papa Vagas</h1>
@@ -90,6 +93,27 @@
           <div id="modal-comment" class="comment"></div>
           <div id="modal-comment-media"></div>
         </div>
+      </div>
+    </div>
+
+    <div id="engagement-overlay" class="modal-overlay" aria-hidden="true">
+      <div class="modal modal-report" role="dialog" aria-modal="true" aria-labelledby="engagement-title">
+        <div class="modal-header">
+          <div>
+            <h3 id="engagement-title">Engajamento</h3>
+            <p class="report-sub">
+              Marque quem entra no fechamento automático do gabarito no grupo: quando todos os engajados
+              (exceto quem criou a questão) responderem, o bot publica o resultado. Quem não está marcado
+              pode responder à vontade; não bloqueia o envio.
+            </p>
+            <p class="report-sub engagement-hint">
+              A lista vem do WhatsApp: no grupo, envie <code>/sync-membros</code> para atualizar participantes.
+            </p>
+          </div>
+          <button type="button" id="engagement-close" class="btn-close" aria-label="Fechar">×</button>
+        </div>
+        <p id="engagement-status" class="report-status" role="status" aria-live="polite"></p>
+        <ul id="engagement-list" class="engagement-list"></ul>
       </div>
     </div>
 

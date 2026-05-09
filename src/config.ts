@@ -27,7 +27,11 @@ export const config = {
     .split(",")
     .map((item) => item.trim())
     .filter(Boolean),
-  /** Quando cada membro do grupo (WhatsApp) tiver pelo menos uma resposta guardada para a questao, posta gabarito no grupo. Defina AUTO_GABARITO_WHEN_ALL=false para desligar. */
+  /**
+   * Quando todos os **engajados** (exceto o criador da questao e o bot) tiverem respondido, posta gabarito no grupo.
+   * Requer tabela `group_member_engagement` e pelo menos um `engaged=true` apos /sync-membros.
+   * AUTO_GABARITO_WHEN_ALL=false desliga.
+   */
   autoGabaritoWhenAllReply:
     String(process.env.AUTO_GABARITO_WHEN_ALL ?? "true")
       .trim()

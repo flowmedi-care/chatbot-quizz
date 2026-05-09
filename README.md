@@ -49,7 +49,8 @@ Notas:
 - `TARGET_GROUP_JIDS` aceita lista separada por virgula (`jid1,jid2,...`).
 - Com **dois ou mais** JIDs, o bot usa o **segundo** para o quiz (`target_group_jid`, publicação no grupo, ranking no privado e site quando aplicável). O **primeiro** pode ficar na env como reserva para outro uso.
 - Com **um** JID apenas, esse é o grupo do quiz.
-- Opcional: `AUTO_GABARITO_WHEN_ALL=false` desliga o envio **automatico** do `/gabarito` no grupo quando todos os membros (segundo a lista do WhatsApp) ja tiverem registrado resposta.
+- Opcional: `AUTO_GABARITO_WHEN_ALL=false` desliga o envio **automatico** do `/gabarito` no grupo quando o fechamento por **engajamento** aconteceria (ver abaixo).
+- Tabela `group_member_engagement` no Supabase: rode o SQL em `supabase-migration-engagement.sql` se ainda nao existir.
 
 ## 5) Rodar em desenvolvimento
 
@@ -77,7 +78,7 @@ No primeiro start:
 | **Grupo** | Mostra o **mesmo guia** no chat do grupo. |
 | **Privado** (modo ligado) | Guia completo. |
 
-Com o modo **desligado**, no privado o bot **nao responde** a nada exceto `/quiz`. No grupo, `/gabarito`, `ranking` e `/ajuda` estao sempre disponiveis.
+Com o modo **desligado**, no privado o bot so le comandos **neutros**: `/quiz`, `/ajuda`, `/gabarito`, `ranking`, `quem respondeu …` e **`/omissas`**. No grupo, `/gabarito`, `ranking` e `/ajuda` estao sempre disponiveis.
 
 ### Criar questao (privado, com modo quiz ativo)
 
@@ -103,7 +104,9 @@ Com o modo **desligado**, no privado o bot **nao responde** a nada exceto `/quiz
 
 - `quem respondeu 182` (tambem `respondentes 182`, `/responderam 182`) — lista nomes registrados no banco e, se possivel, mostra quantos responderam sobre o total de membros no grupo.
 
-Quando **todas** as pessoas da lista de participantes do grupo (menos a conta do bot) tiverem uma resposta gravada para aquela questao, o bot envia no grupo o mesmo texto de `/gabarito` (uma vez por questao). Para desligar: `AUTO_GABARITO_WHEN_ALL=false`.
+**Auto-gabarito por engajamento:** no grupo, envie **`/sync-membros`** para o bot gravar os participantes no Supabase. No site Papa Vagas, abra **Engajamento** e marque quem participa do fechamento. Quando **todos os engajados** (exceto quem **criou** a questao) tiverem resposta gravada, o bot envia no grupo o mesmo texto de `/gabarito` (uma vez por questao). Quem nao esta engajado pode responder antes ou depois; nao bloqueia. Se ninguem estiver engajado na base, o auto-gabarito nao dispara por esse criterio. Para desligar: `AUTO_GABARITO_WHEN_ALL=false`.
+
+**Omissas (privado):** envie **`/omissas`** para listar questoes em aberto; responda **sim** ou **nao** para receber os enunciados repetidos no privado.
 
 ### Ranking (grupo ou privado)
 

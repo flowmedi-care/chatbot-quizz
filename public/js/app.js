@@ -4,7 +4,8 @@
     ranking: "/api/ranking",
     reportData: "/api/report-data",
     detail: (id) => `/api/question-detail?shortId=${encodeURIComponent(id)}`,
-    submit: "/api/question-submit"
+    submit: "/api/question-submit",
+    engagement: "/api/engagement"
   };
 
   const els = {
@@ -35,7 +36,12 @@
     reportPerson: document.getElementById("report-person"),
     reportStatus: document.getElementById("report-status"),
     reportGenerate: document.getElementById("report-generate"),
-    btnReportOpen: document.getElementById("btn-report-open")
+    btnReportOpen: document.getElementById("btn-report-open"),
+    engagementOverlay: document.getElementById("engagement-overlay"),
+    engagementClose: document.getElementById("engagement-close"),
+    engagementStatus: document.getElementById("engagement-status"),
+    engagementList: document.getElementById("engagement-list"),
+    btnEngagementOpen: document.getElementById("btn-engagement-open")
   };
 
   let questionsList = [];
@@ -44,6 +50,8 @@
 
   let currentShortId = null;
   let submitPayload = null;
+  /** @type {{ userJid: string, userLabel: string | null, engaged: boolean }[]} */
+  let engagementMembersCache = [];
 
   async function fetchJson(url, options = {}) {
     const headers = { ...(options.headers || {}) };
@@ -653,6 +661,88 @@
     els.reportOverlay.setAttribute("aria-hidden", "true");
   }
 
+  function renderEngagementList() {
+    if (!els.engagementList) return;
+    const members = engagementMembersCache;
+    if (!members.length) {
+      els.engagementList.innerHTML =
+        '<li class="engagement-empty">Nenhum membro na lista. No grupo do WhatsApp envie <code>/sync-membros</code>.</li>';
+      return;
+    }
+    els.engagementList.innerHTML = members
+      .map(
+        (m) => `
+      <li class="engagement-row" data-jid="${escAttr(m.userJid)}">
+        <label class="engagement-label">
+          <input type="checkbox" class="engagement-cb" ${m.engaged ? "checked" : ""} aria-label="Engajado" />
+          <span class="engagement-name">${esc(m.userLabel || m.userJid)}</span>
+        </label>
+      </li>`
+      )
+      .join("");
+  }
+
+  async function openEngagementModal() {
+    if (!els.engagementOverlay || !els.engagementStatus) return;
+    els.engagementStatus.textContent = "Carregando…";
+    engagementMembersCache = [];
+    renderEngagementList();
+    els.engagementOverlay.classList.add("open");
+    els.engagementOverlay.setAttribute("aria-hidden", "false");
+    try {
+      const data = await fetchJson(API.engagement);
+      engagementMembersCache = data.members || [];
+      if (data.warning) {
+        els.engagementStatus.textContent = data.warning;
+      } else if (!engagementMembersCache.length) {
+        els.engagementStatus.textContent =
+          "Lista vazia. Sincronize os membros no grupo com /sync-membros.";
+      } else {
+        els.engagementStatus.textContent = `${engagementMembersCache.length} participante(s).`;
+      }
+      renderEngagementList();
+    } catch (e) {
+      els.engagementStatus.textContent = e.message || "Não foi possível carregar.";
+      engagementMembersCache = [];
+      renderEngagementList();
+    }
+  }
+
+  function closeEngagementModal() {
+    if (!els.engagementOverlay) return;
+    els.engagementOverlay.classList.remove("open");
+    els.engagementOverlay.setAttribute("aria-hidden", "true");
+  }
+
+  async function onEngagementToggle(ev) {
+    const cb = ev.target;
+    if (!cb.classList || !cb.classList.contains("engagement-cb")) return;
+    const row = cb.closest(".engagement-row");
+    const jid = row && row.dataset.jid;
+    if (!jid) return;
+    const want = cb.checked;
+    cb.disabled = true;
+    try {
+      await fetchJson(API.engagement, {
+        method: "PATCH",
+        body: JSON.stringify({ userJid: jid, engaged: want })
+      });
+      const m = engagementMembersCache.find((x) => x.userJid === jid);
+      if (m) m.engaged = want;
+      if (els.engagementStatus && !els.engagementStatus.textContent.startsWith("Carregando")) {
+        const n = engagementMembersCache.filter((x) => x.engaged).length;
+        els.engagementStatus.textContent = `${engagementMembersCache.length} participante(s), ${n} engajado(s).`;
+      }
+    } catch (err) {
+      cb.checked = !want;
+      if (els.engagementStatus) {
+        els.engagementStatus.textContent = err.message || "Erro ao salvar.";
+      }
+    } finally {
+      cb.disabled = false;
+    }
+  }
+
   async function onGenerateReport() {
     if (!reportData || !reportData.questions || !reportData.questions.length) {
       if (els.reportStatus) els.reportStatus.textContent = "Sem dados de relatório. Confira o grupo no Vercel.";
@@ -734,6 +824,15 @@
     });
   }
   if (els.reportGenerate) els.reportGenerate.addEventListener("click", onGenerateReport);
+
+  if (els.btnEngagementOpen) els.btnEngagementOpen.addEventListener("click", openEngagementModal);
+  if (els.engagementClose) els.engagementClose.addEventListener("click", closeEngagementModal);
+  if (els.engagementOverlay) {
+    els.engagementOverlay.addEventListener("click", (ev) => {
+      if (ev.target === els.engagementOverlay) closeEngagementModal();
+    });
+  }
+  if (els.engagementList) els.engagementList.addEventListener("change", onEngagementToggle);
 
   init();
 })();

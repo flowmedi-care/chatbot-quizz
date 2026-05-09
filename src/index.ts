@@ -20,9 +20,11 @@ import {
   parseAnswerKeyByType,
   parsePrivateCommand,
   parseGabaritoCommand,
+  parseOmissasCommand,
   parseRepeatQuestionCommand,
   parseRespondentsCommand,
   parseSlashSessionCommand,
+  parseSyncMembrosCommand,
   parseTypeSelection
 } from "./message-utils";
 import { buildQuizFullGuide, buildPrivateInvalidFallback } from "./help-text";
@@ -33,13 +35,17 @@ import {
   getQuestionResult,
   getRankingForGroup,
   getQuestionForRepeat,
+  getEngagedUserJidsForGroup,
+  getQuestionCreatorAndGroup,
   getQuestionTargetGroupJid,
   getQuizModePrivate,
   insertAnswer,
   getUserAnswer,
   listAnswerUserJidsForQuestion,
+  listUnansweredShortIdsForUser,
   setQuizModePrivate,
-  updateUserAnswer
+  updateUserAnswer,
+  upsertGroupMembersFromSync
 } from "./supabase";
 import { MediaPayload, QuestionDraft, QuestionType } from "./types";
 
@@ -103,7 +109,14 @@ type PendingChange = {
 };
 const pendingAnswerChanges = new Map<string, PendingChange>();
 
+/** Privado: lista de short_ids apos /omissas; usuario confirma sim para receber enunciados. */
+const omissasOfferByUser = new Map<string, string[]>();
+
 const autoGabaritoPostedQuestionIds = new Set<string>();
+
+function delayMs(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 function jidComparableKey(jid: string): string {
   const at = jid.indexOf("@");
@@ -145,29 +158,43 @@ async function maybePostAutoGabaritoToGroup(sock: WASocket, rawShortId: string):
     if (!config.autoGabaritoWhenAllReply) return;
     if (autoGabaritoPostedQuestionIds.has(shortUp)) return;
 
-    const groupJid = await getQuestionTargetGroupJid(shortUp);
-    if (!groupJid) return;
+    const meta = await getQuestionCreatorAndGroup(shortUp);
+    if (!meta) return;
 
-    const answered = await listAnswerUserJidsForQuestion(shortUp);
-    let memberIds: string[];
-    try {
-      memberIds = await fetchGroupParticipantIds(sock, groupJid);
-    } catch (e) {
-      console.warn("[auto-gabarito] grupo metadata falhou:", (e as Error).message);
+    const { targetGroupJid: groupJid, creatorJid } = meta;
+    const engaged = await getEngagedUserJidsForGroup(groupJid);
+    if (engaged.length === 0) {
+      console.log(
+        "[auto-gabarito] Nenhum membro engajado no grupo. Rode /sync-membros no grupo e marque engajados no site."
+      );
       return;
     }
 
+    const answered = await listAnswerUserJidsForQuestion(shortUp);
     const botComp = getBotJidComparable(sock);
-    const expectAnswer = botComp ? memberIds.filter((jid) => jidComparableKey(jid) !== botComp) : memberIds;
+    const creatorComp = jidComparableKey(creatorJid);
 
-    if (expectAnswer.length === 0) return;
+    const expectAnswer = engaged.filter((jid) => {
+      const jc = jidComparableKey(jid);
+      if (botComp && jc === botComp) return false;
+      if (jc === creatorComp) return false;
+      return true;
+    });
+
+    if (expectAnswer.length === 0) {
+      console.log(
+        "[auto-gabarito] Só o criador (ou só o bot) entre os engajados; não há 'outros' para fechar — use /gabarito manual se quiser."
+      );
+      return;
+    }
+
     const allAnswered = expectAnswer.every((m) => participantHasMatchingAnswer(m, answered));
     if (!allAnswered) return;
 
     autoGabaritoPostedQuestionIds.add(shortUp);
 
     const result = await getQuestionResult(shortUp);
-    const header = "[Todos responderam]\nResultado enviado automaticamente.\n";
+    const header = "[Engajados responderam]\nResultado enviado automaticamente.\n";
     await sock.sendMessage(groupJid, {
       text: `${header}${buildResultMessage(result)}`
     });
@@ -509,8 +536,65 @@ async function startBot(): Promise<void> {
           continue;
         }
 
+        if (fromGroup && parseSyncMembrosCommand(text)) {
+          try {
+            const metaGm = await sock.groupMetadata(remoteJid);
+            const parts = metaGm.participants as { id?: string; name?: string; notify?: string }[];
+            const members = parts
+              .map((p) => {
+                const id = String(p.id || "");
+                if (!id || id.endsWith("@g.us")) return null;
+                const label =
+                  (p.name && String(p.name).trim()) ||
+                  (p.notify && String(p.notify).trim()) ||
+                  id.split("@")[0] ||
+                  id;
+                return { userJid: id, userLabel: label };
+              })
+              .filter(Boolean) as { userJid: string; userLabel: string }[];
+            await upsertGroupMembersFromSync(remoteJid, members);
+            await sock.sendMessage(remoteJid, {
+              text: [
+                `Sincronizados ${members.length} membros.`,
+                "No site Papa Vagas, abra Engajamento e marque quem participa do fechamento automático do gabarito.",
+                "O bot posta o resultado quando todos os engajados (exceto quem criou a questão) responderem."
+              ].join("\n")
+            });
+          } catch (syncErr) {
+            await sock.sendMessage(remoteJid, {
+              text: `Erro ao sincronizar: ${(syncErr as Error).message}`
+            });
+          }
+          continue;
+        }
+
         let quizModePrivateEnabled = false;
         if (fromPrivate) {
+          const omissasWaitingEarly = omissasOfferByUser.get(sender);
+          if (omissasWaitingEarly) {
+            const normalizedOm = normalizeInput(text);
+            if (normalizedOm === "sim" || normalizedOm === "s") {
+              omissasOfferByUser.delete(sender);
+              for (const sid of omissasWaitingEarly) {
+                await repeatQuestionStatement(sock, remoteJid, sid);
+                await delayMs(650);
+              }
+              await sock.sendMessage(remoteJid, {
+                text: "Responda com letra + número (ex: c 12). Use /gabarito 12 para ver o resultado completo."
+              });
+              continue;
+            }
+            if (normalizedOm === "nao" || normalizedOm === "não" || normalizedOm === "n") {
+              omissasOfferByUser.delete(sender);
+              await sock.sendMessage(remoteJid, { text: "Ok." });
+              continue;
+            }
+            await sock.sendMessage(remoteJid, {
+              text: 'Responda "sim" para receber os enunciados aqui ou "nao" para cancelar.'
+            });
+            continue;
+          }
+
           quizModePrivateEnabled = await getQuizModePrivate(sender);
           const slashPriv = parseSlashSessionCommand(text);
 
@@ -528,7 +612,7 @@ async function startBot(): Promise<void> {
                   "",
                   "/quiz",
                   "",
-                  "Sem modo quiz, só lemos aqui comandos neutros como gabarito, ranking ou quem respondeu."
+                  "Sem modo quiz, só lemos aqui comandos neutros: gabarito, ranking, quem respondeu e /omissas."
                 ].join("\n")
               });
               continue;
@@ -545,7 +629,8 @@ async function startBot(): Promise<void> {
             const passiveReadOnly =
               passiveProbe.kind === "ranking" ||
               passiveProbe.kind === "answer_key" ||
-              Boolean(respondentIdProbe);
+              Boolean(respondentIdProbe) ||
+              parseOmissasCommand(text);
 
             if (!passiveReadOnly) {
               continue;
@@ -596,6 +681,33 @@ async function startBot(): Promise<void> {
             } catch (respondErr) {
               await sock.sendMessage(remoteJid, {
                 text: `Nao foi possivel listar respondentes: ${(respondErr as Error).message}`
+              });
+            }
+            continue;
+          }
+
+          if (fromPrivate && parseOmissasCommand(text)) {
+            try {
+              const gj = getQuizTargetGroupJid();
+              const openIds = await listUnansweredShortIdsForUser(sender, gj, 30);
+              if (openIds.length === 0) {
+                await sock.sendMessage(remoteJid, {
+                  text: "Voce nao tem questoes em aberto neste grupo (ou ja respondeu a todas)."
+                });
+                continue;
+              }
+              omissasOfferByUser.set(sender, openIds);
+              const lines = [
+                "Questoes que voce ainda nao respondeu:",
+                "",
+                ...openIds.map((id, i) => `${i + 1}. #${id}`),
+                "",
+                "Deseja receber os enunciados aqui? Responda sim ou nao."
+              ];
+              await sock.sendMessage(remoteJid, { text: lines.join("\n") });
+            } catch (omErr) {
+              await sock.sendMessage(remoteJid, {
+                text: `Erro ao listar omissas: ${(omErr as Error).message}`
               });
             }
             continue;

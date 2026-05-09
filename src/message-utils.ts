@@ -86,6 +86,18 @@ export function parseGabaritoCommand(text: string): string | null {
   return m ? m[1].toUpperCase() : null;
 }
 
+/** Lista questoes em aberto no privado; depois sim/nao para receber enunciados. */
+export function parseOmissasCommand(text: string): boolean {
+  const t = normalizeInput(text.trim());
+  return t === "/omissas" || t === "omissas";
+}
+
+/** No grupo: sincroniza participantes no Supabase para marcar engajamento no site. */
+export function parseSyncMembrosCommand(text: string): boolean {
+  const t = normalizeInput(text.trim());
+  return t === "/sync-membros" || t === "sync-membros" || t === "/sync membros" || t === "sync membros";
+}
+
 /** Repetir enunciado salvo: /questao 5 ou questao 7B */
 export function parseRepeatQuestionCommand(text: string): { shortId: string } | null {
   const t = text.trim();

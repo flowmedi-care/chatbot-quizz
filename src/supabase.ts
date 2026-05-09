@@ -452,3 +452,146 @@ export async function setQuizModePrivate(userJid: string, enabled: boolean): Pro
 
   quizModeCache.set(userJid, enabled);
 }
+
+export type GroupMemberEngagementRow = {
+  userJid: string;
+  userLabel: string | null;
+  engaged: boolean;
+  updatedAt: string | null;
+};
+
+export async function getQuestionCreatorAndGroup(
+  shortId: string
+): Promise<{ creatorJid: string; targetGroupJid: string } | null> {
+  const id = shortId.toUpperCase();
+  const { data, error } = await supabase
+    .from("questions")
+    .select("creator_jid, target_group_jid")
+    .eq("short_id", id)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Erro ao buscar criador da questao: ${error.message}`);
+  }
+  if (!data?.creator_jid || !data?.target_group_jid) return null;
+  return {
+    creatorJid: String(data.creator_jid),
+    targetGroupJid: String(data.target_group_jid)
+  };
+}
+
+export async function getEngagedUserJidsForGroup(groupJid: string): Promise<string[]> {
+  const { data, error } = await supabase
+    .from("group_member_engagement")
+    .select("user_jid")
+    .eq("group_jid", groupJid)
+    .eq("engaged", true);
+
+  if (error) {
+    const msg = error.message.toLowerCase();
+    if (msg.includes("relation") && msg.includes("does not exist")) {
+      return [];
+    }
+    throw new Error(`Erro ao ler engajamento: ${error.message}`);
+  }
+
+  return [...new Set((data ?? []).map((r) => String(r.user_jid)).filter(Boolean))];
+}
+
+export async function listGroupMembersEngagementRows(groupJid: string): Promise<GroupMemberEngagementRow[]> {
+  const { data, error } = await supabase
+    .from("group_member_engagement")
+    .select("user_jid, user_label, engaged, updated_at")
+    .eq("group_jid", groupJid)
+    .order("user_label", { ascending: true, nullsFirst: false });
+
+  if (error) {
+    throw new Error(`Erro ao listar membros: ${error.message}`);
+  }
+
+  return (data ?? []).map((r) => ({
+    userJid: String(r.user_jid),
+    userLabel: r.user_label ? String(r.user_label) : null,
+    engaged: Boolean(r.engaged),
+    updatedAt: r.updated_at ? String(r.updated_at) : null
+  }));
+}
+
+export async function setGroupMemberEngaged(groupJid: string, userJid: string, engaged: boolean): Promise<void> {
+  const { error } = await supabase
+    .from("group_member_engagement")
+    .update({ engaged, updated_at: new Date().toISOString() })
+    .eq("group_jid", groupJid)
+    .eq("user_jid", userJid);
+
+  if (error) {
+    throw new Error(`Erro ao atualizar engajamento: ${error.message}`);
+  }
+}
+
+export async function upsertGroupMembersFromSync(
+  groupJid: string,
+  members: { userJid: string; userLabel: string }[]
+): Promise<void> {
+  for (const m of members) {
+    const { data: existing } = await supabase
+      .from("group_member_engagement")
+      .select("engaged")
+      .eq("group_jid", groupJid)
+      .eq("user_jid", m.userJid)
+      .maybeSingle();
+
+    const engaged = existing ? Boolean(existing.engaged) : false;
+
+    const { error } = await supabase.from("group_member_engagement").upsert(
+      {
+        group_jid: groupJid,
+        user_jid: m.userJid,
+        user_label: m.userLabel || null,
+        engaged,
+        updated_at: new Date().toISOString()
+      },
+      { onConflict: "group_jid,user_jid" }
+    );
+
+    if (error) {
+      throw new Error(`Erro ao sincronizar membro: ${error.message}`);
+    }
+  }
+}
+
+export async function listUnansweredShortIdsForUser(
+  userJid: string,
+  groupJid: string,
+  limit = 25
+): Promise<string[]> {
+  const { data: questions, error: qErr } = await supabase
+    .from("questions")
+    .select("id, short_id")
+    .eq("target_group_jid", groupJid)
+    .order("created_at", { ascending: false })
+    .limit(300);
+
+  if (qErr) {
+    throw new Error(`Erro ao listar questoes: ${qErr.message}`);
+  }
+
+  const { data: answered, error: aErr } = await supabase
+    .from("answers")
+    .select("question_id")
+    .eq("user_jid", userJid);
+
+  if (aErr) {
+    throw new Error(`Erro ao listar respostas do usuario: ${aErr.message}`);
+  }
+
+  const answeredIds = new Set((answered ?? []).map((r) => r.question_id as number));
+  const out: string[] = [];
+  for (const q of questions ?? []) {
+    if (!q.short_id) continue;
+    if (answeredIds.has(q.id as number)) continue;
+    out.push(String(q.short_id).toUpperCase());
+    if (out.length >= limit) break;
+  }
+  return out;
+}
