@@ -62,6 +62,23 @@ export function isSlashSessionCommand(text: string): boolean {
 }
 
 /** Ver resultado completo: /gabarito 5 (aceita tambem gabarito 5 sem slash) */
+/** Lista quem respondeu: quem respondeu 7, respondentes 12, /responderam ABC */
+export function parseRespondentsCommand(text: string): string | null {
+  const t = normalizeInput(text.trim());
+  const patterns = [
+    /^quem\s+respondeu\s+([a-z0-9]+)$/,
+    /^respondentes\s+([a-z0-9]+)$/,
+    /^responderam\s+([a-z0-9]+)$/,
+    /^\/responderam\s+([a-z0-9]+)$/,
+    /^respondidos\s+([a-z0-9]+)$/
+  ];
+  for (const re of patterns) {
+    const m = t.match(re);
+    if (m) return m[1].toUpperCase();
+  }
+  return null;
+}
+
 export function parseGabaritoCommand(text: string): string | null {
   const normalized = normalizeInput(text.trim());
   const m =

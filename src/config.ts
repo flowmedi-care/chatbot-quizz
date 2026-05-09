@@ -26,5 +26,10 @@ export const config = {
   targetGroupJids: String(process.env.TARGET_GROUP_JIDS ?? "")
     .split(",")
     .map((item) => item.trim())
-    .filter(Boolean)
+    .filter(Boolean),
+  /** Quando cada membro do grupo (WhatsApp) tiver pelo menos uma resposta guardada para a questao, posta gabarito no grupo. Defina AUTO_GABARITO_WHEN_ALL=false para desligar. */
+  autoGabaritoWhenAllReply:
+    String(process.env.AUTO_GABARITO_WHEN_ALL ?? "true")
+      .trim()
+      .toLowerCase() !== "false"
 };

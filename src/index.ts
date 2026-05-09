@@ -21,6 +21,7 @@ import {
   parsePrivateCommand,
   parseGabaritoCommand,
   parseRepeatQuestionCommand,
+  parseRespondentsCommand,
   parseSlashSessionCommand,
   parseTypeSelection
 } from "./message-utils";
@@ -32,9 +33,11 @@ import {
   getQuestionResult,
   getRankingForGroup,
   getQuestionForRepeat,
+  getQuestionTargetGroupJid,
   getQuizModePrivate,
   insertAnswer,
   getUserAnswer,
+  listAnswerUserJidsForQuestion,
   setQuizModePrivate,
   updateUserAnswer
 } from "./supabase";
@@ -58,6 +61,14 @@ function isPrivateChatJid(jid: string): boolean {
   return jid.endsWith("@s.whatsapp.net") || jid.endsWith("@lid");
 }
 
+/** JID do usuario que enviou a mensagem. No grupo: `participant`. No privado: sempre `remoteJid` — usar participant em DM quebra multiplos usuarios. */
+function resolveActorJid(remoteJid: string, participant: string | undefined | null): string {
+  if (remoteJid.endsWith("@g.us")) {
+    return participant ?? remoteJid;
+  }
+  return remoteJid;
+}
+
 type CreationSession =
   | { stage: "awaiting_type" }
   | { stage: "awaiting_statement"; questionType: QuestionType }
@@ -73,6 +84,119 @@ type PendingChange = {
   newAnswerLetter: string;
 };
 const pendingAnswerChanges = new Map<string, PendingChange>();
+
+const autoGabaritoPostedQuestionIds = new Set<string>();
+
+function jidComparableKey(jid: string): string {
+  const at = jid.indexOf("@");
+  if (at < 0) return jid.toLowerCase().trim();
+  const userPart = jid.slice(0, at);
+  const userNoDevice = userPart.includes(":") ? userPart.split(":")[0]! : userPart;
+  const domain = jid.slice(at + 1).toLowerCase();
+  return `${userNoDevice}@${domain}`;
+}
+
+function participantHasMatchingAnswer(memberJid: string, answeredUserJids: string[]): boolean {
+  const pk = jidComparableKey(memberJid);
+  for (const a of answeredUserJids) {
+    if (a === memberJid) return true;
+    if (jidComparableKey(a) === pk) return true;
+  }
+  return false;
+}
+
+function getBotJidComparable(sock: WASocket): string | null {
+  const ext = sock as WASocket & {
+    user?: { id?: string };
+    authState?: { creds?: { me?: { id?: string } } };
+  };
+  const rawId = ext.user?.id ?? ext.authState?.creds?.me?.id ?? "";
+  return rawId ? jidComparableKey(String(rawId)) : null;
+}
+
+async function fetchGroupParticipantIds(sock: WASocket, groupJid: string): Promise<string[]> {
+  const meta = await sock.groupMetadata(groupJid);
+  const parts = meta.participants as { id?: string }[];
+  return parts.map((p) => String(p.id || "")).filter(Boolean);
+}
+
+async function maybePostAutoGabaritoToGroup(sock: WASocket, rawShortId: string): Promise<void> {
+  const shortUp = rawShortId.toUpperCase();
+
+  try {
+    if (!config.autoGabaritoWhenAllReply) return;
+    if (autoGabaritoPostedQuestionIds.has(shortUp)) return;
+
+    const groupJid = await getQuestionTargetGroupJid(shortUp);
+    if (!groupJid) return;
+
+    const answered = await listAnswerUserJidsForQuestion(shortUp);
+    let memberIds: string[];
+    try {
+      memberIds = await fetchGroupParticipantIds(sock, groupJid);
+    } catch (e) {
+      console.warn("[auto-gabarito] grupo metadata falhou:", (e as Error).message);
+      return;
+    }
+
+    const botComp = getBotJidComparable(sock);
+    const expectAnswer = botComp ? memberIds.filter((jid) => jidComparableKey(jid) !== botComp) : memberIds;
+
+    if (expectAnswer.length === 0) return;
+    const allAnswered = expectAnswer.every((m) => participantHasMatchingAnswer(m, answered));
+    if (!allAnswered) return;
+
+    autoGabaritoPostedQuestionIds.add(shortUp);
+
+    const result = await getQuestionResult(shortUp);
+    const header = "[Todos responderam]\nResultado enviado automaticamente.\n";
+    await sock.sendMessage(groupJid, {
+      text: `${header}${buildResultMessage(result)}`
+    });
+    await sendExplanationMedia(sock, groupJid, result);
+  } catch (e) {
+    console.warn("[auto-gabarito]", (e as Error).message);
+  }
+}
+
+async function buildRespondentsReport(sock: WASocket, rawShortId: string): Promise<string> {
+  const result = await getQuestionResult(rawShortId);
+  const namesOrdered = [...result.correctUsers, ...result.wrongUsers];
+
+  let totalEligible = 0;
+  try {
+    const gj = await getQuestionTargetGroupJid(result.shortId);
+    if (gj) {
+      const memberIds = await fetchGroupParticipantIds(sock, gj);
+      const botComp = getBotJidComparable(sock);
+      totalEligible = botComp
+        ? memberIds.filter((jid) => jidComparableKey(jid) !== botComp).length
+        : memberIds.length;
+    }
+  } catch {
+    // sem total do grupo — ainda assim mostra lista
+  }
+
+  if (namesOrdered.length === 0) {
+    const extra =
+      totalEligible > 0 ? ` (~${totalEligible} pessoas no grupo com o bot)` : "";
+    return `Ninguem respondeu a questao #${result.shortId} ainda.${extra}\nResponderam no privado com: a ${result.shortId} (ou outra letra).`;
+  }
+
+  const countPart =
+    totalEligible > 0
+      ? ` (${namesOrdered.length}/${totalEligible} no grupo responderam)`
+      : ` (${namesOrdered.length} resposta/s registrada/s)`;
+
+  const lines = [
+    `Respondentes da questao #${result.shortId}${countPart}`,
+    "",
+    ...namesOrdered.map((name, idx) => `${idx + 1}. ${name}`),
+    "",
+    `Resultado completo: /gabarito ${result.shortId}`
+  ];
+  return lines.join("\n");
+}
 
 function getDisplayName(msg: WAMessage, fallbackJid: string): string {
   return (msg.pushName && msg.pushName.trim()) || fallbackJid.split("@")[0];
@@ -344,7 +468,7 @@ async function startBot(): Promise<void> {
         const remoteJid = msg.key.remoteJid;
         const fromGroup = remoteJid.endsWith("@g.us");
         const fromPrivate = isPrivateChatJid(remoteJid);
-        const sender = msg.key.participant ?? msg.key.remoteJid ?? "desconhecido";
+        const sender = resolveActorJid(remoteJid, msg.key.participant);
         const sentAt = toIsoTimestamp(msg.messageTimestamp);
         const messageId = msg.key.id ?? "sem_id";
         const messageKind = fromGroup ? "grupo" : fromPrivate ? "privado" : "outro";
@@ -404,6 +528,20 @@ async function startBot(): Promise<void> {
             continue;
           }
 
+          const respondentQuestionId = parseRespondentsCommand(text);
+          if (respondentQuestionId) {
+            try {
+              await sock.sendMessage(remoteJid, {
+                text: await buildRespondentsReport(sock, respondentQuestionId)
+              });
+            } catch (respondErr) {
+              await sock.sendMessage(remoteJid, {
+                text: `Nao foi possivel listar respondentes: ${(respondErr as Error).message}`
+              });
+            }
+            continue;
+          }
+
           const groupCommand = parsePrivateCommand(text);
           if (groupCommand.kind !== "unknown") {
             console.log(`[cmd] comando detectado em ${messageKind}:`, groupCommand);
@@ -438,6 +576,7 @@ async function startBot(): Promise<void> {
               });
               pendingAnswerChanges.delete(sender);
               await sock.sendMessage(remoteJid, { text: "Resposta atualizada ✅" });
+              await maybePostAutoGabaritoToGroup(sock, pending.questionId);
               continue;
             }
 
@@ -632,6 +771,7 @@ async function startBot(): Promise<void> {
             await sock.sendMessage(remoteJid, {
               text: "Resposta salva."
             });
+            await maybePostAutoGabaritoToGroup(sock, command.questionId);
             continue;
           }
 

@@ -6,8 +6,9 @@ import { AnswerInput, CreateQuestionInput, QuestionType } from "./types";
 const supabase = createClient(config.supabaseUrl, config.supabaseServiceRoleKey);
 const ASSETS_BUCKET = "question-assets";
 
-function toShortId(id: number): string {
-  return id.toString(36).toUpperCase();
+/** ID curto exibido nas mensagens = id numerico da linha no Supabase (legivel, ex. 12, 348). */
+function toShortId(id: number | string): string {
+  return String(id).trim();
 }
 
 async function ensureBucket(): Promise<void> {
@@ -189,6 +190,36 @@ export type QuestionResult = {
   correctUsers: string[];
   wrongUsers: string[];
 };
+
+export async function getQuestionTargetGroupJid(shortId: string): Promise<string | null> {
+  const normalizedId = shortId.toUpperCase();
+  const { data, error } = await supabase
+    .from("questions")
+    .select("target_group_jid")
+    .eq("short_id", normalizedId)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Erro ao buscar grupo da questao: ${error.message}`);
+  }
+  const jid = data?.target_group_jid ? String(data.target_group_jid) : null;
+  return jid && jid.length > 0 ? jid : null;
+}
+
+export async function listAnswerUserJidsForQuestion(shortId: string): Promise<string[]> {
+  const normalizedId = shortId.toUpperCase();
+  const { data, error } = await supabase.from("answers").select("user_jid").eq("question_short_id", normalizedId);
+
+  if (error) {
+    throw new Error(`Erro ao listar respostas: ${error.message}`);
+  }
+
+  const set = new Set<string>();
+  for (const row of data ?? []) {
+    if (row.user_jid) set.add(String(row.user_jid));
+  }
+  return [...set];
+}
 
 export async function getQuestionResult(shortId: string): Promise<QuestionResult> {
   const normalizedId = shortId.toUpperCase();

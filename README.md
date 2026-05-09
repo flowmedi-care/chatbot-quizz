@@ -49,6 +49,7 @@ Notas:
 - `TARGET_GROUP_JIDS` aceita lista separada por virgula (`jid1,jid2,...`).
 - Com **dois ou mais** JIDs, o bot usa o **segundo** para o quiz (`target_group_jid`, publicação no grupo, ranking no privado e site quando aplicável). O **primeiro** pode ficar na env como reserva para outro uso.
 - Com **um** JID apenas, esse é o grupo do quiz.
+- Opcional: `AUTO_GABARITO_WHEN_ALL=false` desliga o envio **automatico** do `/gabarito` no grupo quando todos os membros (segundo a lista do WhatsApp) ja tiverem registrado resposta.
 
 ## 5) Rodar em desenvolvimento
 
@@ -97,6 +98,12 @@ Com o modo **desligado**, no privado o bot **nao responde** a nada exceto `/quiz
 - Se tentar responder de novo, o bot pergunta se você quer alterar sua última resposta:
   - `sim` altera
   - `nao` mantém
+
+### Quem respondeu (grupo ou privado)
+
+- `quem respondeu 182` (tambem `respondentes 182`, `/responderam 182`) — lista nomes registrados no banco e, se possivel, mostra quantos responderam sobre o total de membros no grupo.
+
+Quando **todas** as pessoas da lista de participantes do grupo (menos a conta do bot) tiverem uma resposta gravada para aquela questao, o bot envia no grupo o mesmo texto de `/gabarito` (uma vez por questao). Para desligar: `AUTO_GABARITO_WHEN_ALL=false`.
 
 ### Ranking (grupo ou privado)
 
