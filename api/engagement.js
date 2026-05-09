@@ -110,7 +110,7 @@ async function getNameHintsForGroup(supabase, groupJid) {
     fetchNamesFromAnswers(supabase, groupJid),
     fetchNamesFromCreators(supabase, groupJid)
   ]);
-  return mergeNameHints(namesAnswers, nameCreators);
+  return mergeNameHints(namesAnswers, namesCreators);
 }
 
 module.exports = async (req, res) => {
