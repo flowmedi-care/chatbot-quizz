@@ -125,7 +125,8 @@ export async function insertAnswer(input: AnswerInput): Promise<void> {
 
   if (error) {
     if (error.code === "23505") {
-      throw new Error("Voce ja respondeu essa questao.");
+      await updateUserAnswer(input);
+      return;
     }
     throw new Error(`Erro ao salvar resposta: ${error.message}`);
   }
@@ -165,17 +166,36 @@ export async function updateUserAnswer(input: AnswerInput): Promise<void> {
     throw new Error("Questao nao encontrada");
   }
 
-  const { error } = await supabase.from("answers").update({
-    question_id: question.id,
-    question_short_id: input.questionShortId.toUpperCase(),
-    user_name: input.userName,
-    answer_letter: input.answerLetter.toLowerCase(),
-    source_message_id: input.sourceMessageId,
-    sent_at: input.sentAt
-  }).eq("question_id", question.id).eq("user_jid", input.userJid);
+  const { data: updatedRows, error } = await supabase
+    .from("answers")
+    .update({
+      question_short_id: input.questionShortId.toUpperCase(),
+      user_name: input.userName,
+      answer_letter: input.answerLetter.toLowerCase(),
+      source_message_id: input.sourceMessageId,
+      sent_at: input.sentAt
+    })
+    .eq("question_id", question.id)
+    .eq("user_jid", input.userJid)
+    .select("id");
 
   if (error) {
     throw new Error(`Erro ao atualizar resposta: ${error.message}`);
+  }
+
+  if (!updatedRows?.length) {
+    const { error: insErr } = await supabase.from("answers").insert({
+      question_id: question.id,
+      question_short_id: input.questionShortId.toUpperCase(),
+      user_jid: input.userJid,
+      user_name: input.userName,
+      answer_letter: input.answerLetter.toLowerCase(),
+      source_message_id: input.sourceMessageId,
+      sent_at: input.sentAt
+    });
+    if (insErr) {
+      throw new Error(`Erro ao gravar resposta (fallback): ${insErr.message}`);
+    }
   }
 }
 

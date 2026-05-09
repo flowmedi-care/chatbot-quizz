@@ -488,7 +488,9 @@ async function startBot(): Promise<void> {
         const fromGroup = remoteJid.endsWith("@g.us");
         const fromPrivate = isPrivateChatJid(remoteJid);
         const messageId = msg.key.id ?? "sem_id";
-        const sender = resolveActorJid(remoteJid, msg.key);
+        const resolvedActor = resolveActorJid(remoteJid, msg.key);
+        /** Evita \"\" com participant vazio ou edge cases LID (`??` não substitui string vazia). */
+        const sender = resolvedActor.trim().length > 0 ? resolvedActor : remoteJid;
         if (fromGroup && sender.endsWith("@g.us")) {
           console.warn(
             "[msg] Grupo sem participant resolvido para este evento; comandos podem ser ignorados. id=",
@@ -507,43 +509,75 @@ async function startBot(): Promise<void> {
           continue;
         }
 
+        let quizModePrivateEnabled = false;
         if (fromPrivate) {
-          const quizEnabled = await getQuizModePrivate(sender);
-          if (!quizEnabled) {
-            if (parseSlashSessionCommand(text) === "quiz") {
-              await setQuizModePrivate(sender, true);
-              await sock.sendMessage(remoteJid, { text: buildQuizFullGuide() });
-            }
-            continue;
-          }
+          quizModePrivateEnabled = await getQuizModePrivate(sender);
+          const slashPriv = parseSlashSessionCommand(text);
 
-          const sessionCmd = parseSlashSessionCommand(text);
-          if (sessionCmd === "quizoff") {
-            await setQuizModePrivate(sender, false);
-            creationSessions.delete(sender);
-            pendingAnswerChanges.delete(sender);
-            await sock.sendMessage(remoteJid, {
-              text: [
-                "Modo quiz desligado.",
-                "Suas mensagens normais nao serao mais interpretadas como comandos.",
-                "Para ativar de novo no privado: /quiz"
-              ].join("\n")
-            });
-            continue;
-          }
-          if (sessionCmd === "help") {
-            await sock.sendMessage(remoteJid, { text: buildQuizFullGuide() });
-            continue;
-          }
-          if (sessionCmd === "quiz") {
-            await sock.sendMessage(remoteJid, {
-              text: [
-                "Modo quiz ja esta ligado.",
-                "Guia completo: /ajuda",
-                "Para sair: /quizoff"
-              ].join("\n")
-            });
-            continue;
+          if (!quizModePrivateEnabled) {
+            if (slashPriv === "quiz") {
+              await setQuizModePrivate(sender, true);
+              quizModePrivateEnabled = true;
+              await sock.sendMessage(remoteJid, { text: buildQuizFullGuide() });
+              continue;
+            }
+            if (slashPriv === "help") {
+              await sock.sendMessage(remoteJid, {
+                text: [
+                  "Para usar comandos aqui no privado (criar/responder questoes), ative:",
+                  "",
+                  "/quiz",
+                  "",
+                  "Sem modo quiz, só lemos aqui comandos neutros como gabarito, ranking ou quem respondeu."
+                ].join("\n")
+              });
+              continue;
+            }
+            if (slashPriv === "quizoff") {
+              await sock.sendMessage(remoteJid, {
+                text: 'O modo quiz no privado ja esta desligado. Para ativar: envie /quiz.'
+              });
+              continue;
+            }
+
+            const passiveProbe = parsePrivateCommand(text);
+            const respondentIdProbe = parseRespondentsCommand(text);
+            const passiveReadOnly =
+              passiveProbe.kind === "ranking" ||
+              passiveProbe.kind === "answer_key" ||
+              Boolean(respondentIdProbe);
+
+            if (!passiveReadOnly) {
+              continue;
+            }
+          } else {
+            if (slashPriv === "quizoff") {
+              await setQuizModePrivate(sender, false);
+              creationSessions.delete(sender);
+              pendingAnswerChanges.delete(sender);
+              await sock.sendMessage(remoteJid, {
+                text: [
+                  "Modo quiz desligado.",
+                  "Suas mensagens normais nao serao mais interpretadas como comandos.",
+                  "Para ativar de novo no privado: /quiz"
+                ].join("\n")
+              });
+              continue;
+            }
+            if (slashPriv === "help") {
+              await sock.sendMessage(remoteJid, { text: buildQuizFullGuide() });
+              continue;
+            }
+            if (slashPriv === "quiz") {
+              await sock.sendMessage(remoteJid, {
+                text: [
+                  "Modo quiz ja esta ligado.",
+                  "Guia completo: /ajuda",
+                  "Para sair: /quizoff"
+                ].join("\n")
+              });
+              continue;
+            }
           }
         }
 
@@ -586,7 +620,7 @@ async function startBot(): Promise<void> {
           }
         }
 
-        if (fromPrivate) {
+        if (fromPrivate && quizModePrivateEnabled) {
           const pending = pendingAnswerChanges.get(sender);
           if (pending) {
             const normalized = normalizeInput(text);

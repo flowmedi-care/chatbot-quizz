@@ -114,12 +114,22 @@ export function parsePrivateCommand(text: string):
     return { kind: "ranking" };
   }
 
-  const answerMatch = normalized.match(/^([abcde])\s+([a-z0-9]+)$/i);
-  if (answerMatch) {
+  /* Letra + id (ex: c 9, c9, e 12). Opcional: id + letra (ex: 9 c, 12e). */
+  let answerMatch = normalized.match(/^([abcde])\s*([a-z0-9]+)$/i);
+  if (!answerMatch) {
+    answerMatch = normalized.match(/^([a-z0-9]+)\s*([abcde])$/i);
+    if (answerMatch) {
+      return {
+        kind: "answer",
+        answer: answerMatch[2].toLowerCase(),
+        questionId: answerMatch[1].toUpperCase().trim()
+      };
+    }
+  } else {
     return {
       kind: "answer",
       answer: answerMatch[1].toLowerCase(),
-      questionId: answerMatch[2].toUpperCase()
+      questionId: answerMatch[2].toUpperCase().trim()
     };
   }
 
