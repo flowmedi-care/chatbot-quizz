@@ -30,6 +30,7 @@ export function buildQuizFullGuide(): string {
     "",
     "Ajuda e saida:",
     "- Guia completo: /ajuda",
+    "- Mais informacoes no front-end: https://papa-vagas.vercel.app/",
     "- Sair do modo quiz e voltar ao chat normal: /quizoff"
   ].join("\n");
 }
@@ -44,6 +45,7 @@ export function buildQuizQuickReference(): string {
     "- ranking — ranking de acertos",
     "",
     "Guia completo: envie /ajuda",
+    "Mais informacoes no front-end: https://papa-vagas.vercel.app/",
     "Para sair do bot e voltar a conversa normal: /quizoff"
   ].join("\n");
 }
