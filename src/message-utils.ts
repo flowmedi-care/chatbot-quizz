@@ -106,6 +106,62 @@ export function parseRepeatQuestionCommand(text: string): { shortId: string } | 
   return { shortId: m[1].toUpperCase() };
 }
 
+export type CadernoCommand =
+  | { kind: "list" }
+  | { kind: "pause"; id: number }
+  | { kind: "resume"; id: number }
+  | { kind: "next"; id: number }
+  | { kind: "recycle"; id: number }
+  | { kind: "deactivate"; id: number }
+  | { kind: "delete"; id: number };
+
+/**
+ * Comandos de caderno (privado, restritos ao created_by_jid no handler):
+ *   /cadernos
+ *   /caderno pause <id>     (e variantes: pausar, parar)
+ *   /caderno resume <id>    (retomar, voltar, ativar)
+ *   /caderno next <id>      (envia agora — debug)
+ *   reciclar caderno <id>   (loop do início)
+ *   desativar caderno <id>  (fim definitivo)
+ *   /caderno delete <id>    (apaga linha)
+ */
+export function parseCadernoCommand(text: string): CadernoCommand | null {
+  const t = normalizeInput(text.trim());
+  if (t === "/cadernos" || t === "cadernos") return { kind: "list" };
+
+  const slashMatch = t.match(/^\/?caderno\s+([a-z]+)\s+(\d+)$/i);
+  if (slashMatch) {
+    const verb = slashMatch[1];
+    const id = Number(slashMatch[2]);
+    if (!Number.isFinite(id) || id <= 0) return null;
+    if (verb === "pause" || verb === "pausar" || verb === "parar") return { kind: "pause", id };
+    if (
+      verb === "resume" ||
+      verb === "retomar" ||
+      verb === "voltar" ||
+      verb === "ativar"
+    )
+      return { kind: "resume", id };
+    if (verb === "next" || verb === "agora" || verb === "enviar") return { kind: "next", id };
+    if (verb === "delete" || verb === "apagar" || verb === "excluir")
+      return { kind: "delete", id };
+    return null;
+  }
+
+  const recycleMatch = t.match(/^(?:reciclar|recomecar)\s+caderno\s+(\d+)$/i);
+  if (recycleMatch) {
+    const id = Number(recycleMatch[1]);
+    if (Number.isFinite(id) && id > 0) return { kind: "recycle", id };
+  }
+  const deactivateMatch = t.match(/^(?:desativar|encerrar|finalizar)\s+caderno\s+(\d+)$/i);
+  if (deactivateMatch) {
+    const id = Number(deactivateMatch[1]);
+    if (Number.isFinite(id) && id > 0) return { kind: "deactivate", id };
+  }
+
+  return null;
+}
+
 export function hasSupportedMedia(msg: WAMessage): boolean {
   return Boolean(msg.message?.imageMessage) || Boolean(msg.message?.documentMessage);
 }

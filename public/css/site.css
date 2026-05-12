@@ -857,3 +857,192 @@ table.tutorial-table code {
     margin-right: -0.25rem;
   }
 }
+
+/* ---------- Cadernos ---------- */
+
+.modal-cadernos {
+  max-width: 720px;
+}
+
+.modal-caderno-add {
+  max-width: 640px;
+}
+
+.cadernos-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 0.75rem;
+}
+
+.cadernos-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  max-height: min(56vh, 520px);
+  overflow-y: auto;
+}
+
+.caderno-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.9rem 1rem;
+  margin-bottom: 0.75rem;
+  background: var(--bg-card);
+}
+
+.caderno-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.75rem;
+  margin-bottom: 0.45rem;
+}
+
+.caderno-card-name {
+  font-weight: 700;
+  font-size: 1rem;
+  margin: 0;
+}
+
+.caderno-card-status {
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 0.15rem 0.55rem;
+  border-radius: 999px;
+  background: var(--accent-dim);
+  color: var(--accent);
+}
+
+.caderno-card-status.status-inactive {
+  background: rgba(120, 113, 108, 0.18);
+  color: #57534e;
+}
+
+.caderno-card-status.status-paused_waiting_decision {
+  background: rgba(214, 158, 46, 0.18);
+  color: #b7791f;
+}
+
+.caderno-card-status.status-finished {
+  background: rgba(190, 18, 60, 0.12);
+  color: var(--danger);
+}
+
+.caderno-card-meta {
+  font-size: 0.88rem;
+  color: var(--muted);
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.2rem 1rem;
+}
+
+.caderno-card-meta strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.caderno-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.75rem;
+}
+
+.caderno-card-actions button {
+  font-size: 0.82rem;
+  padding: 0.4rem 0.75rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+
+.caderno-card-actions button:hover:not(:disabled) {
+  color: var(--accent);
+  border-color: rgba(194, 65, 12, 0.35);
+  background: var(--accent-soft-bg);
+}
+
+.caderno-card-actions button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.caderno-card-actions .btn-caderno-danger {
+  color: var(--danger);
+  border-color: rgba(190, 18, 60, 0.25);
+}
+
+.caderno-card-actions .btn-caderno-danger:hover:not(:disabled) {
+  color: #fff;
+  background: var(--danger);
+  border-color: var(--danger);
+}
+
+.caderno-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.caderno-form input[type="text"],
+.caderno-form input[type="number"],
+.caderno-form input[type="time"],
+.caderno-form input[type="file"] {
+  padding: 0.55rem 0.65rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--text);
+  font: inherit;
+}
+
+.caderno-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.75rem;
+}
+
+.caderno-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.caderno-preview {
+  background: var(--accent-soft-bg);
+  border: 1px solid rgba(194, 65, 12, 0.18);
+  border-radius: var(--radius);
+  padding: 0.85rem 1rem;
+  margin-top: 0.75rem;
+  font-size: 0.88rem;
+  max-height: 320px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+}
+
+.caderno-preview h4 {
+  margin: 0 0 0.5rem;
+  font-size: 0.95rem;
+}
+
+.caderno-preview-warning {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+@media (max-width: 560px) {
+  .caderno-row {
+    grid-template-columns: 1fr;
+  }
+
+  .caderno-card-meta {
+    grid-template-columns: 1fr;
+  }
+}

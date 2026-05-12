@@ -5,7 +5,10 @@
     reportData: "/api/report-data",
     detail: (id) => `/api/question-detail?shortId=${encodeURIComponent(id)}`,
     submit: "/api/question-submit",
-    engagement: "/api/engagement"
+    engagement: "/api/engagement",
+    cadernos: "/api/cadernos",
+    cadernoUpload: "/api/caderno-upload",
+    cadernoDelete: "/api/caderno-delete"
   };
 
   const els = {
@@ -41,8 +44,29 @@
     engagementClose: document.getElementById("engagement-close"),
     engagementStatus: document.getElementById("engagement-status"),
     engagementList: document.getElementById("engagement-list"),
-    btnEngagementOpen: document.getElementById("btn-engagement-open")
+    btnEngagementOpen: document.getElementById("btn-engagement-open"),
+    btnCadernosOpen: document.getElementById("btn-cadernos-open"),
+    cadernosOverlay: document.getElementById("cadernos-overlay"),
+    cadernosClose: document.getElementById("cadernos-close"),
+    cadernosStatus: document.getElementById("cadernos-status"),
+    cadernosList: document.getElementById("cadernos-list"),
+    btnCadernoAdd: document.getElementById("btn-caderno-add"),
+    cadernoAddOverlay: document.getElementById("caderno-add-overlay"),
+    cadernoAddClose: document.getElementById("caderno-add-close"),
+    cadernoName: document.getElementById("caderno-name"),
+    cadernoPdf: document.getElementById("caderno-pdf"),
+    cadernoPerRun: document.getElementById("caderno-per-run"),
+    cadernoInterval: document.getElementById("caderno-interval"),
+    cadernoTime: document.getElementById("caderno-time"),
+    cadernoAddStatus: document.getElementById("caderno-add-status"),
+    cadernoPreviewBox: document.getElementById("caderno-preview-box"),
+    btnCadernoPreview: document.getElementById("btn-caderno-preview"),
+    btnCadernoSave: document.getElementById("btn-caderno-save"),
+    btnCadernoSaveActivate: document.getElementById("btn-caderno-save-activate")
   };
+
+  let cadernosCache = [];
+  let cadernoUploadInFlight = false;
 
   let questionsList = [];
   /** @type {null | { questions: any[], answers: any[], participants: any[], warning?: string }} */
@@ -750,6 +774,318 @@
     }
   }
 
+  function formatStatusLabel(status) {
+    switch (status) {
+      case "active":
+        return "Ativo";
+      case "inactive":
+        return "Inativo";
+      case "paused_waiting_decision":
+        return "Aguardando decisão";
+      case "finished":
+        return "Encerrado";
+      default:
+        return status || "—";
+    }
+  }
+
+  function formatNextRunPretty(iso, timeZone) {
+    if (!iso) return "—";
+    try {
+      const d = new Date(iso);
+      return new Intl.DateTimeFormat("pt-BR", {
+        timeZone: timeZone || "America/Sao_Paulo",
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit"
+      }).format(d);
+    } catch {
+      return iso;
+    }
+  }
+
+  function pad2(n) {
+    return n < 10 ? `0${n}` : String(n);
+  }
+
+  function renderCadernos() {
+    if (!els.cadernosList) return;
+    if (!cadernosCache.length) {
+      els.cadernosList.innerHTML =
+        '<li class="engagement-empty">Nenhum caderno cadastrado. Clique em "Adicionar caderno" para enviar um PDF.</li>';
+      return;
+    }
+    els.cadernosList.innerHTML = cadernosCache
+      .map((c) => {
+        const next =
+          c.status === "active" ? formatNextRunPretty(c.nextRunAt, c.timezone) : "—";
+        const last = c.lastRunAt ? formatNextRunPretty(c.lastRunAt, c.timezone) : "—";
+        const totalLabel = `${c.cursor}/${c.totalQuestions}`;
+        const horario = `${pad2(c.sendHour)}:${pad2(c.sendMinute)}`;
+        const isActive = c.status === "active";
+        const canResume = c.status !== "active" && c.status !== "finished";
+        const canRecycle =
+          c.status === "paused_waiting_decision" || c.status === "finished";
+        return `
+        <li class="caderno-card" data-id="${c.id}">
+          <div class="caderno-card-head">
+            <h4 class="caderno-card-name">${esc(c.name)} <small style="color:var(--muted);font-weight:500;">#${c.id}</small></h4>
+            <span class="caderno-card-status status-${esc(c.status)}">${esc(formatStatusLabel(c.status))}</span>
+          </div>
+          <div class="caderno-card-meta">
+            <div><strong>Envio:</strong> ${c.questionsPerRun} q. a cada ${c.intervalDays} dia(s) — ${horario}</div>
+            <div><strong>Progresso:</strong> ${totalLabel}</div>
+            <div><strong>Próximo envio:</strong> ${esc(next)}</div>
+            <div><strong>Último envio:</strong> ${esc(last)}</div>
+          </div>
+          <div class="caderno-card-actions">
+            <button type="button" data-action="pause" ${isActive ? "" : "disabled"}>Pausar</button>
+            <button type="button" data-action="resume" ${canResume ? "" : "disabled"}>${
+          canRecycle ? "Retomar do começo" : "Retomar"
+        }</button>
+            <button type="button" data-action="recycle" ${canRecycle ? "" : "disabled"}>Reciclar (zerar cursor)</button>
+            <button type="button" class="btn-caderno-danger" data-action="delete">Excluir</button>
+          </div>
+        </li>`;
+      })
+      .join("");
+  }
+
+  async function loadCadernos() {
+    if (!els.cadernosList || !els.cadernosStatus) return;
+    els.cadernosStatus.textContent = "Carregando…";
+    try {
+      const data = await fetchJson(API.cadernos);
+      cadernosCache = data.cadernos || [];
+      if (data.warning) {
+        els.cadernosStatus.textContent = data.warning;
+      } else if (!cadernosCache.length) {
+        els.cadernosStatus.textContent = "Você ainda não tem cadernos cadastrados.";
+      } else {
+        const ativos = cadernosCache.filter((c) => c.status === "active").length;
+        els.cadernosStatus.textContent = `${cadernosCache.length} caderno(s) — ${ativos} ativo(s).`;
+      }
+      renderCadernos();
+    } catch (e) {
+      els.cadernosStatus.textContent = e.message || "Não foi possível carregar.";
+      cadernosCache = [];
+      renderCadernos();
+    }
+  }
+
+  function openCadernosModal() {
+    if (!els.cadernosOverlay) return;
+    els.cadernosOverlay.classList.add("open");
+    els.cadernosOverlay.setAttribute("aria-hidden", "false");
+    loadCadernos();
+  }
+
+  function closeCadernosModal() {
+    if (!els.cadernosOverlay) return;
+    els.cadernosOverlay.classList.remove("open");
+    els.cadernosOverlay.setAttribute("aria-hidden", "true");
+  }
+
+  async function patchCadernoStatus(id, payload) {
+    return fetchJson(API.cadernos, {
+      method: "PATCH",
+      body: JSON.stringify({ id, ...payload })
+    });
+  }
+
+  async function onCadernosListClick(ev) {
+    const btn = ev.target.closest("button[data-action]");
+    if (!btn) return;
+    const card = btn.closest(".caderno-card");
+    if (!card) return;
+    const id = Number(card.dataset.id);
+    if (!Number.isFinite(id)) return;
+    const action = btn.dataset.action;
+    const c = cadernosCache.find((x) => x.id === id);
+    if (!c) return;
+
+    const allButtons = card.querySelectorAll("button");
+    allButtons.forEach((b) => (b.disabled = true));
+
+    try {
+      if (action === "pause") {
+        await patchCadernoStatus(id, { status: "inactive" });
+      } else if (action === "resume") {
+        await patchCadernoStatus(id, { status: "active", recomputeNextRun: true });
+      } else if (action === "recycle") {
+        if (!confirm(`Reiniciar o caderno "${c.name}" do começo (cursor = 0)?`)) {
+          return;
+        }
+        await patchCadernoStatus(id, { status: "active", cursor: 0, recomputeNextRun: true });
+      } else if (action === "delete") {
+        if (!confirm(`Excluir o caderno "${c.name}" e todas as suas questões? Esta ação é permanente.`)) {
+          return;
+        }
+        await fetchJson(API.cadernoDelete, {
+          method: "POST",
+          body: JSON.stringify({ id })
+        });
+      }
+      await loadCadernos();
+    } catch (e) {
+      els.cadernosStatus.textContent = e.message || "Falha na ação.";
+    } finally {
+      renderCadernos();
+    }
+  }
+
+  function readFileAsDataUrl(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ""));
+      reader.onerror = () => reject(reader.error || new Error("Falha ao ler arquivo"));
+      reader.readAsDataURL(file);
+    });
+  }
+
+  function getCadernoFormPayload() {
+    const file = els.cadernoPdf && els.cadernoPdf.files && els.cadernoPdf.files[0];
+    const name = (els.cadernoName.value || "").trim();
+    const questionsPerRun = Number(els.cadernoPerRun.value || 3);
+    const intervalDays = Number(els.cadernoInterval.value || 2);
+    const [hh, mm] = String(els.cadernoTime.value || "09:00").split(":");
+    const sendHour = Number(hh);
+    const sendMinute = Number(mm);
+    return {
+      file,
+      name,
+      schedule: {
+        questionsPerRun,
+        intervalDays,
+        sendHour: Number.isFinite(sendHour) ? sendHour : 9,
+        sendMinute: Number.isFinite(sendMinute) ? sendMinute : 0,
+        timezone: "America/Sao_Paulo"
+      }
+    };
+  }
+
+  function renderCadernoPreview(result) {
+    if (!els.cadernoPreviewBox) return;
+    if (!result) {
+      els.cadernoPreviewBox.classList.add("hidden");
+      els.cadernoPreviewBox.innerHTML = "";
+      return;
+    }
+    const summary = result.summary || {};
+    const lines = [];
+    lines.push("<h4>Pré-visualização</h4>");
+    lines.push(
+      `<div><strong>Total de questões extraídas:</strong> ${result.totalQuestions}</div>`
+    );
+    lines.push(
+      `<div><strong>Entradas no gabarito:</strong> ${result.totalGabaritoEntries ?? "?"}</div>`
+    );
+    lines.push(
+      `<div><strong>Múltipla escolha / Certo-Errado:</strong> ${summary.multipleChoice || 0} / ${
+        summary.trueFalse || 0
+      }</div>`
+    );
+    if (summary.withoutAnswerKey) {
+      lines.push(
+        `<div class="caderno-preview-warning"><strong>${summary.withoutAnswerKey}</strong> questão(ões) sem gabarito mapeado.</div>`
+      );
+    }
+    if (result.warnings && result.warnings.length) {
+      lines.push(
+        `<div style="margin-top:0.5rem"><strong>Avisos do parser:</strong></div><ul>${result.warnings
+          .slice(0, 12)
+          .map((w) => `<li>${esc(w)}</li>`)
+          .join("")}${result.warnings.length > 12 ? "<li>…</li>" : ""}</ul>`
+      );
+    }
+    if (result.preview && result.preview.length) {
+      const first = result.preview[0];
+      lines.push("<div style='margin-top:0.65rem'><strong>Primeira questão:</strong></div>");
+      lines.push(`<div style="opacity:.8">${esc(first.banca || "")}</div>`);
+      lines.push(`<div style="opacity:.8;margin-bottom:.35rem">${esc(first.subject || "")}</div>`);
+      lines.push(`<pre style="white-space:pre-wrap;font:inherit;margin:0">${esc(first.statementText)}</pre>`);
+      lines.push(
+        `<div style="margin-top:.3rem"><strong>Gabarito:</strong> ${esc(first.answerKey || "?")}</div>`
+      );
+      lines.push(`<div><a href="${escAttr(first.tecUrl)}" target="_blank" rel="noreferrer">${esc(first.tecUrl)}</a></div>`);
+    }
+    els.cadernoPreviewBox.innerHTML = lines.join("");
+    els.cadernoPreviewBox.classList.remove("hidden");
+  }
+
+  async function callCadernoUpload(extra) {
+    const form = getCadernoFormPayload();
+    if (!form.file) throw new Error("Selecione um PDF.");
+    if (!extra.previewOnly && !form.name) throw new Error("Informe um nome para o caderno.");
+    const dataUrl = await readFileAsDataUrl(form.file);
+    const body = {
+      name: form.name,
+      schedule: form.schedule,
+      pdfBase64: dataUrl,
+      ...extra
+    };
+    return fetchJson(API.cadernoUpload, {
+      method: "POST",
+      body: JSON.stringify(body)
+    });
+  }
+
+  async function onCadernoPreview() {
+    if (cadernoUploadInFlight) return;
+    cadernoUploadInFlight = true;
+    els.cadernoAddStatus.textContent = "Lendo PDF e extraindo…";
+    renderCadernoPreview(null);
+    try {
+      const result = await callCadernoUpload({ previewOnly: true });
+      els.cadernoAddStatus.textContent = `${result.totalQuestions} questão(ões) extraída(s).`;
+      renderCadernoPreview(result);
+    } catch (e) {
+      els.cadernoAddStatus.textContent = e.message || "Falha no preview.";
+    } finally {
+      cadernoUploadInFlight = false;
+    }
+  }
+
+  async function onCadernoSave(activate) {
+    if (cadernoUploadInFlight) return;
+    cadernoUploadInFlight = true;
+    els.cadernoAddStatus.textContent = activate ? "Salvando e ativando…" : "Salvando…";
+    try {
+      const result = await callCadernoUpload({ activate });
+      els.cadernoAddStatus.textContent = `Caderno #${result.cadernoId} salvo (${result.totalQuestions} questões).`;
+      renderCadernoPreview(result);
+      await loadCadernos();
+      setTimeout(() => {
+        closeCadernoAddModal();
+      }, 1200);
+    } catch (e) {
+      els.cadernoAddStatus.textContent = e.message || "Falha ao salvar.";
+    } finally {
+      cadernoUploadInFlight = false;
+    }
+  }
+
+  function openCadernoAddModal() {
+    if (!els.cadernoAddOverlay) return;
+    if (els.cadernoName) els.cadernoName.value = "";
+    if (els.cadernoPdf) els.cadernoPdf.value = "";
+    if (els.cadernoPerRun) els.cadernoPerRun.value = "3";
+    if (els.cadernoInterval) els.cadernoInterval.value = "2";
+    if (els.cadernoTime) els.cadernoTime.value = "09:00";
+    if (els.cadernoAddStatus) els.cadernoAddStatus.textContent = "";
+    renderCadernoPreview(null);
+    els.cadernoAddOverlay.classList.add("open");
+    els.cadernoAddOverlay.setAttribute("aria-hidden", "false");
+  }
+
+  function closeCadernoAddModal() {
+    if (!els.cadernoAddOverlay) return;
+    els.cadernoAddOverlay.classList.remove("open");
+    els.cadernoAddOverlay.setAttribute("aria-hidden", "true");
+  }
+
   async function onGenerateReport() {
     if (!reportData || !reportData.questions || !reportData.questions.length) {
       if (els.reportStatus) els.reportStatus.textContent = "Sem dados de relatório. Confira o grupo no Vercel.";
@@ -840,6 +1176,26 @@
     });
   }
   if (els.engagementList) els.engagementList.addEventListener("change", onEngagementToggle);
+
+  if (els.btnCadernosOpen) els.btnCadernosOpen.addEventListener("click", openCadernosModal);
+  if (els.cadernosClose) els.cadernosClose.addEventListener("click", closeCadernosModal);
+  if (els.cadernosOverlay) {
+    els.cadernosOverlay.addEventListener("click", (ev) => {
+      if (ev.target === els.cadernosOverlay) closeCadernosModal();
+    });
+  }
+  if (els.cadernosList) els.cadernosList.addEventListener("click", onCadernosListClick);
+  if (els.btnCadernoAdd) els.btnCadernoAdd.addEventListener("click", openCadernoAddModal);
+  if (els.cadernoAddClose) els.cadernoAddClose.addEventListener("click", closeCadernoAddModal);
+  if (els.cadernoAddOverlay) {
+    els.cadernoAddOverlay.addEventListener("click", (ev) => {
+      if (ev.target === els.cadernoAddOverlay) closeCadernoAddModal();
+    });
+  }
+  if (els.btnCadernoPreview) els.btnCadernoPreview.addEventListener("click", onCadernoPreview);
+  if (els.btnCadernoSave) els.btnCadernoSave.addEventListener("click", () => onCadernoSave(false));
+  if (els.btnCadernoSaveActivate)
+    els.btnCadernoSaveActivate.addEventListener("click", () => onCadernoSave(true));
 
   init();
 })();

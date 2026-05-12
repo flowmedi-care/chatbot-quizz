@@ -145,14 +145,82 @@ supabase-migration-bot-user-quiz-mode.sql  # apenas tabela modo quiz (legado)
 TUTORIAL_GRUPO.md        # texto para colar no grupo (tutorial usuarios)
 ```
 
-## 8) Proximos passos recomendados
+## 8) Cadernões (upload de PDF Tec Concursos)
+
+Permite carregar um PDF do Tec Concursos pelo site Papa Vagas e agendar envio
+automático das questões no grupo.
+
+### Setup do banco
+
+1. Rode no SQL Editor do Supabase: `supabase-migration-cadernos.sql`.
+2. Cria duas tabelas: `cadernos` (configuração e agenda) e `caderno_questions`
+   (questões extraídas com `position`, `tec_url`, `answer_key`, etc.).
+
+### Como criar um caderno
+
+1. No site Papa Vagas, abra o botão **Cadernos** → **Adicionar caderno**.
+2. Dê um nome (ex.: `SEFAZ PI 2025 — Geral`).
+3. Selecione o PDF do Tec Concursos (formato padrão da plataforma).
+4. Configure:
+   - **Questões por envio** (1–20, padrão 3).
+   - **Intervalo (dias)** (1–30, padrão 2).
+   - **Horário do envio** (HH:MM no fuso `America/Sao_Paulo`).
+5. Clique em **Pré-visualizar** para conferir total extraído, gabarito e avisos
+   do parser. Se estiver tudo certo, **Salvar e ativar**.
+
+O parser reconhece:
+- Múltipla escolha (alternativas `a)` `b)` `c)` `d)` `e)`).
+- Certo/Errado (banca CEBRASPE/CESPE).
+- Gabarito ao final do PDF (`N) Letra` ou `N) Certo/Errado`).
+- Pula ruído de páginação (`-- N of N --`, marcadores `5)` sem conteúdo, etc.).
+
+Mídia (imagens/fórmulas) não é capturada — questões 100% gráficas ficarão
+truncadas. Use o preview para identificar e descartar antes de ativar.
+
+### Como o envio funciona
+
+- O bot tem um scheduler interno (tick a cada 60s) que lê `cadernos` com
+  `status = 'active'` e `next_run_at <= now()`.
+- A cada disparo: envia `questions_per_run` questões em sequência (~3s entre
+  elas), incrementa o `cursor` e agenda `next_run_at = agora + interval_days`
+  no horário configurado.
+- Cada questão entra em `public.questions` igual a uma criação manual:
+  - `creator_name = "Caderno: <nome>"` (criador é um JID sentinela, então o
+    fechamento por engajamento espera **todos** os engajados responderem).
+  - `explanation_text` traz o link da questão no Tec Concursos + banca + matéria.
+  - Responda no privado com `a 182`, `c 182` etc.
+  - O auto-gabarito por engajamento fecha igual ao fluxo manual.
+
+### Fim do caderno
+
+Quando as questões acabam, o caderno entra em `paused_waiting_decision` e o
+dono recebe DM perguntando o que fazer. Responda no privado do bot:
+
+- `reciclar caderno <id>` — reinicia o cursor e volta a enviar do começo.
+- `desativar caderno <id>` — marca como encerrado.
+
+### Comandos no bot (privado, só para o dono)
+
+| Comando | Efeito |
+|---------|--------|
+| `/cadernos` | Lista seus cadernos com status, agenda e progresso. |
+| `/caderno pause <id>` | Pausa envios (status = inactive). |
+| `/caderno resume <id>` | Retoma envios (recalcula `next_run_at`). |
+| `/caderno next <id>` | Força envio imediato (debug). |
+| `reciclar caderno <id>` | Zera o cursor e reativa. |
+| `desativar caderno <id>` | Encerra de vez. |
+
+Aceita também variantes em português: `pausar`, `parar`, `retomar`, `voltar`,
+`ativar`, `agora`, `recomecar`, `encerrar`, `finalizar`.
+
+## 9) Proximos passos recomendados
 
 - Criar endpoint/script para ranking por usuario.
 - Adicionar fechamento de questao e prazo de resposta.
 - Publicar em multiplos grupos simultaneamente.
 - Deploy (Railway/Render) com volume para pasta `auth`.
 
-## 9) Troubleshooting rapido
+## 10) Troubleshooting rapido
 
 - **Erro de variavel de ambiente ausente**: confira `.env`.
 - **Bot nao conecta**: delete `auth/` e escaneie QR novamente.

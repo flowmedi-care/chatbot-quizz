@@ -18,6 +18,7 @@ import {
   isValidUserAnswer,
   normalizeInput,
   parseAnswerKeyByType,
+  parseCadernoCommand,
   parsePrivateCommand,
   parseGabaritoCommand,
   parseOmissasCommand,
@@ -32,6 +33,7 @@ import { config } from "./config";
 import {
   createQuestion,
   formatRankingMessage,
+  getCadernoById,
   getQuestionResult,
   getRankingForGroup,
   getQuestionForRepeat,
@@ -42,11 +44,15 @@ import {
   insertAnswer,
   getUserAnswer,
   listAnswerUserJidsForQuestion,
+  listCadernosForOwner,
   listUnansweredShortIdsForUser,
+  setCadernoStatus,
   setQuizModePrivate,
   updateUserAnswer,
   upsertGroupMembersFromSync
 } from "./supabase";
+import { computeNextRunAt, formatNextRunPretty } from "./schedule";
+import { forceRunCaderno, startCadernoScheduler } from "./caderno-scheduler";
 import { MediaPayload, QuestionDraft, QuestionType } from "./types";
 
 function toIsoTimestamp(value: unknown): string {
@@ -426,6 +432,124 @@ async function repeatQuestionStatement(sock: WASocket, jid: string, shortId: str
   });
 }
 
+type CadernoCommandArg = ReturnType<typeof parseCadernoCommand>;
+
+async function handleCadernoCommand(
+  sock: WASocket,
+  remoteJid: string,
+  senderJid: string,
+  cmd: NonNullable<CadernoCommandArg>
+): Promise<void> {
+  if (cmd.kind === "list") {
+    const cadernos = await listCadernosForOwner(senderJid);
+    if (cadernos.length === 0) {
+      await sock.sendMessage(remoteJid, {
+        text:
+          "Voce nao tem cadernos cadastrados.\n" +
+          "Abra o site Papa Vagas e use o botao 'Cadernos' para enviar um PDF do Tec Concursos."
+      });
+      return;
+    }
+    const lines = ["Seus cadernos:", ""];
+    for (const c of cadernos) {
+      const next = c.status === "active" ? formatNextRunPretty(c.nextRunAt, c.timezone) : "—";
+      lines.push(
+        `#${c.id} ${c.name}`,
+        `  status: ${c.status}`,
+        `  envio: ${c.questionsPerRun} questao(oes) a cada ${c.intervalDays} dia(s), ${pad2(c.sendHour)}:${pad2(c.sendMinute)} (${c.timezone})`,
+        `  proximo: ${next}`,
+        `  progresso: cursor ${c.cursor}`,
+        ""
+      );
+    }
+    lines.push(
+      "Comandos:",
+      "  /caderno pause <id>    /caderno resume <id>",
+      "  /caderno next <id>     /caderno delete <id>",
+      "  reciclar caderno <id>  desativar caderno <id>"
+    );
+    await sock.sendMessage(remoteJid, { text: lines.join("\n") });
+    return;
+  }
+
+  const caderno = await getCadernoById(cmd.id);
+  if (!caderno) {
+    await sock.sendMessage(remoteJid, { text: `Caderno #${cmd.id} nao encontrado.` });
+    return;
+  }
+  if (caderno.createdByJid && caderno.createdByJid !== senderJid) {
+    await sock.sendMessage(remoteJid, {
+      text: `Voce nao e o dono do caderno #${cmd.id}.`
+    });
+    return;
+  }
+
+  switch (cmd.kind) {
+    case "pause": {
+      await setCadernoStatus(caderno.id, "inactive", { nextRunAt: null });
+      await sock.sendMessage(remoteJid, {
+        text: `Caderno #${caderno.id} ("${caderno.name}") pausado. Use /caderno resume ${caderno.id} para retomar.`
+      });
+      return;
+    }
+    case "resume": {
+      const nextIso = computeNextRunAt(
+        new Date(),
+        caderno.sendHour,
+        caderno.sendMinute,
+        caderno.timezone,
+        0
+      ).toISOString();
+      await setCadernoStatus(caderno.id, "active", { nextRunAt: nextIso });
+      await sock.sendMessage(remoteJid, {
+        text: `Caderno #${caderno.id} retomado. Proximo envio: ${formatNextRunPretty(nextIso, caderno.timezone)}.`
+      });
+      return;
+    }
+    case "next": {
+      await sock.sendMessage(remoteJid, {
+        text: `Forçando envio agora do caderno #${caderno.id}…`
+      });
+      const fresh = await getCadernoById(caderno.id);
+      if (fresh) await forceRunCaderno(sock, fresh);
+      return;
+    }
+    case "recycle": {
+      const nextIso = computeNextRunAt(
+        new Date(),
+        caderno.sendHour,
+        caderno.sendMinute,
+        caderno.timezone,
+        0
+      ).toISOString();
+      await setCadernoStatus(caderno.id, "active", { nextRunAt: nextIso, cursor: 0 });
+      await sock.sendMessage(remoteJid, {
+        text: `Caderno #${caderno.id} reiniciado do começo. Próximo envio: ${formatNextRunPretty(nextIso, caderno.timezone)}.`
+      });
+      return;
+    }
+    case "deactivate": {
+      await setCadernoStatus(caderno.id, "finished", { nextRunAt: null });
+      await sock.sendMessage(remoteJid, {
+        text: `Caderno #${caderno.id} encerrado.`
+      });
+      return;
+    }
+    case "delete": {
+      await sock.sendMessage(remoteJid, {
+        text:
+          `Para excluir o caderno #${caderno.id}, use o site Papa Vagas (botao "Excluir").\n` +
+          "O bot nao apaga cadernos pelo chat por seguranca."
+      });
+      return;
+    }
+  }
+}
+
+function pad2(n: number): string {
+  return n < 10 ? `0${n}` : String(n);
+}
+
 async function startBot(): Promise<void> {
   if (isStarting) return;
   isStarting = true;
@@ -490,6 +614,7 @@ async function startBot(): Promise<void> {
     if (connection === "open") {
       console.log(`Bot conectado no WhatsApp. (instancia ${instanceId})`);
       isStarting = false;
+      startCadernoScheduler(sock);
     }
   });
 
@@ -684,6 +809,20 @@ async function startBot(): Promise<void> {
               });
             }
             continue;
+          }
+
+          if (fromPrivate) {
+            const cadernoCmd = parseCadernoCommand(text);
+            if (cadernoCmd) {
+              try {
+                await handleCadernoCommand(sock, remoteJid, sender, cadernoCmd);
+              } catch (cadErr) {
+                await sock.sendMessage(remoteJid, {
+                  text: `Erro no comando de caderno: ${(cadErr as Error).message}`
+                });
+              }
+              continue;
+            }
           }
 
           if (fromPrivate && parseOmissasCommand(text)) {

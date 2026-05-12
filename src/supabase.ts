@@ -666,6 +666,274 @@ export async function upsertGroupMembersFromSync(
   }
 }
 
+export type CadernoRow = {
+  id: number;
+  name: string;
+  targetGroupJid: string;
+  createdByJid: string | null;
+  status: "inactive" | "active" | "paused_waiting_decision" | "finished";
+  questionsPerRun: number;
+  intervalDays: number;
+  sendHour: number;
+  sendMinute: number;
+  timezone: string;
+  cursor: number;
+  lastRunAt: string | null;
+  nextRunAt: string | null;
+};
+
+export type CadernoQuestionRow = {
+  id: number;
+  cadernoId: number;
+  position: number;
+  tecQuestionId: string | null;
+  tecUrl: string;
+  banca: string | null;
+  subject: string | null;
+  questionType: QuestionType;
+  statementText: string;
+  answerKey: string;
+};
+
+function mapCadernoRow(row: Record<string, unknown>): CadernoRow {
+  return {
+    id: Number(row.id),
+    name: String(row.name),
+    targetGroupJid: String(row.target_group_jid),
+    createdByJid: row.created_by_jid ? String(row.created_by_jid) : null,
+    status: String(row.status) as CadernoRow["status"],
+    questionsPerRun: Number(row.questions_per_run),
+    intervalDays: Number(row.interval_days),
+    sendHour: Number(row.send_hour),
+    sendMinute: Number(row.send_minute),
+    timezone: String(row.timezone || "America/Sao_Paulo"),
+    cursor: Number(row.cursor || 0),
+    lastRunAt: row.last_run_at ? String(row.last_run_at) : null,
+    nextRunAt: row.next_run_at ? String(row.next_run_at) : null
+  };
+}
+
+function mapCadernoQuestionRow(row: Record<string, unknown>): CadernoQuestionRow {
+  return {
+    id: Number(row.id),
+    cadernoId: Number(row.caderno_id),
+    position: Number(row.position),
+    tecQuestionId: row.tec_question_id ? String(row.tec_question_id) : null,
+    tecUrl: String(row.tec_url),
+    banca: row.banca ? String(row.banca) : null,
+    subject: row.subject ? String(row.subject) : null,
+    questionType: String(row.question_type) as QuestionType,
+    statementText: String(row.statement_text),
+    answerKey: String(row.answer_key).toUpperCase()
+  };
+}
+
+/** Cadernos prontos para envio: status=active e next_run_at <= now. */
+export async function listCadernosDueForRun(): Promise<CadernoRow[]> {
+  const nowIso = new Date().toISOString();
+  const { data, error } = await supabase
+    .from("cadernos")
+    .select(
+      "id, name, target_group_jid, created_by_jid, status, questions_per_run, interval_days, send_hour, send_minute, timezone, cursor, last_run_at, next_run_at"
+    )
+    .eq("status", "active")
+    .lte("next_run_at", nowIso);
+
+  if (error) {
+    const msg = error.message.toLowerCase();
+    if (msg.includes("relation") && msg.includes("does not exist")) return [];
+    throw new Error(`Erro ao listar cadernos: ${error.message}`);
+  }
+
+  return (data ?? []).map(mapCadernoRow);
+}
+
+export async function getCadernoById(id: number): Promise<CadernoRow | null> {
+  const { data, error } = await supabase
+    .from("cadernos")
+    .select(
+      "id, name, target_group_jid, created_by_jid, status, questions_per_run, interval_days, send_hour, send_minute, timezone, cursor, last_run_at, next_run_at"
+    )
+    .eq("id", id)
+    .maybeSingle();
+
+  if (error) {
+    const msg = error.message.toLowerCase();
+    if (msg.includes("relation") && msg.includes("does not exist")) return null;
+    throw new Error(`Erro ao buscar caderno: ${error.message}`);
+  }
+  if (!data) return null;
+  return mapCadernoRow(data);
+}
+
+export async function listCadernoQuestionsAfterCursor(
+  cadernoId: number,
+  cursor: number,
+  limit: number
+): Promise<CadernoQuestionRow[]> {
+  const { data, error } = await supabase
+    .from("caderno_questions")
+    .select(
+      "id, caderno_id, position, tec_question_id, tec_url, banca, subject, question_type, statement_text, answer_key"
+    )
+    .eq("caderno_id", cadernoId)
+    .gt("position", cursor)
+    .order("position", { ascending: true })
+    .limit(limit);
+
+  if (error) throw new Error(`Erro ao listar questoes do caderno: ${error.message}`);
+  return (data ?? []).map(mapCadernoQuestionRow);
+}
+
+export async function countCadernoQuestions(cadernoId: number): Promise<number> {
+  const { count, error } = await supabase
+    .from("caderno_questions")
+    .select("id", { count: "exact", head: true })
+    .eq("caderno_id", cadernoId);
+
+  if (error) throw new Error(`Erro ao contar questoes do caderno: ${error.message}`);
+  return count || 0;
+}
+
+export async function listCadernosForOwner(
+  ownerJid: string
+): Promise<CadernoRow[]> {
+  const { data, error } = await supabase
+    .from("cadernos")
+    .select(
+      "id, name, target_group_jid, created_by_jid, status, questions_per_run, interval_days, send_hour, send_minute, timezone, cursor, last_run_at, next_run_at"
+    )
+    .eq("created_by_jid", ownerJid)
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    const msg = error.message.toLowerCase();
+    if (msg.includes("relation") && msg.includes("does not exist")) return [];
+    throw new Error(`Erro ao listar cadernos: ${error.message}`);
+  }
+
+  return (data ?? []).map(mapCadernoRow);
+}
+
+export async function updateCadernoAfterRun(
+  cadernoId: number,
+  newCursor: number,
+  nextRunAtIso: string | null
+): Promise<void> {
+  const { error } = await supabase
+    .from("cadernos")
+    .update({
+      cursor: newCursor,
+      last_run_at: new Date().toISOString(),
+      next_run_at: nextRunAtIso
+    })
+    .eq("id", cadernoId);
+
+  if (error) throw new Error(`Erro ao atualizar caderno apos envio: ${error.message}`);
+}
+
+export async function setCadernoStatus(
+  cadernoId: number,
+  status: CadernoRow["status"],
+  extra: { nextRunAt?: string | null; cursor?: number } = {}
+): Promise<void> {
+  const update: Record<string, unknown> = { status };
+  if (Object.prototype.hasOwnProperty.call(extra, "nextRunAt")) {
+    update.next_run_at = extra.nextRunAt ?? null;
+  }
+  if (typeof extra.cursor === "number") {
+    update.cursor = extra.cursor;
+  }
+
+  const { error } = await supabase.from("cadernos").update(update).eq("id", cadernoId);
+  if (error) throw new Error(`Erro ao mudar status do caderno: ${error.message}`);
+}
+
+export async function markCadernoQuestionPublished(
+  cadernoQuestionId: number,
+  publishedQuestionDbId: number
+): Promise<void> {
+  const { error } = await supabase
+    .from("caderno_questions")
+    .update({
+      published_question_id: publishedQuestionDbId,
+      published_at: new Date().toISOString()
+    })
+    .eq("id", cadernoQuestionId);
+
+  if (error) {
+    console.warn("[caderno] markCadernoQuestionPublished:", error.message);
+  }
+}
+
+export type CadernoQuestionPublishInput = {
+  caderno: CadernoRow;
+  question: CadernoQuestionRow;
+};
+
+/**
+ * Cria uma linha em `questions` para uma questao do caderno, sem midia.
+ * Retorna { shortId, dbId } — `shortId` e mostrado no grupo; `dbId` linka
+ * a published_question_id na caderno_questions.
+ */
+export async function createQuestionFromCaderno(
+  input: CadernoQuestionPublishInput
+): Promise<{ shortId: string; dbId: number }> {
+  const { caderno, question } = input;
+  const creatorJid = `caderno:${caderno.id}@bot`;
+  const creatorName = `Caderno: ${caderno.name}`;
+
+  const explanationParts: string[] = [
+    "Resolução completa no Tec Concursos:",
+    question.tecUrl
+  ];
+  if (question.banca) explanationParts.push("", `Banca: ${question.banca}`);
+  if (question.subject) explanationParts.push(`Matéria: ${question.subject}`);
+  const explanationText = explanationParts.join("\n");
+
+  const { data, error } = await supabase
+    .from("questions")
+    .insert({
+      creator_jid: creatorJid,
+      creator_name: creatorName,
+      target_group_jid: caderno.targetGroupJid,
+      question_type: question.questionType,
+      statement_text: question.statementText,
+      statement_media_url: null,
+      statement_media_mime_type: null,
+      answer_key: question.answerKey.toUpperCase(),
+      explanation_text: explanationText,
+      explanation_media_url: null,
+      explanation_media_mime_type: null,
+      group_jid: caderno.targetGroupJid,
+      sender_jid: creatorJid,
+      message_type: "text",
+      text_content: question.statementText,
+      media_mime_type: null,
+      wa_message_id: `caderno-${caderno.id}-${question.id}-${Date.now()}`,
+      sent_at: new Date().toISOString()
+    })
+    .select("id")
+    .single();
+
+  if (error || !data) {
+    throw new Error(`Erro ao criar questao a partir de caderno: ${error?.message ?? "sem dados"}`);
+  }
+
+  const shortId = String(data.id).trim();
+
+  const { error: updateError } = await supabase
+    .from("questions")
+    .update({ short_id: shortId })
+    .eq("id", data.id);
+
+  if (updateError) {
+    throw new Error(`Erro ao atualizar short_id da questao do caderno: ${updateError.message}`);
+  }
+
+  return { shortId, dbId: Number(data.id) };
+}
+
 export async function listUnansweredShortIdsForUser(
   userJid: string,
   groupJid: string,
