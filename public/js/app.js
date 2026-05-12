@@ -60,9 +60,21 @@
     cadernoTime: document.getElementById("caderno-time"),
     cadernoAddStatus: document.getElementById("caderno-add-status"),
     cadernoPreviewBox: document.getElementById("caderno-preview-box"),
+    cadernoRandom: document.getElementById("caderno-random"),
     btnCadernoPreview: document.getElementById("btn-caderno-preview"),
     btnCadernoSave: document.getElementById("btn-caderno-save"),
-    btnCadernoSaveActivate: document.getElementById("btn-caderno-save-activate")
+    btnCadernoSaveActivate: document.getElementById("btn-caderno-save-activate"),
+    cadernoEditOverlay: document.getElementById("caderno-edit-overlay"),
+    cadernoEditClose: document.getElementById("caderno-edit-close"),
+    cadernoEditId: document.getElementById("caderno-edit-id"),
+    cadernoEditName: document.getElementById("caderno-edit-name"),
+    cadernoEditPerRun: document.getElementById("caderno-edit-per-run"),
+    cadernoEditInterval: document.getElementById("caderno-edit-interval"),
+    cadernoEditTime: document.getElementById("caderno-edit-time"),
+    cadernoEditRandom: document.getElementById("caderno-edit-random"),
+    cadernoEditStatus: document.getElementById("caderno-edit-status"),
+    btnCadernoEditSave: document.getElementById("btn-caderno-edit-save"),
+    btnCadernoEditCancel: document.getElementById("btn-caderno-edit-cancel")
   };
 
   let cadernosCache = [];
@@ -822,16 +834,20 @@
         const next =
           c.status === "active" ? formatNextRunPretty(c.nextRunAt, c.timezone) : "—";
         const last = c.lastRunAt ? formatNextRunPretty(c.lastRunAt, c.timezone) : "—";
-        const totalLabel = `${c.cursor}/${c.totalQuestions}`;
+        const published = typeof c.publishedCount === "number" ? c.publishedCount : c.cursor;
+        const totalLabel = `${published}/${c.totalQuestions}`;
         const horario = `${pad2(c.sendHour)}:${pad2(c.sendMinute)}`;
         const isActive = c.status === "active";
         const canResume = c.status !== "active" && c.status !== "finished";
         const canRecycle =
           c.status === "paused_waiting_decision" || c.status === "finished";
+        const randomBadge = c.randomOrder
+          ? '<span class="badge-mini" title="Sorteia entre as não enviadas">Aleatório</span>'
+          : "";
         return `
         <li class="caderno-card" data-id="${c.id}">
           <div class="caderno-card-head">
-            <h4 class="caderno-card-name">${esc(c.name)} <small style="color:var(--muted);font-weight:500;">#${c.id}</small></h4>
+            <h4 class="caderno-card-name">${esc(c.name)} <small style="color:var(--muted);font-weight:500;">#${c.id}</small>${randomBadge}</h4>
             <span class="caderno-card-status status-${esc(c.status)}">${esc(formatStatusLabel(c.status))}</span>
           </div>
           <div class="caderno-card-meta">
@@ -841,6 +857,9 @@
             <div><strong>Último envio:</strong> ${esc(last)}</div>
           </div>
           <div class="caderno-card-actions">
+            <button type="button" data-action="trigger" ${isActive ? "" : "disabled"} title="Envia a próxima questão agora (até 60s)">Enviar questão</button>
+            <button type="button" data-action="edit" title="Editar nome, agenda e modo">Editar</button>
+            <button type="button" data-action="toggle-random" title="${c.randomOrder ? "Desligar" : "Ligar"} ordem aleatória">${c.randomOrder ? "Ordem do PDF" : "Ordem aleatória"}</button>
             <button type="button" data-action="pause" ${isActive ? "" : "disabled"}>Pausar</button>
             <button type="button" data-action="resume" ${canResume ? "" : "disabled"}>${
           canRecycle ? "Retomar do começo" : "Retomar"
@@ -910,15 +929,36 @@
     allButtons.forEach((b) => (b.disabled = true));
 
     try {
+      if (action === "edit") {
+        openCadernoEditModal(c);
+        return;
+      }
       if (action === "pause") {
         await patchCadernoStatus(id, { status: "inactive" });
       } else if (action === "resume") {
         await patchCadernoStatus(id, { status: "active", recomputeNextRun: true });
+      } else if (action === "trigger") {
+        if (els.cadernosStatus) {
+          els.cadernosStatus.textContent =
+            "Pedido enviado. O bot publica a próxima questão em até 60s.";
+        }
+        await patchCadernoStatus(id, { triggerNow: true });
+      } else if (action === "toggle-random") {
+        await patchCadernoStatus(id, { randomOrder: !c.randomOrder });
       } else if (action === "recycle") {
-        if (!confirm(`Reiniciar o caderno "${c.name}" do começo (cursor = 0)?`)) {
+        if (
+          !confirm(
+            `Reciclar o caderno "${c.name}"? Todas as questões voltam a ficar disponíveis para envio (zera o cursor).`
+          )
+        ) {
           return;
         }
-        await patchCadernoStatus(id, { status: "active", cursor: 0, recomputeNextRun: true });
+        await patchCadernoStatus(id, {
+          status: "active",
+          cursor: 0,
+          recomputeNextRun: true,
+          recyclePublished: true
+        });
       } else if (action === "delete") {
         if (!confirm(`Excluir o caderno "${c.name}" e todas as suas questões? Esta ação é permanente.`)) {
           return;
@@ -953,6 +993,7 @@
     const [hh, mm] = String(els.cadernoTime.value || "09:00").split(":");
     const sendHour = Number(hh);
     const sendMinute = Number(mm);
+    const randomOrder = Boolean(els.cadernoRandom && els.cadernoRandom.checked);
     return {
       file,
       name,
@@ -961,7 +1002,8 @@
         intervalDays,
         sendHour: Number.isFinite(sendHour) ? sendHour : 9,
         sendMinute: Number.isFinite(sendMinute) ? sendMinute : 0,
-        timezone: "America/Sao_Paulo"
+        timezone: "America/Sao_Paulo",
+        randomOrder
       }
     };
   }
@@ -1067,6 +1109,73 @@
     }
   }
 
+  function openCadernoEditModal(caderno) {
+    if (!els.cadernoEditOverlay) return;
+    els.cadernoEditId.value = String(caderno.id);
+    els.cadernoEditName.value = caderno.name || "";
+    els.cadernoEditPerRun.value = String(caderno.questionsPerRun || 3);
+    els.cadernoEditInterval.value = String(caderno.intervalDays || 2);
+    els.cadernoEditTime.value = `${pad2(caderno.sendHour || 0)}:${pad2(caderno.sendMinute || 0)}`;
+    els.cadernoEditRandom.checked = Boolean(caderno.randomOrder);
+    els.cadernoEditStatus.textContent = "";
+    els.cadernoEditOverlay.classList.add("open");
+    els.cadernoEditOverlay.setAttribute("aria-hidden", "false");
+  }
+
+  function closeCadernoEditModal() {
+    if (!els.cadernoEditOverlay) return;
+    els.cadernoEditOverlay.classList.remove("open");
+    els.cadernoEditOverlay.setAttribute("aria-hidden", "true");
+  }
+
+  async function onCadernoEditSave() {
+    const id = Number(els.cadernoEditId.value);
+    if (!Number.isFinite(id) || id <= 0) return;
+    const current = cadernosCache.find((x) => x.id === id);
+    if (!current) {
+      els.cadernoEditStatus.textContent = "Caderno não encontrado na lista.";
+      return;
+    }
+
+    const name = (els.cadernoEditName.value || "").trim();
+    const questionsPerRun = Number(els.cadernoEditPerRun.value || 3);
+    const intervalDays = Number(els.cadernoEditInterval.value || 2);
+    const [hh, mm] = String(els.cadernoEditTime.value || "09:00").split(":");
+    const sendHour = Number(hh);
+    const sendMinute = Number(mm);
+    const randomOrder = Boolean(els.cadernoEditRandom.checked);
+
+    const payload = { id };
+    if (name && name !== current.name) payload.name = name;
+    if (questionsPerRun !== current.questionsPerRun) payload.questionsPerRun = questionsPerRun;
+    if (intervalDays !== current.intervalDays) payload.intervalDays = intervalDays;
+    if (Number.isFinite(sendHour) && sendHour !== current.sendHour) payload.sendHour = sendHour;
+    if (Number.isFinite(sendMinute) && sendMinute !== current.sendMinute)
+      payload.sendMinute = sendMinute;
+    if (randomOrder !== Boolean(current.randomOrder)) payload.randomOrder = randomOrder;
+
+    if (Object.keys(payload).length === 1) {
+      els.cadernoEditStatus.textContent = "Nada para salvar — sem alterações.";
+      return;
+    }
+
+    els.btnCadernoEditSave.disabled = true;
+    els.cadernoEditStatus.textContent = "Salvando…";
+    try {
+      await fetchJson(API.cadernos, {
+        method: "PATCH",
+        body: JSON.stringify(payload)
+      });
+      els.cadernoEditStatus.textContent = "Alterações salvas.";
+      await loadCadernos();
+      setTimeout(() => closeCadernoEditModal(), 700);
+    } catch (e) {
+      els.cadernoEditStatus.textContent = e.message || "Falha ao salvar.";
+    } finally {
+      els.btnCadernoEditSave.disabled = false;
+    }
+  }
+
   function openCadernoAddModal() {
     if (!els.cadernoAddOverlay) return;
     if (els.cadernoName) els.cadernoName.value = "";
@@ -1074,6 +1183,7 @@
     if (els.cadernoPerRun) els.cadernoPerRun.value = "3";
     if (els.cadernoInterval) els.cadernoInterval.value = "2";
     if (els.cadernoTime) els.cadernoTime.value = "09:00";
+    if (els.cadernoRandom) els.cadernoRandom.checked = false;
     if (els.cadernoAddStatus) els.cadernoAddStatus.textContent = "";
     renderCadernoPreview(null);
     els.cadernoAddOverlay.classList.add("open");
@@ -1196,6 +1306,16 @@
   if (els.btnCadernoSave) els.btnCadernoSave.addEventListener("click", () => onCadernoSave(false));
   if (els.btnCadernoSaveActivate)
     els.btnCadernoSaveActivate.addEventListener("click", () => onCadernoSave(true));
+
+  if (els.cadernoEditClose) els.cadernoEditClose.addEventListener("click", closeCadernoEditModal);
+  if (els.btnCadernoEditCancel)
+    els.btnCadernoEditCancel.addEventListener("click", closeCadernoEditModal);
+  if (els.cadernoEditOverlay) {
+    els.cadernoEditOverlay.addEventListener("click", (ev) => {
+      if (ev.target === els.cadernoEditOverlay) closeCadernoEditModal();
+    });
+  }
+  if (els.btnCadernoEditSave) els.btnCadernoEditSave.addEventListener("click", onCadernoEditSave);
 
   init();
 })();

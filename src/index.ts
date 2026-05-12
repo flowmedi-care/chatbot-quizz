@@ -22,6 +22,7 @@ import {
   parsePrivateCommand,
   parseGabaritoCommand,
   parseOmissasCommand,
+  parseProgressoCommand,
   parseRepeatQuestionCommand,
   parseRespondentsCommand,
   parseSlashSessionCommand,
@@ -34,6 +35,7 @@ import {
   createQuestion,
   formatRankingMessage,
   getCadernoById,
+  getCadernoProgress,
   getQuestionResult,
   getRankingForGroup,
   getQuestionForRepeat,
@@ -46,6 +48,7 @@ import {
   listAnswerUserJidsForQuestion,
   listCadernosForOwner,
   listUnansweredShortIdsForUser,
+  resetCadernoPublishedQuestions,
   setCadernoStatus,
   setQuizModePrivate,
   updateUserAnswer,
@@ -432,6 +435,38 @@ async function repeatQuestionStatement(sock: WASocket, jid: string, shortId: str
   });
 }
 
+async function buildCadernoProgressMessage(cadernoId: number): Promise<string> {
+  const progress = await getCadernoProgress(cadernoId);
+  if (!progress) {
+    return `Caderno #${cadernoId} nao encontrado.`;
+  }
+  const { caderno, totalQuestions, publishedCount, resolvedByEngaged, withAnyAnswer, engagedCount } =
+    progress;
+
+  const pct = publishedCount === 0 ? 0 : Math.round((resolvedByEngaged / publishedCount) * 100);
+  const pctLine =
+    engagedCount > 0
+      ? `Resolvidas pelos engajados: ${resolvedByEngaged}/${publishedCount} (${pct}%)`
+      : `Resolvidas pelos engajados: — (nenhum engajado cadastrado, rode /sync-membros e marque no site)`;
+
+  const lines = [
+    `Progresso do Caderno #${caderno.id} — "${caderno.name}"`,
+    "",
+    `Status: ${caderno.status}`,
+    `Modo: ${caderno.randomOrder ? "ordem aleatória" : "ordem do PDF"}`,
+    "",
+    `Total no caderno: ${totalQuestions}`,
+    `Enviadas: ${publishedCount}/${totalQuestions}`,
+    pctLine,
+    `Com pelo menos 1 resposta: ${withAnyAnswer}/${publishedCount}`,
+    `Engajados no grupo: ${engagedCount}`,
+    "",
+    `Próximo envio: ${formatNextRunPretty(caderno.nextRunAt, caderno.timezone)}`,
+    `Último envio: ${formatNextRunPretty(caderno.lastRunAt, caderno.timezone)}`
+  ];
+  return lines.join("\n");
+}
+
 type CadernoCommandArg = ReturnType<typeof parseCadernoCommand>;
 
 async function handleCadernoCommand(
@@ -515,6 +550,7 @@ async function handleCadernoCommand(
       return;
     }
     case "recycle": {
+      await resetCadernoPublishedQuestions(caderno.id);
       const nextIso = computeNextRunAt(
         new Date(),
         caderno.sendHour,
@@ -806,6 +842,20 @@ async function startBot(): Promise<void> {
             } catch (respondErr) {
               await sock.sendMessage(remoteJid, {
                 text: `Nao foi possivel listar respondentes: ${(respondErr as Error).message}`
+              });
+            }
+            continue;
+          }
+
+          const progressoCmd = parseProgressoCommand(text);
+          if (progressoCmd) {
+            try {
+              await sock.sendMessage(remoteJid, {
+                text: await buildCadernoProgressMessage(progressoCmd.cadernoId)
+              });
+            } catch (progErr) {
+              await sock.sendMessage(remoteJid, {
+                text: `Erro ao consultar progresso: ${(progErr as Error).message}`
               });
             }
             continue;

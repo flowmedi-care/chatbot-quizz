@@ -1037,6 +1037,41 @@ table.tutorial-table code {
   font-weight: 600;
 }
 
+.caderno-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.65rem;
+  padding: 0.55rem 0;
+  cursor: pointer;
+}
+
+.caderno-toggle input[type="checkbox"] {
+  margin-top: 0.25rem;
+}
+
+.caderno-toggle span {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  font-size: 0.92rem;
+}
+
+.caderno-toggle small {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.caderno-card-meta .badge-mini {
+  display: inline-block;
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  background: var(--accent-dim);
+  color: var(--accent);
+  margin-left: 0.4rem;
+}
+
 @media (max-width: 560px) {
   .caderno-row {
     grid-template-columns: 1fr;

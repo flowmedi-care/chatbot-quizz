@@ -106,6 +106,19 @@ export function parseRepeatQuestionCommand(text: string): { shortId: string } | 
   return { shortId: m[1].toUpperCase() };
 }
 
+/**
+ * `/progresso #1` (ou `progresso 1`, `/progresso 1`, `progresso #1`).
+ * Aceito em grupo e privado.
+ */
+export function parseProgressoCommand(text: string): { cadernoId: number } | null {
+  const t = normalizeInput(text.trim());
+  const m = t.match(/^\/?progresso\s+#?(\d+)$/i);
+  if (!m) return null;
+  const id = Number(m[1]);
+  if (!Number.isFinite(id) || id <= 0) return null;
+  return { cadernoId: id };
+}
+
 export type CadernoCommand =
   | { kind: "list" }
   | { kind: "pause"; id: number }

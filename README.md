@@ -155,6 +155,9 @@ automático das questões no grupo.
 1. Rode no SQL Editor do Supabase: `supabase-migration-cadernos.sql`.
 2. Cria duas tabelas: `cadernos` (configuração e agenda) e `caderno_questions`
    (questões extraídas com `position`, `tec_url`, `answer_key`, etc.).
+3. Se o caderno já existia antes da feature de **ordem aleatória**, rode também
+   `supabase-migration-cadernos-random-order.sql` (adiciona a coluna
+   `random_order`).
 
 ### Como criar um caderno
 
@@ -165,8 +168,21 @@ automático das questões no grupo.
    - **Questões por envio** (1–20, padrão 3).
    - **Intervalo (dias)** (1–30, padrão 2).
    - **Horário do envio** (HH:MM no fuso `America/Sao_Paulo`).
+   - **Ordem aleatória** (opcional): sorteia entre as questões ainda não
+     enviadas em vez de seguir a ordem do PDF. Nenhuma questão repete.
 5. Clique em **Pré-visualizar** para conferir total extraído, gabarito e avisos
    do parser. Se estiver tudo certo, **Salvar e ativar**.
+
+### Ações rápidas no card
+
+Cada caderno mostra botões:
+
+- **Enviar questão** — força o próximo envio agora (o bot publica em até 60s).
+- **Ordem aleatória / Ordem do PDF** — alterna o modo a qualquer momento.
+- **Pausar** / **Retomar** — sem perder o cursor.
+- **Reciclar (zerar cursor)** — libera todas as questões como "não enviadas"
+  para começar de novo.
+- **Excluir** — apaga o caderno (cascade nas questões).
 
 O parser reconhece:
 - Múltipla escolha (alternativas `a)` `b)` `c)` `d)` `e)`).
@@ -199,19 +215,20 @@ dono recebe DM perguntando o que fazer. Responda no privado do bot:
 - `reciclar caderno <id>` — reinicia o cursor e volta a enviar do começo.
 - `desativar caderno <id>` — marca como encerrado.
 
-### Comandos no bot (privado, só para o dono)
+### Comandos no bot
 
-| Comando | Efeito |
-|---------|--------|
-| `/cadernos` | Lista seus cadernos com status, agenda e progresso. |
-| `/caderno pause <id>` | Pausa envios (status = inactive). |
-| `/caderno resume <id>` | Retoma envios (recalcula `next_run_at`). |
-| `/caderno next <id>` | Força envio imediato (debug). |
-| `reciclar caderno <id>` | Zera o cursor e reativa. |
-| `desativar caderno <id>` | Encerra de vez. |
+| Comando | Onde | Efeito |
+|---------|------|--------|
+| `/progresso #1` | Grupo ou privado | Mostra progresso do caderno 1: quantas foram enviadas, quantas foram **resolvidas pelos engajados** (todos responderam), engajados no grupo e próximo envio. Aceita `progresso 1`, `progresso #1`. |
+| `/cadernos` | Privado (dono) | Lista seus cadernos com status, agenda e progresso. |
+| `/caderno pause <id>` | Privado (dono) | Pausa envios (status = inactive). |
+| `/caderno resume <id>` | Privado (dono) | Retoma envios (recalcula `next_run_at`). |
+| `/caderno next <id>` | Privado (dono) | Força envio imediato (até 60s). |
+| `reciclar caderno <id>` | Privado (dono) | Libera todas as questões e reativa do começo. |
+| `desativar caderno <id>` | Privado (dono) | Encerra de vez. |
 
-Aceita também variantes em português: `pausar`, `parar`, `retomar`, `voltar`,
-`ativar`, `agora`, `recomecar`, `encerrar`, `finalizar`.
+Os comandos do dono aceitam variantes em português: `pausar`, `parar`,
+`retomar`, `voltar`, `ativar`, `agora`, `recomecar`, `encerrar`, `finalizar`.
 
 ## 9) Proximos passos recomendados
 

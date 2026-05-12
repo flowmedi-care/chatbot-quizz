@@ -678,6 +678,7 @@ export type CadernoRow = {
   sendMinute: number;
   timezone: string;
   cursor: number;
+  randomOrder: boolean;
   lastRunAt: string | null;
   nextRunAt: string | null;
 };
@@ -708,10 +709,14 @@ function mapCadernoRow(row: Record<string, unknown>): CadernoRow {
     sendMinute: Number(row.send_minute),
     timezone: String(row.timezone || "America/Sao_Paulo"),
     cursor: Number(row.cursor || 0),
+    randomOrder: Boolean(row.random_order),
     lastRunAt: row.last_run_at ? String(row.last_run_at) : null,
     nextRunAt: row.next_run_at ? String(row.next_run_at) : null
   };
 }
+
+const CADERNO_SELECT_COLUMNS =
+  "id, name, target_group_jid, created_by_jid, status, questions_per_run, interval_days, send_hour, send_minute, timezone, cursor, random_order, last_run_at, next_run_at";
 
 function mapCadernoQuestionRow(row: Record<string, unknown>): CadernoQuestionRow {
   return {
@@ -733,9 +738,7 @@ export async function listCadernosDueForRun(): Promise<CadernoRow[]> {
   const nowIso = new Date().toISOString();
   const { data, error } = await supabase
     .from("cadernos")
-    .select(
-      "id, name, target_group_jid, created_by_jid, status, questions_per_run, interval_days, send_hour, send_minute, timezone, cursor, last_run_at, next_run_at"
-    )
+    .select(CADERNO_SELECT_COLUMNS)
     .eq("status", "active")
     .lte("next_run_at", nowIso);
 
@@ -751,9 +754,7 @@ export async function listCadernosDueForRun(): Promise<CadernoRow[]> {
 export async function getCadernoById(id: number): Promise<CadernoRow | null> {
   const { data, error } = await supabase
     .from("cadernos")
-    .select(
-      "id, name, target_group_jid, created_by_jid, status, questions_per_run, interval_days, send_hour, send_minute, timezone, cursor, last_run_at, next_run_at"
-    )
+    .select(CADERNO_SELECT_COLUMNS)
     .eq("id", id)
     .maybeSingle();
 
@@ -766,23 +767,53 @@ export async function getCadernoById(id: number): Promise<CadernoRow | null> {
   return mapCadernoRow(data);
 }
 
-export async function listCadernoQuestionsAfterCursor(
+/**
+ * Lê o próximo lote de questões a enviar. Critério: `published_question_id IS NULL`
+ * (ainda não foi publicada). Em modo aleatório embaralha o lote; senão segue por
+ * `position` crescente.
+ *
+ * Para random, lemos um buffer maior (`limit * 10`, capado em 200) e sorteamos
+ * `limit` localmente. Isso evita ORDER BY random() no Postgres (caro em tabelas
+ * grandes) sem precisar de função RPC.
+ */
+export async function listNextCadernoQuestionsToSend(
   cadernoId: number,
-  cursor: number,
-  limit: number
+  limit: number,
+  randomOrder: boolean
 ): Promise<CadernoQuestionRow[]> {
+  const selectCols =
+    "id, caderno_id, position, tec_question_id, tec_url, banca, subject, question_type, statement_text, answer_key";
+
+  if (!randomOrder) {
+    const { data, error } = await supabase
+      .from("caderno_questions")
+      .select(selectCols)
+      .eq("caderno_id", cadernoId)
+      .is("published_question_id", null)
+      .order("position", { ascending: true })
+      .limit(limit);
+
+    if (error) throw new Error(`Erro ao listar questoes do caderno: ${error.message}`);
+    return (data ?? []).map(mapCadernoQuestionRow);
+  }
+
+  const bufferSize = Math.min(200, Math.max(limit * 10, limit + 5));
   const { data, error } = await supabase
     .from("caderno_questions")
-    .select(
-      "id, caderno_id, position, tec_question_id, tec_url, banca, subject, question_type, statement_text, answer_key"
-    )
+    .select(selectCols)
     .eq("caderno_id", cadernoId)
-    .gt("position", cursor)
+    .is("published_question_id", null)
     .order("position", { ascending: true })
-    .limit(limit);
+    .limit(bufferSize);
 
   if (error) throw new Error(`Erro ao listar questoes do caderno: ${error.message}`);
-  return (data ?? []).map(mapCadernoQuestionRow);
+
+  const rows = (data ?? []).map(mapCadernoQuestionRow);
+  for (let i = rows.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [rows[i], rows[j]] = [rows[j], rows[i]];
+  }
+  return rows.slice(0, limit);
 }
 
 export async function countCadernoQuestions(cadernoId: number): Promise<number> {
@@ -795,14 +826,44 @@ export async function countCadernoQuestions(cadernoId: number): Promise<number> 
   return count || 0;
 }
 
+export async function countUnpublishedCadernoQuestions(cadernoId: number): Promise<number> {
+  const { count, error } = await supabase
+    .from("caderno_questions")
+    .select("id", { count: "exact", head: true })
+    .eq("caderno_id", cadernoId)
+    .is("published_question_id", null);
+
+  if (error) throw new Error(`Erro ao contar questoes pendentes do caderno: ${error.message}`);
+  return count || 0;
+}
+
+export async function countPublishedCadernoQuestions(cadernoId: number): Promise<number> {
+  const { count, error } = await supabase
+    .from("caderno_questions")
+    .select("id", { count: "exact", head: true })
+    .eq("caderno_id", cadernoId)
+    .not("published_question_id", "is", null);
+
+  if (error) throw new Error(`Erro ao contar questoes publicadas do caderno: ${error.message}`);
+  return count || 0;
+}
+
+/** Reseta publicações ao reciclar: questões voltam a contar como "pendentes". */
+export async function resetCadernoPublishedQuestions(cadernoId: number): Promise<void> {
+  const { error } = await supabase
+    .from("caderno_questions")
+    .update({ published_question_id: null, published_at: null })
+    .eq("caderno_id", cadernoId);
+
+  if (error) throw new Error(`Erro ao reciclar caderno: ${error.message}`);
+}
+
 export async function listCadernosForOwner(
   ownerJid: string
 ): Promise<CadernoRow[]> {
   const { data, error } = await supabase
     .from("cadernos")
-    .select(
-      "id, name, target_group_jid, created_by_jid, status, questions_per_run, interval_days, send_hour, send_minute, timezone, cursor, last_run_at, next_run_at"
-    )
+    .select(CADERNO_SELECT_COLUMNS)
     .eq("created_by_jid", ownerJid)
     .order("created_at", { ascending: false });
 
@@ -932,6 +993,116 @@ export async function createQuestionFromCaderno(
   }
 
   return { shortId, dbId: Number(data.id) };
+}
+
+export type CadernoProgress = {
+  caderno: CadernoRow;
+  totalQuestions: number;
+  publishedCount: number;
+  resolvedByEngaged: number;
+  withAnyAnswer: number;
+  engagedCount: number;
+};
+
+/**
+ * Calcula o progresso do caderno:
+ *  - `publishedCount`: quantas questões do caderno já foram enviadas ao grupo.
+ *  - `resolvedByEngaged`: das publicadas, quantas tiveram resposta de
+ *    **todos** os engajados do grupo (mesmo critério do auto-gabarito).
+ *  - `withAnyAnswer`: das publicadas, quantas tiveram **pelo menos uma**
+ *    resposta. Útil quando não há engajados configurados.
+ *  - `engagedCount`: total de engajados no grupo (referência para o cálculo).
+ */
+export async function getCadernoProgress(cadernoId: number): Promise<CadernoProgress | null> {
+  const caderno = await getCadernoById(cadernoId);
+  if (!caderno) return null;
+
+  const totalQuestions = await countCadernoQuestions(cadernoId);
+
+  const { data: publishedRows, error: pubErr } = await supabase
+    .from("caderno_questions")
+    .select("id, published_question_id")
+    .eq("caderno_id", cadernoId)
+    .not("published_question_id", "is", null);
+
+  if (pubErr) throw new Error(`Erro ao buscar questoes publicadas: ${pubErr.message}`);
+
+  const publishedIds = (publishedRows ?? [])
+    .map((r) => Number(r.published_question_id))
+    .filter((x) => Number.isFinite(x));
+  const publishedCount = publishedIds.length;
+
+  if (publishedCount === 0) {
+    return {
+      caderno,
+      totalQuestions,
+      publishedCount: 0,
+      resolvedByEngaged: 0,
+      withAnyAnswer: 0,
+      engagedCount: 0
+    };
+  }
+
+  const engagedJids = await getEngagedUserJidsForGroup(caderno.targetGroupJid);
+  const engagedCount = engagedJids.length;
+  const engagedComparable = new Set(engagedJids.map((j) => jidComparableKeyShared(j)));
+
+  const { data: answers, error: ansErr } = await supabase
+    .from("answers")
+    .select("question_id, user_jid")
+    .in("question_id", publishedIds);
+
+  if (ansErr) throw new Error(`Erro ao buscar respostas para progresso: ${ansErr.message}`);
+
+  const answeredByQuestion = new Map<number, Set<string>>();
+  for (const row of answers ?? []) {
+    const qid = Number(row.question_id);
+    if (!Number.isFinite(qid)) continue;
+    const userJid = String(row.user_jid || "");
+    if (!userJid) continue;
+    let set = answeredByQuestion.get(qid);
+    if (!set) {
+      set = new Set<string>();
+      answeredByQuestion.set(qid, set);
+    }
+    set.add(jidComparableKeyShared(userJid));
+  }
+
+  let resolvedByEngaged = 0;
+  let withAnyAnswer = 0;
+  for (const qid of publishedIds) {
+    const userSet = answeredByQuestion.get(qid);
+    if (!userSet || userSet.size === 0) continue;
+    withAnyAnswer += 1;
+    if (engagedCount > 0) {
+      let allAnswered = true;
+      for (const jc of engagedComparable) {
+        if (!userSet.has(jc)) {
+          allAnswered = false;
+          break;
+        }
+      }
+      if (allAnswered) resolvedByEngaged += 1;
+    }
+  }
+
+  return {
+    caderno,
+    totalQuestions,
+    publishedCount,
+    resolvedByEngaged,
+    withAnyAnswer,
+    engagedCount
+  };
+}
+
+function jidComparableKeyShared(jid: string): string {
+  const at = jid.indexOf("@");
+  if (at < 0) return jid.toLowerCase().trim();
+  const userPart = jid.slice(0, at);
+  const userNoDevice = userPart.includes(":") ? userPart.split(":")[0]! : userPart;
+  const domain = jid.slice(at + 1).toLowerCase();
+  return `${userNoDevice}@${domain}`;
 }
 
 export async function listUnansweredShortIdsForUser(

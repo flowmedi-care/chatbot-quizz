@@ -2,9 +2,9 @@ import type { WASocket } from "@whiskeysockets/baileys";
 import {
   CadernoQuestionRow,
   CadernoRow,
-  countCadernoQuestions,
+  countUnpublishedCadernoQuestions,
   createQuestionFromCaderno,
-  listCadernoQuestionsAfterCursor,
+  listNextCadernoQuestionsToSend,
   listCadernosDueForRun,
   markCadernoQuestionPublished,
   setCadernoStatus,
@@ -79,29 +79,18 @@ async function notifyOwnerEndOfCaderno(
 
 async function runCaderno(sock: WASocket, caderno: CadernoRow): Promise<void> {
   const batchSize = Math.max(1, caderno.questionsPerRun);
-  const pending = await listCadernoQuestionsAfterCursor(caderno.id, caderno.cursor, batchSize);
+  const pending = await listNextCadernoQuestionsToSend(
+    caderno.id,
+    batchSize,
+    caderno.randomOrder
+  );
 
   if (pending.length === 0) {
-    const total = await countCadernoQuestions(caderno.id);
-    if (total > 0 && caderno.cursor >= total) {
-      await setCadernoStatus(caderno.id, "paused_waiting_decision", { nextRunAt: null });
-      await notifyOwnerEndOfCaderno(sock, caderno);
-      console.log(
-        `[caderno-scheduler] caderno ${caderno.id} chegou ao fim, aguardando decisao do dono.`
-      );
-    } else {
-      console.warn(
-        `[caderno-scheduler] caderno ${caderno.id} sem questoes para enviar mas cursor (${caderno.cursor}) < total (${total}).`
-      );
-      const nextIso = computeNextRunAt(
-        new Date(),
-        caderno.sendHour,
-        caderno.sendMinute,
-        caderno.timezone,
-        caderno.intervalDays
-      ).toISOString();
-      await updateCadernoAfterRun(caderno.id, caderno.cursor, nextIso);
-    }
+    await setCadernoStatus(caderno.id, "paused_waiting_decision", { nextRunAt: null });
+    await notifyOwnerEndOfCaderno(sock, caderno);
+    console.log(
+      `[caderno-scheduler] caderno ${caderno.id} sem pendentes — aguardando decisao do dono.`
+    );
     return;
   }
 
@@ -116,11 +105,10 @@ async function runCaderno(sock: WASocket, caderno: CadernoRow): Promise<void> {
     }
   }
 
-  const newCursor = pending[pending.length - 1].position;
-  const totalAfter = await countCadernoQuestions(caderno.id);
-  const reachedEnd = newCursor >= totalAfter;
+  const newCursor = caderno.cursor + published;
+  const remaining = await countUnpublishedCadernoQuestions(caderno.id);
 
-  if (reachedEnd) {
+  if (remaining <= 0) {
     await updateCadernoAfterRun(caderno.id, newCursor, null);
     await setCadernoStatus(caderno.id, "paused_waiting_decision", { nextRunAt: null });
     await notifyOwnerEndOfCaderno(sock, { ...caderno, cursor: newCursor });

@@ -26,6 +26,7 @@ create table if not exists public.cadernos (
   status text not null default 'inactive'
     check (status in ('inactive', 'active', 'paused_waiting_decision', 'finished')),
   cursor integer not null default 0,
+  random_order boolean not null default false,
   last_run_at timestamptz,
   next_run_at timestamptz
 );

@@ -28,7 +28,7 @@ async function handleGet(req, res, supabase) {
     const { data: cadernos, error } = await supabase
       .from("cadernos")
       .select(
-        "id, name, target_group_jid, created_by_jid, status, questions_per_run, interval_days, send_hour, send_minute, timezone, cursor, last_run_at, next_run_at, created_at"
+        "id, name, target_group_jid, created_by_jid, status, questions_per_run, interval_days, send_hour, send_minute, timezone, cursor, random_order, last_run_at, next_run_at, created_at"
       )
       .eq("target_group_jid", groupJid)
       .order("created_at", { ascending: false });
@@ -42,15 +42,19 @@ async function handleGet(req, res, supabase) {
     const ids = cadernos.map((c) => c.id);
     const { data: counts, error: countErr } = await supabase
       .from("caderno_questions")
-      .select("caderno_id")
+      .select("caderno_id, published_question_id")
       .in("caderno_id", ids);
 
     if (countErr) throw countErr;
 
     const totalByCaderno = new Map();
+    const publishedByCaderno = new Map();
     for (const row of counts || []) {
       const id = row.caderno_id;
       totalByCaderno.set(id, (totalByCaderno.get(id) || 0) + 1);
+      if (row.published_question_id != null) {
+        publishedByCaderno.set(id, (publishedByCaderno.get(id) || 0) + 1);
+      }
     }
 
     const out = cadernos.map((c) => ({
@@ -65,7 +69,9 @@ async function handleGet(req, res, supabase) {
       sendMinute: c.send_minute,
       timezone: c.timezone,
       cursor: c.cursor,
+      randomOrder: Boolean(c.random_order),
       totalQuestions: totalByCaderno.get(c.id) || 0,
+      publishedCount: publishedByCaderno.get(c.id) || 0,
       lastRunAt: c.last_run_at,
       nextRunAt: c.next_run_at,
       createdAt: c.created_at
@@ -94,7 +100,7 @@ async function handlePatch(req, res, supabase) {
   const { data: existing, error: readErr } = await supabase
     .from("cadernos")
     .select(
-      "id, name, status, questions_per_run, interval_days, send_hour, send_minute, timezone, cursor"
+      "id, name, status, questions_per_run, interval_days, send_hour, send_minute, timezone, cursor, random_order"
     )
     .eq("id", id)
     .maybeSingle();
@@ -119,6 +125,7 @@ async function handlePatch(req, res, supabase) {
   if (typeof body.timezone === "string" && body.timezone.trim())
     update.timezone = body.timezone.trim();
   if (Number.isFinite(Number(body.cursor))) update.cursor = Math.max(0, Math.round(Number(body.cursor)));
+  if (typeof body.randomOrder === "boolean") update.random_order = body.randomOrder;
 
   if (typeof body.status === "string") {
     const allowed = ["inactive", "active", "paused_waiting_decision", "finished"];
@@ -134,8 +141,18 @@ async function handlePatch(req, res, supabase) {
   const newStatus = update.status ?? existing.status;
   const previousStatus = existing.status;
 
+  const scheduleChanged =
+    update.send_hour !== undefined ||
+    update.send_minute !== undefined ||
+    update.timezone !== undefined ||
+    update.interval_days !== undefined;
+
   if (newStatus === "active") {
-    if (previousStatus !== "active" || body.recomputeNextRun === true) {
+    if (
+      previousStatus !== "active" ||
+      body.recomputeNextRun === true ||
+      scheduleChanged
+    ) {
       update.next_run_at = computeNextRunAt(
         new Date(),
         newSendHour,
@@ -146,6 +163,22 @@ async function handlePatch(req, res, supabase) {
     }
   } else if (newStatus === "inactive" || newStatus === "finished") {
     update.next_run_at = null;
+  }
+
+  if (body.triggerNow === true && newStatus === "active") {
+    update.next_run_at = new Date().toISOString();
+  }
+
+  if (body.recyclePublished === true) {
+    const { error: resetErr } = await supabase
+      .from("caderno_questions")
+      .update({ published_question_id: null, published_at: null })
+      .eq("caderno_id", id);
+    if (resetErr) {
+      return res
+        .status(500)
+        .json({ error: `Erro ao reciclar questoes do caderno: ${resetErr.message}` });
+    }
   }
 
   const { error: upErr } = await supabase.from("cadernos").update(update).eq("id", id);

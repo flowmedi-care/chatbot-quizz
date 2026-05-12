@@ -31,6 +31,7 @@ module.exports = async (req, res) => {
   const sendHour = clampInt(sched.sendHour, 0, 23, 9);
   const sendMinute = clampInt(sched.sendMinute, 0, 59, 0);
   const timezone = String(sched.timezone || "America/Sao_Paulo");
+  const randomOrder = Boolean(sched.randomOrder);
 
   if (!previewOnly && !name) {
     return res.status(400).json({ error: "Informe um nome para o caderno." });
@@ -130,6 +131,7 @@ module.exports = async (req, res) => {
       timezone,
       status,
       cursor: 0,
+      random_order: randomOrder,
       next_run_at: nextRunAt
     })
     .select("id")

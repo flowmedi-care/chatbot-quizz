@@ -201,6 +201,14 @@
             </label>
           </div>
 
+          <label class="caderno-toggle">
+            <input type="checkbox" id="caderno-random" />
+            <span>
+              <strong>Ordem aleatória</strong>
+              <small>Sorteia entre as questões ainda não enviadas. Sem aleatório, segue a ordem do PDF.</small>
+            </span>
+          </label>
+
           <div class="caderno-actions">
             <button type="button" id="btn-caderno-preview" class="btn-tutorial">Pré-visualizar</button>
             <button type="button" id="btn-caderno-save" class="btn-reveal">Salvar como inativo</button>
@@ -209,6 +217,60 @@
 
           <p id="caderno-add-status" class="report-status" role="status" aria-live="polite"></p>
           <div id="caderno-preview-box" class="caderno-preview hidden"></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="caderno-edit-overlay" class="modal-overlay" aria-hidden="true">
+      <div class="modal modal-caderno-add" role="dialog" aria-modal="true" aria-labelledby="caderno-edit-title">
+        <div class="modal-header">
+          <div>
+            <h3 id="caderno-edit-title">Editar caderno</h3>
+            <p class="report-sub">
+              Mude o nome, a agenda ou o modo de envio. Para cadernos ativos, o próximo envio
+              é recalculado automaticamente quando você muda horário ou intervalo.
+            </p>
+          </div>
+          <button type="button" id="caderno-edit-close" class="btn-close" aria-label="Fechar">×</button>
+        </div>
+
+        <div class="caderno-form">
+          <input type="hidden" id="caderno-edit-id" value="" />
+
+          <label class="report-field">
+            <span>Nome do caderno</span>
+            <input type="text" id="caderno-edit-name" />
+          </label>
+
+          <div class="caderno-row">
+            <label class="report-field">
+              <span>Questões por envio</span>
+              <input type="number" id="caderno-edit-per-run" min="1" max="20" />
+            </label>
+            <label class="report-field">
+              <span>Intervalo (dias)</span>
+              <input type="number" id="caderno-edit-interval" min="1" max="30" />
+            </label>
+            <label class="report-field">
+              <span>Horário do envio</span>
+              <input type="time" id="caderno-edit-time" />
+            </label>
+          </div>
+
+          <label class="caderno-toggle">
+            <input type="checkbox" id="caderno-edit-random" />
+            <span>
+              <strong>Ordem aleatória</strong>
+              <small>Sorteia entre as questões ainda não enviadas. Sem aleatório, segue a ordem do PDF.</small>
+            </span>
+          </label>
+
+          <div class="caderno-actions">
+            <button type="button" id="btn-caderno-edit-cancel" class="btn-tutorial">Cancelar</button>
+            <button type="button" id="btn-caderno-edit-save" class="btn-reveal">Salvar alterações</button>
+          </div>
+
+          <p id="caderno-edit-status" class="report-status" role="status" aria-live="polite"></p>
         </div>
       </div>
     </div>
