@@ -178,13 +178,48 @@ module.exports = async (req, res) => {
       }
       const engaged = Boolean(body.engaged);
 
-      const { data: updated, error: uErr } = await supabase
+      const nowIso = new Date().toISOString();
+      const patch = { engaged, updated_at: nowIso };
+
+      if (engaged) {
+        const { data: prev } = await supabase
+          .from("group_member_engagement")
+          .select("engaged, engaged_since")
+          .eq("group_jid", groupJid)
+          .eq("user_jid", userJid)
+          .maybeSingle();
+        const wasEngaged = Boolean(prev && prev.engaged);
+        const hadSince = Boolean(prev && prev.engaged_since);
+        if (!wasEngaged || !hadSince) {
+          patch.engaged_since = nowIso;
+        }
+      } else {
+        patch.engaged_since = null;
+      }
+
+      let upd = await supabase
         .from("group_member_engagement")
-        .update({ engaged, updated_at: new Date().toISOString() })
+        .update(patch)
         .eq("group_jid", groupJid)
         .eq("user_jid", userJid)
         .select("user_jid, user_label, quiz_display_name, engaged, updated_at");
 
+      if (
+        upd.error &&
+        String(upd.error.message || "").toLowerCase().includes("engaged_since")
+      ) {
+        // Coluna ainda não existe (migração pendente) — tenta sem ela.
+        const fallback = { engaged, updated_at: nowIso };
+        upd = await supabase
+          .from("group_member_engagement")
+          .update(fallback)
+          .eq("group_jid", groupJid)
+          .eq("user_jid", userJid)
+          .select("user_jid, user_label, quiz_display_name, engaged, updated_at");
+      }
+
+      const updated = upd.data;
+      const uErr = upd.error;
       if (uErr) throw uErr;
       if (!updated || updated.length === 0) {
         return res.status(404).json({

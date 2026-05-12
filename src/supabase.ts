@@ -600,6 +600,43 @@ export async function getEngagedUserJidsForGroup(groupJid: string): Promise<stri
   return [...new Set((data ?? []).map((r) => String(r.user_jid)).filter(Boolean))];
 }
 
+/**
+ * Engajados elegíveis a responder uma questão publicada em `publishedAt`.
+ * Inclui: `engaged=true` e (`engaged_since` é nulo OU `engaged_since <= publishedAt`).
+ * Quem virou engajado **depois** que a questão foi publicada não conta.
+ */
+export async function getEngagedEligibleUserJidsAt(
+  groupJid: string,
+  publishedAtIso: string
+): Promise<string[]> {
+  const { data, error } = await supabase
+    .from("group_member_engagement")
+    .select("user_jid, engaged_since")
+    .eq("group_jid", groupJid)
+    .eq("engaged", true);
+
+  if (error) {
+    const msg = error.message.toLowerCase();
+    if (msg.includes("relation") && msg.includes("does not exist")) return [];
+    if (msg.includes("column") && msg.includes("does not exist")) {
+      return getEngagedUserJidsForGroup(groupJid);
+    }
+    throw new Error(`Erro ao ler engajamento elegível: ${error.message}`);
+  }
+
+  const pubTs = new Date(publishedAtIso).getTime();
+  const out = new Set<string>();
+  for (const row of data ?? []) {
+    const jid = row.user_jid ? String(row.user_jid) : "";
+    if (!jid) continue;
+    const since = row.engaged_since ? new Date(String(row.engaged_since)).getTime() : 0;
+    if (!Number.isFinite(since) || since <= pubTs) {
+      out.add(jid);
+    }
+  }
+  return [...out];
+}
+
 export async function listGroupMembersEngagementRows(groupJid: string): Promise<GroupMemberEngagementRow[]> {
   const { data, error } = await supabase
     .from("group_member_engagement")
@@ -620,14 +657,47 @@ export async function listGroupMembersEngagementRows(groupJid: string): Promise<
   }));
 }
 
-export async function setGroupMemberEngaged(groupJid: string, userJid: string, engaged: boolean): Promise<void> {
+export async function setGroupMemberEngaged(
+  groupJid: string,
+  userJid: string,
+  engaged: boolean
+): Promise<void> {
+  const nowIso = new Date().toISOString();
+  const update: Record<string, unknown> = { engaged, updated_at: nowIso };
+
+  if (engaged) {
+    const { data: existing } = await supabase
+      .from("group_member_engagement")
+      .select("engaged, engaged_since")
+      .eq("group_jid", groupJid)
+      .eq("user_jid", userJid)
+      .maybeSingle();
+    const wasEngaged = Boolean(existing && existing.engaged);
+    const hadSince = Boolean(existing && existing.engaged_since);
+    if (!wasEngaged || !hadSince) {
+      update.engaged_since = nowIso;
+    }
+  } else {
+    update.engaged_since = null;
+  }
+
   const { error } = await supabase
     .from("group_member_engagement")
-    .update({ engaged, updated_at: new Date().toISOString() })
+    .update(update)
     .eq("group_jid", groupJid)
     .eq("user_jid", userJid);
 
   if (error) {
+    const msg = error.message.toLowerCase();
+    if (msg.includes("column") && msg.includes("engaged_since")) {
+      const { error: e2 } = await supabase
+        .from("group_member_engagement")
+        .update({ engaged, updated_at: nowIso })
+        .eq("group_jid", groupJid)
+        .eq("user_jid", userJid);
+      if (e2) throw new Error(`Erro ao atualizar engajamento: ${e2.message}`);
+      return;
+    }
     throw new Error(`Erro ao atualizar engajamento: ${error.message}`);
   }
 }
@@ -672,6 +742,14 @@ export type CadernoRow = {
   targetGroupJid: string;
   createdByJid: string | null;
   status: "inactive" | "active" | "paused_waiting_decision" | "finished";
+  /** Modelo novo: total de questões enviadas por dia, espaçadas em 24h/N. */
+  questionsPerDay: number;
+  startHour: number;
+  startMinute: number;
+  waitForAnswers: boolean;
+  currentDayDate: string | null;
+  currentDaySent: number;
+  /** Colunas legadas (modelo antigo) — preservadas para o GET da API. */
   questionsPerRun: number;
   intervalDays: number;
   sendHour: number;
@@ -697,12 +775,24 @@ export type CadernoQuestionRow = {
 };
 
 function mapCadernoRow(row: Record<string, unknown>): CadernoRow {
+  const questionsPerDayRaw =
+    row.questions_per_day != null ? Number(row.questions_per_day) : Number(row.questions_per_run);
+  const startHourRaw =
+    row.start_hour != null ? Number(row.start_hour) : Number(row.send_hour);
+  const startMinuteRaw =
+    row.start_minute != null ? Number(row.start_minute) : Number(row.send_minute);
   return {
     id: Number(row.id),
     name: String(row.name),
     targetGroupJid: String(row.target_group_jid),
     createdByJid: row.created_by_jid ? String(row.created_by_jid) : null,
     status: String(row.status) as CadernoRow["status"],
+    questionsPerDay: Number.isFinite(questionsPerDayRaw) ? questionsPerDayRaw : 3,
+    startHour: Number.isFinite(startHourRaw) ? startHourRaw : 7,
+    startMinute: Number.isFinite(startMinuteRaw) ? startMinuteRaw : 0,
+    waitForAnswers: Boolean(row.wait_for_answers),
+    currentDayDate: row.current_day_date ? String(row.current_day_date) : null,
+    currentDaySent: Number(row.current_day_sent || 0),
     questionsPerRun: Number(row.questions_per_run),
     intervalDays: Number(row.interval_days),
     sendHour: Number(row.send_hour),
@@ -716,7 +806,7 @@ function mapCadernoRow(row: Record<string, unknown>): CadernoRow {
 }
 
 const CADERNO_SELECT_COLUMNS =
-  "id, name, target_group_jid, created_by_jid, status, questions_per_run, interval_days, send_hour, send_minute, timezone, cursor, random_order, last_run_at, next_run_at";
+  "id, name, target_group_jid, created_by_jid, status, questions_per_day, start_hour, start_minute, wait_for_answers, current_day_date, current_day_sent, questions_per_run, interval_days, send_hour, send_minute, timezone, cursor, random_order, last_run_at, next_run_at";
 
 function mapCadernoQuestionRow(row: Record<string, unknown>): CadernoQuestionRow {
   return {
@@ -891,6 +981,113 @@ export async function updateCadernoAfterRun(
     .eq("id", cadernoId);
 
   if (error) throw new Error(`Erro ao atualizar caderno apos envio: ${error.message}`);
+}
+
+/**
+ * Atualiza estado do dia em curso + agenda próximo tick. Não mexe em cursor
+ * (cursor virou métrica de "quantas já enviadas no total"; usamos
+ * `published_question_id IS NULL` como filtro de pendentes).
+ */
+export async function updateCadernoDayState(
+  cadernoId: number,
+  patch: {
+    currentDayDate?: string | null;
+    currentDaySent?: number;
+    cursor?: number;
+    nextRunAtIso?: string | null;
+    updateLastRun?: boolean;
+  }
+): Promise<void> {
+  const update: Record<string, unknown> = {};
+  if (Object.prototype.hasOwnProperty.call(patch, "currentDayDate")) {
+    update.current_day_date = patch.currentDayDate;
+  }
+  if (typeof patch.currentDaySent === "number") {
+    update.current_day_sent = patch.currentDaySent;
+  }
+  if (typeof patch.cursor === "number") {
+    update.cursor = patch.cursor;
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, "nextRunAtIso")) {
+    update.next_run_at = patch.nextRunAtIso;
+  }
+  if (patch.updateLastRun) {
+    update.last_run_at = new Date().toISOString();
+  }
+  if (Object.keys(update).length === 0) return;
+
+  const { error } = await supabase.from("cadernos").update(update).eq("id", cadernoId);
+  if (error) throw new Error(`Erro ao atualizar estado do caderno: ${error.message}`);
+}
+
+/**
+ * Lista as questões `caderno_questions` publicadas em uma data específica
+ * (`current_day_date` no fuso do caderno). Retorna a published_at e o id da
+ * linha em `questions` para checar respostas.
+ */
+export async function listCadernoQuestionsPublishedOnDate(
+  cadernoId: number,
+  dayIso: string,
+  timeZone: string
+): Promise<{ publishedQuestionId: number; publishedAt: string }[]> {
+  const { data, error } = await supabase
+    .from("caderno_questions")
+    .select("published_question_id, published_at")
+    .eq("caderno_id", cadernoId)
+    .not("published_question_id", "is", null);
+
+  if (error) {
+    throw new Error(`Erro ao listar publicações do dia: ${error.message}`);
+  }
+
+  const out: { publishedQuestionId: number; publishedAt: string }[] = [];
+  for (const row of data ?? []) {
+    const pubAt = row.published_at ? String(row.published_at) : null;
+    const pubId = row.published_question_id != null ? Number(row.published_question_id) : null;
+    if (!pubAt || !pubId) continue;
+    const isoDay = formatDateInTimezone(new Date(pubAt), timeZone);
+    if (isoDay === dayIso) {
+      out.push({ publishedQuestionId: pubId, publishedAt: pubAt });
+    }
+  }
+  return out;
+}
+
+function formatDateInTimezone(d: Date, timeZone: string): string {
+  const fmt = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  });
+  return fmt.format(d);
+}
+
+/** Lista IDs de quem respondeu (set por question_id). */
+export async function listAnswersForQuestionIds(
+  questionIds: number[]
+): Promise<Map<number, Set<string>>> {
+  const out = new Map<number, Set<string>>();
+  if (questionIds.length === 0) return out;
+  const { data, error } = await supabase
+    .from("answers")
+    .select("question_id, user_jid")
+    .in("question_id", questionIds);
+
+  if (error) throw new Error(`Erro ao listar respostas: ${error.message}`);
+
+  for (const row of data ?? []) {
+    const qid = Number(row.question_id);
+    const jid = row.user_jid ? String(row.user_jid) : "";
+    if (!Number.isFinite(qid) || !jid) continue;
+    let set = out.get(qid);
+    if (!set) {
+      set = new Set<string>();
+      out.set(qid, set);
+    }
+    set.add(jidComparableKeyShared(jid));
+  }
+  return out;
 }
 
 export async function setCadernoStatus(

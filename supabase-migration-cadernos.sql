@@ -18,6 +18,15 @@ create table if not exists public.cadernos (
   target_group_jid text not null,
   created_by_jid text,
   created_at timestamptz not null default now(),
+  -- Modelo novo (envio distribuído ao longo do dia):
+  questions_per_day smallint not null default 3 check (questions_per_day between 1 and 24),
+  start_hour smallint not null default 7 check (start_hour between 0 and 23),
+  start_minute smallint not null default 0 check (start_minute between 0 and 59),
+  wait_for_answers boolean not null default false,
+  current_day_date date,
+  current_day_sent smallint not null default 0,
+  -- Colunas legadas (modelo anterior em lote). Mantidas para compatibilidade;
+  -- a lógica nova ignora.
   questions_per_run smallint not null default 3 check (questions_per_run between 1 and 20),
   interval_days smallint not null default 2 check (interval_days between 1 and 30),
   send_hour smallint not null default 9 check (send_hour between 0 and 23),

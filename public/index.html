@@ -188,24 +188,35 @@
 
           <div class="caderno-row">
             <label class="report-field">
-              <span>Questões por envio</span>
-              <input type="number" id="caderno-per-run" min="1" max="20" value="3" />
+              <span>Questões por dia</span>
+              <input type="number" id="caderno-per-day" min="1" max="24" value="3" />
             </label>
             <label class="report-field">
-              <span>Intervalo (dias)</span>
-              <input type="number" id="caderno-interval" min="1" max="30" value="2" />
-            </label>
-            <label class="report-field">
-              <span>Horário do envio</span>
-              <input type="time" id="caderno-time" value="09:00" />
+              <span>Horário de início</span>
+              <input type="time" id="caderno-time" value="07:00" />
             </label>
           </div>
+
+          <p class="report-sub" id="caderno-spread-hint" style="margin-top: -6px;">
+            As questões serão distribuídas a cada 24h/N a partir do horário escolhido.
+          </p>
 
           <label class="caderno-toggle">
             <input type="checkbox" id="caderno-random" />
             <span>
               <strong>Ordem aleatória</strong>
               <small>Sorteia entre as questões ainda não enviadas. Sem aleatório, segue a ordem do PDF.</small>
+            </span>
+          </label>
+
+          <label class="caderno-toggle">
+            <input type="checkbox" id="caderno-wait" />
+            <span>
+              <strong>Esperar resposta entre dias</strong>
+              <small>
+                Só começa o dia seguinte quando todos os engajados responderem as questões do dia anterior.
+                Quem virar engajado depois não trava as próximas — segue a partir do ponto do grupo.
+              </small>
             </span>
           </label>
 
@@ -228,7 +239,7 @@
             <h3 id="caderno-edit-title">Editar caderno</h3>
             <p class="report-sub">
               Mude o nome, a agenda ou o modo de envio. Para cadernos ativos, o próximo envio
-              é recalculado automaticamente quando você muda horário ou intervalo.
+              é recalculado automaticamente quando você muda horário ou quantidade.
             </p>
           </div>
           <button type="button" id="caderno-edit-close" class="btn-close" aria-label="Fechar">×</button>
@@ -244,24 +255,35 @@
 
           <div class="caderno-row">
             <label class="report-field">
-              <span>Questões por envio</span>
-              <input type="number" id="caderno-edit-per-run" min="1" max="20" />
+              <span>Questões por dia</span>
+              <input type="number" id="caderno-edit-per-day" min="1" max="24" />
             </label>
             <label class="report-field">
-              <span>Intervalo (dias)</span>
-              <input type="number" id="caderno-edit-interval" min="1" max="30" />
-            </label>
-            <label class="report-field">
-              <span>Horário do envio</span>
+              <span>Horário de início</span>
               <input type="time" id="caderno-edit-time" />
             </label>
           </div>
+
+          <p class="report-sub" style="margin-top: -6px;">
+            As questões do dia são espaçadas em 24h/N a partir do horário escolhido.
+          </p>
 
           <label class="caderno-toggle">
             <input type="checkbox" id="caderno-edit-random" />
             <span>
               <strong>Ordem aleatória</strong>
               <small>Sorteia entre as questões ainda não enviadas. Sem aleatório, segue a ordem do PDF.</small>
+            </span>
+          </label>
+
+          <label class="caderno-toggle">
+            <input type="checkbox" id="caderno-edit-wait" />
+            <span>
+              <strong>Esperar resposta entre dias</strong>
+              <small>
+                Só começa o dia seguinte quando todos os engajados responderem as questões do dia anterior.
+                Novos engajados não travam — seguem a partir do ponto do grupo.
+              </small>
             </span>
           </label>
 

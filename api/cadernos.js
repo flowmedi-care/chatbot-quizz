@@ -1,5 +1,8 @@
 const { getClient, applyCors, pickTargetGroupJid } = require("./_lib.js");
-const { computeNextRunAt } = require("./_schedule.js");
+const { firstDailySlotUtc } = require("./_schedule.js");
+
+const SELECT_COLUMNS =
+  "id, name, target_group_jid, created_by_jid, status, questions_per_day, start_hour, start_minute, wait_for_answers, current_day_date, current_day_sent, questions_per_run, interval_days, send_hour, send_minute, timezone, cursor, random_order, last_run_at, next_run_at, created_at";
 
 module.exports = async (req, res) => {
   applyCors(res);
@@ -27,9 +30,7 @@ async function handleGet(req, res, supabase) {
 
     const { data: cadernos, error } = await supabase
       .from("cadernos")
-      .select(
-        "id, name, target_group_jid, created_by_jid, status, questions_per_run, interval_days, send_hour, send_minute, timezone, cursor, random_order, last_run_at, next_run_at, created_at"
-      )
+      .select(SELECT_COLUMNS)
       .eq("target_group_jid", groupJid)
       .order("created_at", { ascending: false });
 
@@ -63,6 +64,12 @@ async function handleGet(req, res, supabase) {
       targetGroupJid: c.target_group_jid,
       createdByJid: c.created_by_jid,
       status: c.status,
+      questionsPerDay: c.questions_per_day ?? c.questions_per_run,
+      startHour: c.start_hour ?? c.send_hour,
+      startMinute: c.start_minute ?? c.send_minute,
+      waitForAnswers: Boolean(c.wait_for_answers),
+      currentDayDate: c.current_day_date,
+      currentDaySent: c.current_day_sent || 0,
       questionsPerRun: c.questions_per_run,
       intervalDays: c.interval_days,
       sendHour: c.send_hour,
@@ -99,9 +106,7 @@ async function handlePatch(req, res, supabase) {
 
   const { data: existing, error: readErr } = await supabase
     .from("cadernos")
-    .select(
-      "id, name, status, questions_per_run, interval_days, send_hour, send_minute, timezone, cursor, random_order"
-    )
+    .select(SELECT_COLUMNS)
     .eq("id", id)
     .maybeSingle();
 
@@ -112,19 +117,54 @@ async function handlePatch(req, res, supabase) {
     return res.status(404).json({ error: "Caderno nao encontrado" });
   }
 
+  const existingQuestionsPerDay = existing.questions_per_day ?? existing.questions_per_run ?? 3;
+  const existingStartHour = existing.start_hour ?? existing.send_hour ?? 7;
+  const existingStartMinute = existing.start_minute ?? existing.send_minute ?? 0;
+
   const update = {};
   if (typeof body.name === "string" && body.name.trim()) update.name = body.name.trim();
-  if (body.questionsPerRun !== undefined)
-    update.questions_per_run = clampInt(body.questionsPerRun, 1, 20, existing.questions_per_run);
-  if (body.intervalDays !== undefined)
+
+  if (body.questionsPerDay !== undefined) {
+    const q = clampInt(body.questionsPerDay, 1, 24, existingQuestionsPerDay);
+    update.questions_per_day = q;
+    update.questions_per_run = Math.min(20, q);
+  } else if (body.questionsPerRun !== undefined) {
+    const q = clampInt(body.questionsPerRun, 1, 20, existing.questions_per_run);
+    update.questions_per_run = q;
+    update.questions_per_day = Math.min(24, q);
+  }
+
+  if (body.startHour !== undefined) {
+    const h = clampInt(body.startHour, 0, 23, existingStartHour);
+    update.start_hour = h;
+    update.send_hour = h;
+  } else if (body.sendHour !== undefined) {
+    const h = clampInt(body.sendHour, 0, 23, existing.send_hour);
+    update.send_hour = h;
+    update.start_hour = h;
+  }
+
+  if (body.startMinute !== undefined) {
+    const m = clampInt(body.startMinute, 0, 59, existingStartMinute);
+    update.start_minute = m;
+    update.send_minute = m;
+  } else if (body.sendMinute !== undefined) {
+    const m = clampInt(body.sendMinute, 0, 59, existing.send_minute);
+    update.send_minute = m;
+    update.start_minute = m;
+  }
+
+  if (typeof body.waitForAnswers === "boolean") {
+    update.wait_for_answers = body.waitForAnswers;
+  }
+
+  if (body.intervalDays !== undefined) {
     update.interval_days = clampInt(body.intervalDays, 1, 30, existing.interval_days);
-  if (body.sendHour !== undefined)
-    update.send_hour = clampInt(body.sendHour, 0, 23, existing.send_hour);
-  if (body.sendMinute !== undefined)
-    update.send_minute = clampInt(body.sendMinute, 0, 59, existing.send_minute);
+  }
   if (typeof body.timezone === "string" && body.timezone.trim())
     update.timezone = body.timezone.trim();
-  if (Number.isFinite(Number(body.cursor))) update.cursor = Math.max(0, Math.round(Number(body.cursor)));
+  if (Number.isFinite(Number(body.cursor)))
+    update.cursor = Math.max(0, Math.round(Number(body.cursor)));
   if (typeof body.randomOrder === "boolean") update.random_order = body.randomOrder;
 
   if (typeof body.status === "string") {
@@ -135,30 +175,29 @@ async function handlePatch(req, res, supabase) {
     update.status = body.status;
   }
 
-  const newSendHour = update.send_hour ?? existing.send_hour;
-  const newSendMinute = update.send_minute ?? existing.send_minute;
+  const newStartHour = update.start_hour ?? existingStartHour;
+  const newStartMinute = update.start_minute ?? existingStartMinute;
   const newTimezone = update.timezone ?? existing.timezone;
   const newStatus = update.status ?? existing.status;
   const previousStatus = existing.status;
 
   const scheduleChanged =
-    update.send_hour !== undefined ||
-    update.send_minute !== undefined ||
+    update.start_hour !== undefined ||
+    update.start_minute !== undefined ||
     update.timezone !== undefined ||
-    update.interval_days !== undefined;
+    update.questions_per_day !== undefined;
 
   if (newStatus === "active") {
-    if (
-      previousStatus !== "active" ||
-      body.recomputeNextRun === true ||
-      scheduleChanged
-    ) {
-      update.next_run_at = computeNextRunAt(
+    if (previousStatus !== "active" || body.recomputeNextRun === true || scheduleChanged) {
+      // Ao (re)ativar ou alterar agenda: zera o dia em curso para o
+      // scheduler iniciar limpo no próximo slot.
+      update.current_day_date = null;
+      update.current_day_sent = 0;
+      update.next_run_at = firstDailySlotUtc(
         new Date(),
-        newSendHour,
-        newSendMinute,
-        newTimezone,
-        0
+        newStartHour,
+        newStartMinute,
+        newTimezone
       ).toISOString();
     }
   } else if (newStatus === "inactive" || newStatus === "finished") {
@@ -179,6 +218,9 @@ async function handlePatch(req, res, supabase) {
         .status(500)
         .json({ error: `Erro ao reciclar questoes do caderno: ${resetErr.message}` });
     }
+    update.current_day_date = null;
+    update.current_day_sent = 0;
+    update.cursor = 0;
   }
 
   const { error: upErr } = await supabase.from("cadernos").update(update).eq("id", id);

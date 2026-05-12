@@ -1,7 +1,7 @@
 const pdfParse = require("pdf-parse/lib/pdf-parse.js");
 const { getClient, applyCors, pickTargetGroupJid } = require("./_lib.js");
 const { parseTecConcursosPdf } = require("./_pdf-parser.js");
-const { computeNextRunAt } = require("./_schedule.js");
+const { firstDailySlotUtc } = require("./_schedule.js");
 
 const MAX_PDF_BYTES = 8 * 1024 * 1024;
 
@@ -26,12 +26,35 @@ module.exports = async (req, res) => {
   const activate = Boolean(body.activate);
 
   const sched = body.schedule || {};
-  const questionsPerRun = clampInt(sched.questionsPerRun, 1, 20, 3);
-  const intervalDays = clampInt(sched.intervalDays, 1, 30, 2);
-  const sendHour = clampInt(sched.sendHour, 0, 23, 9);
-  const sendMinute = clampInt(sched.sendMinute, 0, 59, 0);
+  // Modelo novo: questionsPerDay + startHour/startMinute + waitForAnswers.
+  // Mantemos compat com chamadas antigas (questionsPerRun, sendHour, sendMinute).
+  const questionsPerDay = clampInt(
+    sched.questionsPerDay != null ? sched.questionsPerDay : sched.questionsPerRun,
+    1,
+    24,
+    3
+  );
+  const startHour = clampInt(
+    sched.startHour != null ? sched.startHour : sched.sendHour,
+    0,
+    23,
+    7
+  );
+  const startMinute = clampInt(
+    sched.startMinute != null ? sched.startMinute : sched.sendMinute,
+    0,
+    59,
+    0
+  );
+  const waitForAnswers = Boolean(sched.waitForAnswers);
   const timezone = String(sched.timezone || "America/Sao_Paulo");
   const randomOrder = Boolean(sched.randomOrder);
+
+  // Legados: persistimos espelhando os campos novos para não violar NOT NULL.
+  const questionsPerRun = Math.min(20, questionsPerDay);
+  const sendHour = startHour;
+  const sendMinute = startMinute;
+  const intervalDays = 1;
 
   if (!previewOnly && !name) {
     return res.status(400).json({ error: "Informe um nome para o caderno." });
@@ -115,7 +138,7 @@ module.exports = async (req, res) => {
   const nowDate = new Date();
   const status = activate ? "active" : "inactive";
   const nextRunAt = activate
-    ? computeNextRunAt(nowDate, sendHour, sendMinute, timezone, 0).toISOString()
+    ? firstDailySlotUtc(nowDate, startHour, startMinute, timezone).toISOString()
     : null;
 
   const { data: cadernoRow, error: cadernoErr } = await supabase
@@ -124,6 +147,14 @@ module.exports = async (req, res) => {
       name,
       target_group_jid: targetGroupJid,
       created_by_jid: createdByJid,
+      // Novos campos:
+      questions_per_day: questionsPerDay,
+      start_hour: startHour,
+      start_minute: startMinute,
+      wait_for_answers: waitForAnswers,
+      current_day_date: null,
+      current_day_sent: 0,
+      // Legados (espelhados para compat):
       questions_per_run: questionsPerRun,
       interval_days: intervalDays,
       send_hour: sendHour,

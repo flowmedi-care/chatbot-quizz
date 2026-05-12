@@ -85,4 +85,28 @@ function computeNextRunAt(from, sendHour, sendMinute, timeZone, intervalDays) {
   return candidate;
 }
 
-module.exports = { computeNextRunAt, getZonedParts, zonedDateToUtc };
+/**
+ * Primeiro envio do "modelo diário" a partir de `from`.
+ * Se `start_hour:start_minute` no fuso ainda não passou hoje, devolve hoje;
+ * caso contrário, agenda para amanhã.
+ *
+ * Usado quando o caderno é criado/ativado: queremos que o ciclo do dia
+ * comece no próximo `start_time` (não disparar imediato fora do horário).
+ */
+function firstDailySlotUtc(from, startHour, startMinute, timeZone) {
+  const zonedNow = getZonedParts(from, timeZone);
+  let candidate = zonedDateToUtc(
+    zonedNow.year,
+    zonedNow.month,
+    zonedNow.day,
+    startHour,
+    startMinute,
+    timeZone
+  );
+  if (candidate.getTime() <= from.getTime()) {
+    candidate = new Date(candidate.getTime() + 24 * 60 * 60 * 1000);
+  }
+  return candidate;
+}
+
+module.exports = { computeNextRunAt, firstDailySlotUtc, getZonedParts, zonedDateToUtc };

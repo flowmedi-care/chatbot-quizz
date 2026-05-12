@@ -55,12 +55,12 @@
     cadernoAddClose: document.getElementById("caderno-add-close"),
     cadernoName: document.getElementById("caderno-name"),
     cadernoPdf: document.getElementById("caderno-pdf"),
-    cadernoPerRun: document.getElementById("caderno-per-run"),
-    cadernoInterval: document.getElementById("caderno-interval"),
+    cadernoPerDay: document.getElementById("caderno-per-day"),
     cadernoTime: document.getElementById("caderno-time"),
     cadernoAddStatus: document.getElementById("caderno-add-status"),
     cadernoPreviewBox: document.getElementById("caderno-preview-box"),
     cadernoRandom: document.getElementById("caderno-random"),
+    cadernoWait: document.getElementById("caderno-wait"),
     btnCadernoPreview: document.getElementById("btn-caderno-preview"),
     btnCadernoSave: document.getElementById("btn-caderno-save"),
     btnCadernoSaveActivate: document.getElementById("btn-caderno-save-activate"),
@@ -68,10 +68,10 @@
     cadernoEditClose: document.getElementById("caderno-edit-close"),
     cadernoEditId: document.getElementById("caderno-edit-id"),
     cadernoEditName: document.getElementById("caderno-edit-name"),
-    cadernoEditPerRun: document.getElementById("caderno-edit-per-run"),
-    cadernoEditInterval: document.getElementById("caderno-edit-interval"),
+    cadernoEditPerDay: document.getElementById("caderno-edit-per-day"),
     cadernoEditTime: document.getElementById("caderno-edit-time"),
     cadernoEditRandom: document.getElementById("caderno-edit-random"),
+    cadernoEditWait: document.getElementById("caderno-edit-wait"),
     cadernoEditStatus: document.getElementById("caderno-edit-status"),
     btnCadernoEditSave: document.getElementById("btn-caderno-edit-save"),
     btnCadernoEditCancel: document.getElementById("btn-caderno-edit-cancel")
@@ -836,7 +836,10 @@
         const last = c.lastRunAt ? formatNextRunPretty(c.lastRunAt, c.timezone) : "—";
         const published = typeof c.publishedCount === "number" ? c.publishedCount : c.cursor;
         const totalLabel = `${published}/${c.totalQuestions}`;
-        const horario = `${pad2(c.sendHour)}:${pad2(c.sendMinute)}`;
+        const startHour = c.startHour != null ? c.startHour : c.sendHour;
+        const startMinute = c.startMinute != null ? c.startMinute : c.sendMinute;
+        const horario = `${pad2(startHour)}:${pad2(startMinute)}`;
+        const perDay = c.questionsPerDay != null ? c.questionsPerDay : c.questionsPerRun;
         const isActive = c.status === "active";
         const canResume = c.status !== "active" && c.status !== "finished";
         const canRecycle =
@@ -844,15 +847,24 @@
         const randomBadge = c.randomOrder
           ? '<span class="badge-mini" title="Sorteia entre as não enviadas">Aleatório</span>'
           : "";
+        const waitBadge = c.waitForAnswers
+          ? '<span class="badge-mini" title="Só inicia o próximo dia quando engajados responderem">Esperar resposta</span>'
+          : "";
+        const todaySent = Number(c.currentDaySent || 0);
+        const dayLine =
+          c.currentDayDate && isActive
+            ? `<div><strong>Hoje:</strong> ${todaySent}/${perDay} enviada(s)</div>`
+            : "";
         return `
         <li class="caderno-card" data-id="${c.id}">
           <div class="caderno-card-head">
-            <h4 class="caderno-card-name">${esc(c.name)} <small style="color:var(--muted);font-weight:500;">#${c.id}</small>${randomBadge}</h4>
+            <h4 class="caderno-card-name">${esc(c.name)} <small style="color:var(--muted);font-weight:500;">#${c.id}</small>${randomBadge}${waitBadge}</h4>
             <span class="caderno-card-status status-${esc(c.status)}">${esc(formatStatusLabel(c.status))}</span>
           </div>
           <div class="caderno-card-meta">
-            <div><strong>Envio:</strong> ${c.questionsPerRun} q. a cada ${c.intervalDays} dia(s) — ${horario}</div>
+            <div><strong>Envio:</strong> ${perDay} q./dia a partir das ${horario}</div>
             <div><strong>Progresso:</strong> ${totalLabel}</div>
+            ${dayLine}
             <div><strong>Próximo envio:</strong> ${esc(next)}</div>
             <div><strong>Último envio:</strong> ${esc(last)}</div>
           </div>
@@ -988,22 +1000,22 @@
   function getCadernoFormPayload() {
     const file = els.cadernoPdf && els.cadernoPdf.files && els.cadernoPdf.files[0];
     const name = (els.cadernoName.value || "").trim();
-    const questionsPerRun = Number(els.cadernoPerRun.value || 3);
-    const intervalDays = Number(els.cadernoInterval.value || 2);
-    const [hh, mm] = String(els.cadernoTime.value || "09:00").split(":");
-    const sendHour = Number(hh);
-    const sendMinute = Number(mm);
+    const questionsPerDay = Number((els.cadernoPerDay && els.cadernoPerDay.value) || 3);
+    const [hh, mm] = String((els.cadernoTime && els.cadernoTime.value) || "07:00").split(":");
+    const startHour = Number(hh);
+    const startMinute = Number(mm);
     const randomOrder = Boolean(els.cadernoRandom && els.cadernoRandom.checked);
+    const waitForAnswers = Boolean(els.cadernoWait && els.cadernoWait.checked);
     return {
       file,
       name,
       schedule: {
-        questionsPerRun,
-        intervalDays,
-        sendHour: Number.isFinite(sendHour) ? sendHour : 9,
-        sendMinute: Number.isFinite(sendMinute) ? sendMinute : 0,
+        questionsPerDay: Number.isFinite(questionsPerDay) ? questionsPerDay : 3,
+        startHour: Number.isFinite(startHour) ? startHour : 7,
+        startMinute: Number.isFinite(startMinute) ? startMinute : 0,
         timezone: "America/Sao_Paulo",
-        randomOrder
+        randomOrder,
+        waitForAnswers
       }
     };
   }
@@ -1113,10 +1125,20 @@
     if (!els.cadernoEditOverlay) return;
     els.cadernoEditId.value = String(caderno.id);
     els.cadernoEditName.value = caderno.name || "";
-    els.cadernoEditPerRun.value = String(caderno.questionsPerRun || 3);
-    els.cadernoEditInterval.value = String(caderno.intervalDays || 2);
-    els.cadernoEditTime.value = `${pad2(caderno.sendHour || 0)}:${pad2(caderno.sendMinute || 0)}`;
+    const perDay =
+      caderno.questionsPerDay != null
+        ? Number(caderno.questionsPerDay)
+        : Number(caderno.questionsPerRun || 3);
+    const startHour =
+      caderno.startHour != null ? Number(caderno.startHour) : Number(caderno.sendHour || 7);
+    const startMinute =
+      caderno.startMinute != null
+        ? Number(caderno.startMinute)
+        : Number(caderno.sendMinute || 0);
+    els.cadernoEditPerDay.value = String(perDay);
+    els.cadernoEditTime.value = `${pad2(startHour)}:${pad2(startMinute)}`;
     els.cadernoEditRandom.checked = Boolean(caderno.randomOrder);
+    if (els.cadernoEditWait) els.cadernoEditWait.checked = Boolean(caderno.waitForAnswers);
     els.cadernoEditStatus.textContent = "";
     els.cadernoEditOverlay.classList.add("open");
     els.cadernoEditOverlay.setAttribute("aria-hidden", "false");
@@ -1138,21 +1160,30 @@
     }
 
     const name = (els.cadernoEditName.value || "").trim();
-    const questionsPerRun = Number(els.cadernoEditPerRun.value || 3);
-    const intervalDays = Number(els.cadernoEditInterval.value || 2);
-    const [hh, mm] = String(els.cadernoEditTime.value || "09:00").split(":");
-    const sendHour = Number(hh);
-    const sendMinute = Number(mm);
+    const questionsPerDay = Number(els.cadernoEditPerDay.value || 3);
+    const [hh, mm] = String(els.cadernoEditTime.value || "07:00").split(":");
+    const startHour = Number(hh);
+    const startMinute = Number(mm);
     const randomOrder = Boolean(els.cadernoEditRandom.checked);
+    const waitForAnswers = Boolean(els.cadernoEditWait && els.cadernoEditWait.checked);
+
+    const currentPerDay =
+      current.questionsPerDay != null ? Number(current.questionsPerDay) : Number(current.questionsPerRun);
+    const currentStartHour =
+      current.startHour != null ? Number(current.startHour) : Number(current.sendHour);
+    const currentStartMinute =
+      current.startMinute != null ? Number(current.startMinute) : Number(current.sendMinute);
 
     const payload = { id };
     if (name && name !== current.name) payload.name = name;
-    if (questionsPerRun !== current.questionsPerRun) payload.questionsPerRun = questionsPerRun;
-    if (intervalDays !== current.intervalDays) payload.intervalDays = intervalDays;
-    if (Number.isFinite(sendHour) && sendHour !== current.sendHour) payload.sendHour = sendHour;
-    if (Number.isFinite(sendMinute) && sendMinute !== current.sendMinute)
-      payload.sendMinute = sendMinute;
+    if (questionsPerDay !== currentPerDay) payload.questionsPerDay = questionsPerDay;
+    if (Number.isFinite(startHour) && startHour !== currentStartHour)
+      payload.startHour = startHour;
+    if (Number.isFinite(startMinute) && startMinute !== currentStartMinute)
+      payload.startMinute = startMinute;
     if (randomOrder !== Boolean(current.randomOrder)) payload.randomOrder = randomOrder;
+    if (waitForAnswers !== Boolean(current.waitForAnswers))
+      payload.waitForAnswers = waitForAnswers;
 
     if (Object.keys(payload).length === 1) {
       els.cadernoEditStatus.textContent = "Nada para salvar — sem alterações.";
@@ -1180,10 +1211,10 @@
     if (!els.cadernoAddOverlay) return;
     if (els.cadernoName) els.cadernoName.value = "";
     if (els.cadernoPdf) els.cadernoPdf.value = "";
-    if (els.cadernoPerRun) els.cadernoPerRun.value = "3";
-    if (els.cadernoInterval) els.cadernoInterval.value = "2";
-    if (els.cadernoTime) els.cadernoTime.value = "09:00";
+    if (els.cadernoPerDay) els.cadernoPerDay.value = "3";
+    if (els.cadernoTime) els.cadernoTime.value = "07:00";
     if (els.cadernoRandom) els.cadernoRandom.checked = false;
+    if (els.cadernoWait) els.cadernoWait.checked = false;
     if (els.cadernoAddStatus) els.cadernoAddStatus.textContent = "";
     renderCadernoPreview(null);
     els.cadernoAddOverlay.classList.add("open");

@@ -156,8 +156,14 @@ automático das questões no grupo.
 2. Cria duas tabelas: `cadernos` (configuração e agenda) e `caderno_questions`
    (questões extraídas com `position`, `tec_url`, `answer_key`, etc.).
 3. Se o caderno já existia antes da feature de **ordem aleatória**, rode também
-   `supabase-migration-cadernos-random-order.sql` (adiciona a coluna
-   `random_order`).
+   `supabase-migration-cadernos-random-order.sql`.
+4. Se o caderno já existia antes do modelo **diário espalhado** (envio
+   distribuído pelo dia + toggle "esperar resposta"), rode também
+   `supabase-migration-cadernos-daily-spread.sql`. Ele adiciona
+   `questions_per_day`, `start_hour`, `start_minute`, `wait_for_answers`,
+   `current_day_date`, `current_day_sent` em `cadernos`, e `engaged_since`
+   em `group_member_engagement` (usado para destravar engajados novos —
+   ver "Esperar resposta" abaixo).
 
 ### Como criar um caderno
 
@@ -165,11 +171,16 @@ automático das questões no grupo.
 2. Dê um nome (ex.: `SEFAZ PI 2025 — Geral`).
 3. Selecione o PDF do Tec Concursos (formato padrão da plataforma).
 4. Configure:
-   - **Questões por envio** (1–20, padrão 3).
-   - **Intervalo (dias)** (1–30, padrão 2).
-   - **Horário do envio** (HH:MM no fuso `America/Sao_Paulo`).
+   - **Questões por dia** (1–24, padrão 3). As questões são distribuídas em
+     intervalos iguais ao longo do dia: `24h / questions_per_day`.
+   - **Horário de início** (HH:MM no fuso `America/Sao_Paulo`). É o horário
+     em que a 1ª questão do dia sai. As próximas saem a cada `24h/N`.
+     Ex.: 3 q./dia a partir das 07:00 ⇒ 07:00, 15:00 e 23:00.
    - **Ordem aleatória** (opcional): sorteia entre as questões ainda não
      enviadas em vez de seguir a ordem do PDF. Nenhuma questão repete.
+   - **Esperar resposta entre dias** (opcional): só inicia o próximo dia se
+     todos os engajados elegíveis responderem **todas** as questões do dia
+     anterior. Detalhes em "Esperar resposta".
 5. Clique em **Pré-visualizar** para conferir total extraído, gabarito e avisos
    do parser. Se estiver tudo certo, **Salvar e ativar**.
 
@@ -178,10 +189,13 @@ automático das questões no grupo.
 Cada caderno mostra botões:
 
 - **Enviar questão** — força o próximo envio agora (o bot publica em até 60s).
+  Conta como uma das do dia.
+- **Editar** — muda nome, quantidade/dia, horário, ordem aleatória e modo
+  "esperar resposta" sem precisar recriar o caderno.
 - **Ordem aleatória / Ordem do PDF** — alterna o modo a qualquer momento.
-- **Pausar** / **Retomar** — sem perder o cursor.
-- **Reciclar (zerar cursor)** — libera todas as questões como "não enviadas"
-  para começar de novo.
+- **Pausar** / **Retomar** — sem perder o progresso.
+- **Reciclar** — libera todas as questões como "não enviadas" e reseta o
+  contador do dia.
 - **Excluir** — apaga o caderno (cascade nas questões).
 
 O parser reconhece:
@@ -197,15 +211,36 @@ truncadas. Use o preview para identificar e descartar antes de ativar.
 
 - O bot tem um scheduler interno (tick a cada 60s) que lê `cadernos` com
   `status = 'active'` e `next_run_at <= now()`.
-- A cada disparo: envia `questions_per_run` questões em sequência (~3s entre
-  elas), incrementa o `cursor` e agenda `next_run_at = agora + interval_days`
-  no horário configurado.
+- Cada caderno tem um **dia em curso** (`current_day_date`) e quantas das
+  N do dia já foram enviadas (`current_day_sent`).
+- Os slots do dia são `start_hour:start_minute + i * (24h/N)` para
+  `i = 0..N-1`. A cada tick, se chegou o slot atual, o bot envia **uma**
+  questão, incrementa `current_day_sent` e agenda o próximo slot.
+- Uma vez que o dia começou, ele **sempre é completado** (não fica
+  bloqueado nem pelo "esperar resposta"). A regra só vale na virada do dia.
 - Cada questão entra em `public.questions` igual a uma criação manual:
   - `creator_name = "Caderno: <nome>"` (criador é um JID sentinela, então o
     fechamento por engajamento espera **todos** os engajados responderem).
   - `explanation_text` traz o link da questão no Tec Concursos + banca + matéria.
   - Responda no privado com `a 182`, `c 182` etc.
   - O auto-gabarito por engajamento fecha igual ao fluxo manual.
+
+### "Esperar resposta" e engajados novos
+
+Quando o toggle **Esperar resposta entre dias** está ligado, o bot só inicia
+um novo dia se **todos os engajados elegíveis responderam todas as questões
+do dia anterior**.
+
+- Quem é "elegível"? Cada questão lembra seu instante de publicação
+  (`published_at`). São elegíveis para essa questão os engajados que estavam
+  com `engaged = true` antes desse instante (campo `engaged_since`).
+- Quem virou engajado **depois** que a questão foi publicada **não trava**.
+  Ele segue de onde o grupo está e responde só dali pra frente.
+- Se ainda falta resposta, o bot reagenda a checagem para ~15 minutos depois
+  e tenta de novo. Quando todos responderem, ele abre o próximo dia
+  automaticamente no slot de início.
+- Sem engajados (`engaged = true` para zero pessoas) o modo não trava nada —
+  envia normal.
 
 ### Fim do caderno
 
