@@ -1547,46 +1547,31 @@ export async function markCadernoQuestionPublished(
   }
 }
 
-/** Prefixo do `short_id` das questões geradas pelo agendador no grupo (não mistura com privado nem com wizard). */
-function groupCadernoShortIdPrefix(cadernoId: number): string {
-  return `CG-${cadernoId}-`;
-}
+/** Próximo número exibido no privado (parte antes do `-`), por caderno + destinatário. */
+async function nextPrivateDisplayOrdinal(cadernoId: number, recipientJid: string): Promise<number> {
+  const creator = `caderno:${cadernoId}@bot`;
+  const { data, error } = await supabase
+    .from("questions")
+    .select("short_id")
+    .eq("creator_jid", creator)
+    .eq("target_group_jid", recipientJid);
 
-/** Prefixo do `short_id` no modo privado: um contador por caderno + destinatário. */
-function privateCadernoShortIdPrefix(cadernoId: number, recipientJid: string): string {
-  const tag = recipientKeyForPrivateShortId(recipientJid);
-  return `CP-${cadernoId}-${tag}-`;
-}
-
-function recipientKeyForPrivateShortId(recipientJid: string): string {
-  const raw = jidComparableKeyShared(recipientJid);
-  const at = raw.indexOf("@");
-  const userPart = at < 0 ? raw : raw.slice(0, at);
-  const digits = userPart.replace(/\D/g, "");
-  if (digits.length >= 6) return digits.slice(-11);
-  const alnum = userPart.replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
-  const fallback = (alnum.length >= 4 ? alnum.slice(-10) : (alnum || "u").padEnd(4, "x")).slice(0, 11);
-  return fallback;
-}
-
-/**
- * Próximo sufixo numérico para `prefix` (ex.: CG-1- → 7 vira CG-1-7).
- * Varre `questions.short_id` com esse prefixo para não colidir após falha de envio ou reciclagem.
- */
-async function nextNumericShortSuffixAfterPrefix(prefix: string): Promise<number> {
-  const { data, error } = await supabase.from("questions").select("short_id").like("short_id", `${prefix}%`);
-  if (error) throw new Error(`Erro ao alocar short_id do caderno: ${error.message}`);
+  if (error) throw new Error(`Erro ao alocar ordinal da questao privada: ${error.message}`);
   let max = 0;
-  const escaped = prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const re = new RegExp(`^${escaped}(\\d+)$`, "i");
+  const re = /^(\d+)-\d+/;
   for (const row of data ?? []) {
     const s = String(row.short_id ?? "").trim();
     const m = re.exec(s);
-    if (!m) continue;
-    const n = parseInt(m[1], 10);
-    if (Number.isFinite(n) && n > max) max = n;
+    if (m) max = Math.max(max, parseInt(m[1], 10));
   }
   return max + 1;
+}
+
+/** 2 caracteres alfanuméricos estáveis a partir do JID (evita colisão entre destinatários). */
+function privateRecipientShortTag(recipientJid: string): string {
+  const h = crypto.createHash("sha256").update(jidComparableKeyShared(recipientJid)).digest("hex");
+  const n = parseInt(h.slice(0, 8), 16);
+  return n.toString(36).slice(0, 2).padStart(2, "0");
 }
 
 export type CadernoQuestionPublishInput = {
@@ -1598,8 +1583,8 @@ export type CadernoQuestionPublishInput = {
 
 /**
  * Cria uma linha em `questions` para uma questao do caderno, sem midia.
- * Retorna { shortId, dbId } — `shortId` é o id público (CG-/CP-); `dbId` linka
- * `published_question_id` / `caderno_private_send`.
+ * Grupo: `short_id` = id numérico (ex.: 16) — respostas `e 16`.
+ * Privado: `short_id` = `n-{idCaderno}` (ex.: 16-3) ou `n-{id}-{tag}` se houver mais de um destinatário ativo.
  */
 export async function createQuestionFromCaderno(
   input: CadernoQuestionPublishInput
@@ -1648,12 +1633,19 @@ export async function createQuestionFromCaderno(
     throw new Error(`Erro ao criar questao a partir de caderno: ${error?.message ?? "sem dados"}`);
   }
 
-  const priv = recipientJid && recipientJid.trim();
-  const idPrefix = priv
-    ? privateCadernoShortIdPrefix(caderno.id, recipientJid.trim())
-    : groupCadernoShortIdPrefix(caderno.id);
-  const nextSuffix = await nextNumericShortSuffixAfterPrefix(idPrefix);
-  const shortId = `${idPrefix}${nextSuffix}`;
+  const dbId = Number(data.id);
+  let shortId: string;
+  if (recipientJid && recipientJid.trim()) {
+    const n = await nextPrivateDisplayOrdinal(caderno.id, recipientJid.trim());
+    const recs = await listPrivateRecipientsByCaderno(caderno.id);
+    const activeCount = recs.filter((r) => r.active).length;
+    const tag = privateRecipientShortTag(recipientJid.trim());
+    shortId =
+      activeCount > 1 ? `${n}-${caderno.id}-${tag}` : `${n}-${caderno.id}`;
+  } else {
+    shortId = String(dbId);
+  }
+  shortId = shortId.toUpperCase();
 
   const { error: updateError } = await supabase
     .from("questions")
@@ -1664,7 +1656,7 @@ export async function createQuestionFromCaderno(
     throw new Error(`Erro ao atualizar short_id da questao do caderno: ${updateError.message}`);
   }
 
-  return { shortId, dbId: Number(data.id) };
+  return { shortId, dbId };
 }
 
 export type CadernoProgress = {
