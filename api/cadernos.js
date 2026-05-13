@@ -2,6 +2,9 @@ const { getClient, applyCors, pickTargetGroupJid } = require("./_lib.js");
 const { firstDailySlotUtc } = require("./_schedule.js");
 
 const SELECT_COLUMNS =
+  "id, name, target_group_jid, created_by_jid, delivery_mode, status, questions_per_day, start_hour, start_minute, wait_for_answers, current_day_date, current_day_sent, questions_per_run, interval_days, send_hour, send_minute, timezone, cursor, random_order, last_run_at, next_run_at, created_at";
+
+const SELECT_COLUMNS_NO_DM =
   "id, name, target_group_jid, created_by_jid, status, questions_per_day, start_hour, start_minute, wait_for_answers, current_day_date, current_day_sent, questions_per_run, interval_days, send_hour, send_minute, timezone, cursor, random_order, last_run_at, next_run_at, created_at";
 
 module.exports = async (req, res) => {
@@ -20,6 +23,27 @@ module.exports = async (req, res) => {
   return res.status(405).json({ error: "Method not allowed" });
 };
 
+async function fetchCadernosList(supabase, groupJid) {
+  let { data: cadernos, error } = await supabase
+    .from("cadernos")
+    .select(SELECT_COLUMNS)
+    .eq("target_group_jid", groupJid)
+    .order("created_at", { ascending: false });
+
+  if (error && String(error.message || "").toLowerCase().includes("delivery_mode")) {
+    const r = await supabase
+      .from("cadernos")
+      .select(SELECT_COLUMNS_NO_DM)
+      .eq("target_group_jid", groupJid)
+      .order("created_at", { ascending: false });
+    if (r.error) throw r.error;
+    cadernos = (r.data || []).map((c) => ({ ...c, delivery_mode: "group" }));
+    error = null;
+  }
+  if (error) throw error;
+  return cadernos || [];
+}
+
 async function handleGet(req, res, supabase) {
   try {
     const groupJid =
@@ -28,15 +52,8 @@ async function handleGet(req, res, supabase) {
       return res.status(200).json({ cadernos: [], warning: "Sem grupo configurado." });
     }
 
-    const { data: cadernos, error } = await supabase
-      .from("cadernos")
-      .select(SELECT_COLUMNS)
-      .eq("target_group_jid", groupJid)
-      .order("created_at", { ascending: false });
-
-    if (error) throw error;
-
-    if (!cadernos || cadernos.length === 0) {
+    const cadernos = await fetchCadernosList(supabase, groupJid);
+    if (cadernos.length === 0) {
       return res.status(200).json({ cadernos: [] });
     }
 
@@ -49,45 +66,173 @@ async function handleGet(req, res, supabase) {
     if (countErr) throw countErr;
 
     const totalByCaderno = new Map();
-    const publishedByCaderno = new Map();
+    const publishedGroupByCaderno = new Map();
     for (const row of counts || []) {
       const id = row.caderno_id;
       totalByCaderno.set(id, (totalByCaderno.get(id) || 0) + 1);
       if (row.published_question_id != null) {
-        publishedByCaderno.set(id, (publishedByCaderno.get(id) || 0) + 1);
+        publishedGroupByCaderno.set(id, (publishedGroupByCaderno.get(id) || 0) + 1);
       }
     }
 
-    const out = cadernos.map((c) => ({
-      id: c.id,
-      name: c.name,
-      targetGroupJid: c.target_group_jid,
-      createdByJid: c.created_by_jid,
-      status: c.status,
-      questionsPerDay: c.questions_per_day ?? c.questions_per_run,
-      startHour: c.start_hour ?? c.send_hour,
-      startMinute: c.start_minute ?? c.send_minute,
-      waitForAnswers: Boolean(c.wait_for_answers),
-      currentDayDate: c.current_day_date,
-      currentDaySent: c.current_day_sent || 0,
-      questionsPerRun: c.questions_per_run,
-      intervalDays: c.interval_days,
-      sendHour: c.send_hour,
-      sendMinute: c.send_minute,
-      timezone: c.timezone,
-      cursor: c.cursor,
-      randomOrder: Boolean(c.random_order),
-      totalQuestions: totalByCaderno.get(c.id) || 0,
-      publishedCount: publishedByCaderno.get(c.id) || 0,
-      lastRunAt: c.last_run_at,
-      nextRunAt: c.next_run_at,
-      createdAt: c.created_at
-    }));
+    const privateIds = cadernos.filter((c) => c.delivery_mode === "private").map((c) => c.id);
+    const privateSendCount = new Map();
+    const privateRecipientsByCaderno = new Map();
+
+    if (privateIds.length > 0) {
+      const { data: sends, error: sErr } = await supabase
+        .from("caderno_private_send")
+        .select("caderno_id")
+        .in("caderno_id", privateIds);
+      if (!sErr && sends) {
+        for (const s of sends) {
+          const cid = s.caderno_id;
+          privateSendCount.set(cid, (privateSendCount.get(cid) || 0) + 1);
+        }
+      }
+
+      const { data: recs, error: rErr } = await supabase
+        .from("caderno_private_recipients")
+        .select(
+          "id, caderno_id, user_jid, active, questions_per_day, start_hour, start_minute, wait_for_answers, random_order, timezone, current_day_date, current_day_sent, next_run_at"
+        )
+        .in("caderno_id", privateIds);
+      if (!rErr && recs) {
+        for (const r of recs) {
+          const cid = r.caderno_id;
+          if (!privateRecipientsByCaderno.has(cid)) privateRecipientsByCaderno.set(cid, []);
+          privateRecipientsByCaderno.get(cid).push({
+            id: r.id,
+            userJid: r.user_jid,
+            active: Boolean(r.active),
+            questionsPerDay: r.questions_per_day,
+            startHour: r.start_hour,
+            startMinute: r.start_minute,
+            waitForAnswers: r.wait_for_answers,
+            randomOrder: r.random_order,
+            timezone: r.timezone,
+            currentDayDate: r.current_day_date,
+            currentDaySent: r.current_day_sent || 0,
+            nextRunAt: r.next_run_at
+          });
+        }
+      }
+    }
+
+    const out = cadernos.map((c) => {
+      const dm = c.delivery_mode === "private" ? "private" : "group";
+      const publishedCount =
+        dm === "private"
+          ? privateSendCount.get(c.id) || 0
+          : publishedGroupByCaderno.get(c.id) || 0;
+
+      return {
+        id: c.id,
+        name: c.name,
+        targetGroupJid: c.target_group_jid,
+        createdByJid: c.created_by_jid,
+        deliveryMode: dm,
+        status: c.status,
+        questionsPerDay: c.questions_per_day ?? c.questions_per_run,
+        startHour: c.start_hour ?? c.send_hour,
+        startMinute: c.start_minute ?? c.send_minute,
+        waitForAnswers: Boolean(c.wait_for_answers),
+        currentDayDate: c.current_day_date,
+        currentDaySent: c.current_day_sent || 0,
+        questionsPerRun: c.questions_per_run,
+        intervalDays: c.interval_days,
+        sendHour: c.send_hour,
+        sendMinute: c.send_minute,
+        timezone: c.timezone,
+        cursor: c.cursor,
+        randomOrder: Boolean(c.random_order),
+        totalQuestions: totalByCaderno.get(c.id) || 0,
+        publishedCount,
+        lastRunAt: c.last_run_at,
+        nextRunAt: dm === "private" ? null : c.next_run_at,
+        createdAt: c.created_at,
+        privateRecipients: privateRecipientsByCaderno.get(c.id) || []
+      };
+    });
 
     return res.status(200).json({ cadernos: out });
   } catch (e) {
     console.error("[cadernos GET]", e);
     return res.status(500).json({ error: e.message || "Erro ao listar cadernos" });
+  }
+}
+
+async function replacePrivateRecipients(supabase, cadernoId, list, template) {
+  const { error: delErr } = await supabase
+    .from("caderno_private_recipients")
+    .delete()
+    .eq("caderno_id", cadernoId);
+  if (delErr && !String(delErr.message).toLowerCase().includes("does not exist")) {
+    throw new Error(delErr.message);
+  }
+  if (!list || list.length === 0) return;
+
+  const qd = template.questions_per_day ?? template.questions_per_run ?? 3;
+  const sh = template.start_hour ?? template.send_hour ?? 7;
+  const sm = template.start_minute ?? template.send_minute ?? 0;
+  const tz = template.timezone || "America/Sao_Paulo";
+  const wa = Boolean(template.wait_for_answers);
+  const ro = Boolean(template.random_order);
+
+  const rows = [];
+  for (const item of list) {
+    const userJid = item.userJid != null ? String(item.userJid).trim() : "";
+    if (!userJid) continue;
+    rows.push({
+      caderno_id: cadernoId,
+      user_jid: userJid,
+      active: item.active !== false,
+      questions_per_day:
+        item.questionsPerDay != null ? clampInt(item.questionsPerDay, 1, 24, qd) : null,
+      start_hour: item.startHour != null ? clampInt(item.startHour, 0, 23, sh) : null,
+      start_minute: item.startMinute != null ? clampInt(item.startMinute, 0, 59, sm) : null,
+      wait_for_answers: item.waitForAnswers != null ? Boolean(item.waitForAnswers) : null,
+      random_order: item.randomOrder != null ? Boolean(item.randomOrder) : null,
+      timezone: item.timezone != null ? String(item.timezone).trim() || null : null,
+      current_day_date: null,
+      current_day_sent: 0,
+      next_run_at: item.nextRunAt != null ? item.nextRunAt : null
+    });
+  }
+  if (rows.length === 0) return;
+  const { error: insErr } = await supabase.from("caderno_private_recipients").insert(rows);
+  if (insErr) throw new Error(insErr.message);
+}
+
+async function reschedulePrivateRecipients(supabase, cadernoId, template) {
+  const { data: recs, error } = await supabase
+    .from("caderno_private_recipients")
+    .select(
+      "id, questions_per_day, start_hour, start_minute, wait_for_answers, random_order, timezone"
+    )
+    .eq("caderno_id", cadernoId);
+  if (error) return;
+
+  const qd0 = template.questions_per_day ?? template.questions_per_run ?? 3;
+  const sh0 = template.start_hour ?? template.send_hour ?? 7;
+  const sm0 = template.start_minute ?? template.send_minute ?? 0;
+  const tz0 = template.timezone || "America/Sao_Paulo";
+
+  const now = new Date();
+  for (const r of recs || []) {
+    const qpd = r.questions_per_day ?? qd0;
+    const sh = r.start_hour ?? sh0;
+    const sm = r.start_minute ?? sm0;
+    const tz = r.timezone || tz0;
+    const next = firstDailySlotUtc(now, sh, sm, tz).toISOString();
+    await supabase
+      .from("caderno_private_recipients")
+      .update({
+        next_run_at: next,
+        current_day_date: null,
+        current_day_sent: 0
+      })
+      .eq("id", r.id);
   }
 }
 
@@ -104,11 +249,18 @@ async function handlePatch(req, res, supabase) {
     return res.status(400).json({ error: "Informe id do caderno." });
   }
 
-  const { data: existing, error: readErr } = await supabase
-    .from("cadernos")
-    .select(SELECT_COLUMNS)
-    .eq("id", id)
-    .maybeSingle();
+  let existing;
+  let readErr;
+  {
+    const r = await supabase.from("cadernos").select(SELECT_COLUMNS).eq("id", id).maybeSingle();
+    existing = r.data;
+    readErr = r.error;
+    if (readErr && String(readErr.message || "").toLowerCase().includes("delivery_mode")) {
+      const r2 = await supabase.from("cadernos").select(SELECT_COLUMNS_NO_DM).eq("id", id).maybeSingle();
+      existing = r2.data ? { ...r2.data, delivery_mode: "group" } : null;
+      readErr = r2.error;
+    }
+  }
 
   if (readErr) {
     return res.status(500).json({ error: `Erro ao buscar caderno: ${readErr.message}` });
@@ -117,12 +269,18 @@ async function handlePatch(req, res, supabase) {
     return res.status(404).json({ error: "Caderno nao encontrado" });
   }
 
+  const existingDm = existing.delivery_mode === "private" ? "private" : "group";
+
   const existingQuestionsPerDay = existing.questions_per_day ?? existing.questions_per_run ?? 3;
   const existingStartHour = existing.start_hour ?? existing.send_hour ?? 7;
   const existingStartMinute = existing.start_minute ?? existing.send_minute ?? 0;
 
   const update = {};
   if (typeof body.name === "string" && body.name.trim()) update.name = body.name.trim();
+
+  if (body.deliveryMode === "private" || body.deliveryMode === "group") {
+    update.delivery_mode = body.deliveryMode;
+  }
 
   if (body.questionsPerDay !== undefined) {
     const q = clampInt(body.questionsPerDay, 1, 24, existingQuestionsPerDay);
@@ -175,10 +333,12 @@ async function handlePatch(req, res, supabase) {
     update.status = body.status;
   }
 
-  const newStartHour = update.start_hour ?? existingStartHour;
-  const newStartMinute = update.start_minute ?? existingStartMinute;
-  const newTimezone = update.timezone ?? existing.timezone;
-  const newStatus = update.status ?? existing.status;
+  const merged = { ...existing, ...update };
+  const newDm = merged.delivery_mode === "private" ? "private" : "group";
+  const newStartHour = merged.start_hour ?? merged.send_hour ?? 7;
+  const newStartMinute = merged.start_minute ?? merged.send_minute ?? 0;
+  const newTimezone = merged.timezone || "America/Sao_Paulo";
+  const newStatus = merged.status;
   const previousStatus = existing.status;
 
   const scheduleChanged =
@@ -187,10 +347,12 @@ async function handlePatch(req, res, supabase) {
     update.timezone !== undefined ||
     update.questions_per_day !== undefined;
 
-  if (newStatus === "active") {
+  if (newDm === "private" && (update.delivery_mode === "private" || existingDm !== "private")) {
+    update.next_run_at = null;
+    update.current_day_date = null;
+    update.current_day_sent = 0;
+  } else if (newDm === "group" && newStatus === "active") {
     if (previousStatus !== "active" || body.recomputeNextRun === true || scheduleChanged) {
-      // Ao (re)ativar ou alterar agenda: zera o dia em curso para o
-      // scheduler iniciar limpo no próximo slot.
       update.current_day_date = null;
       update.current_day_sent = 0;
       update.next_run_at = firstDailySlotUtc(
@@ -205,7 +367,11 @@ async function handlePatch(req, res, supabase) {
   }
 
   if (body.triggerNow === true && newStatus === "active") {
-    update.next_run_at = new Date().toISOString();
+    if (newDm === "private") {
+      update.next_run_at = null;
+    } else {
+      update.next_run_at = new Date().toISOString();
+    }
   }
 
   if (body.recyclePublished === true) {
@@ -218,14 +384,90 @@ async function handlePatch(req, res, supabase) {
         .status(500)
         .json({ error: `Erro ao reciclar questoes do caderno: ${resetErr.message}` });
     }
+    try {
+      await supabase.from("caderno_private_send").delete().eq("caderno_id", id);
+      await supabase
+        .from("caderno_private_recipients")
+        .update({ current_day_date: null, current_day_sent: 0, last_run_at: null })
+        .eq("caderno_id", id);
+    } catch (_) {
+      /* tabelas opcionais */
+    }
     update.current_day_date = null;
     update.current_day_sent = 0;
     update.cursor = 0;
   }
 
+  if (Array.isArray(body.privateRecipients) && newDm === "private") {
+    try {
+      await replacePrivateRecipients(supabase, id, body.privateRecipients, merged);
+    } catch (e) {
+      return res.status(500).json({ error: e.message || "Erro destinatarios privados" });
+    }
+  }
+
   const { error: upErr } = await supabase.from("cadernos").update(update).eq("id", id);
   if (upErr) {
     return res.status(500).json({ error: `Erro ao atualizar caderno: ${upErr.message}` });
+  }
+
+  if (body.recyclePublished === true && newDm === "private" && newStatus === "active") {
+    try {
+      const { data: fresh } = await supabase.from("cadernos").select(SELECT_COLUMNS).eq("id", id).single();
+      if (fresh) await reschedulePrivateRecipients(supabase, id, fresh);
+    } catch (e) {
+      console.warn("[cadernos PATCH] reschedule apos recycle:", e);
+    }
+  }
+
+  if (newDm === "private" && newStatus === "active") {
+    if (
+      body.triggerNow === true ||
+      previousStatus !== "active" ||
+      body.recomputeNextRun === true ||
+      scheduleChanged ||
+      update.delivery_mode !== undefined ||
+      Array.isArray(body.privateRecipients)
+    ) {
+      try {
+        if (body.triggerNow === true) {
+          const nowIso = new Date().toISOString();
+          await supabase
+            .from("caderno_private_recipients")
+            .update({ next_run_at: nowIso })
+            .eq("caderno_id", id)
+            .eq("active", true);
+        } else {
+          const { data: check } = await supabase
+            .from("caderno_private_recipients")
+            .select("id")
+            .eq("caderno_id", id)
+            .limit(1);
+          if (!check || check.length === 0) {
+            if (merged.created_by_jid) {
+              await replacePrivateRecipients(
+                supabase,
+                id,
+                [{ userJid: merged.created_by_jid, active: true }],
+                merged
+              );
+            }
+          }
+          await reschedulePrivateRecipients(supabase, id, merged);
+        }
+      } catch (e) {
+        console.warn("[cadernos PATCH] reschedule private:", e);
+      }
+    }
+  }
+
+  if (newDm === "group" && newStatus === "active" && (update.delivery_mode !== undefined || scheduleChanged)) {
+    try {
+      await supabase
+        .from("caderno_private_recipients")
+        .update({ next_run_at: null })
+        .eq("caderno_id", id);
+    } catch (_) {}
   }
 
   return res.status(200).json({ ok: true, id, applied: update });

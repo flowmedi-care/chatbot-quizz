@@ -1061,6 +1061,65 @@ table.tutorial-table code {
   font-size: 0.82rem;
 }
 
+.caderno-delivery-fieldset {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.65rem 0.85rem;
+  margin: 0.75rem 0;
+}
+
+.caderno-delivery-fieldset legend {
+  padding: 0 0.35rem;
+  font-size: 0.88rem;
+  font-weight: 600;
+}
+
+.caderno-delivery-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin: 0.4rem 0;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.caderno-delivery-option input {
+  margin-top: 0.2rem;
+}
+
+.caderno-private-panel {
+  margin: 0.5rem 0 0.75rem;
+  padding: 0.5rem 0;
+}
+
+.caderno-private-list {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.caderno-private-list li {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 0.35rem 0.5rem;
+  align-items: center;
+  padding: 0.35rem 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.85rem;
+}
+
+.caderno-private-list li .caderno-priv-meta {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.caderno-private-list input[type="number"] {
+  width: 3.2rem;
+}
+
 .caderno-card-meta .badge-mini {
   display: inline-block;
   font-size: 0.7rem;

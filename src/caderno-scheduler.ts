@@ -1,17 +1,27 @@
 import type { WASocket } from "@whiskeysockets/baileys";
 import {
+  CadernoPrivateRecipientRow,
   CadernoQuestionRow,
   CadernoRow,
   countUnpublishedCadernoQuestions,
+  countUnsentPrivateQuestionsForRecipient,
   createQuestionFromCaderno,
+  effectivePrivateRecipientSchedule,
   getEngagedEligibleUserJidsAt,
+  isPrivateRecipientDayComplete,
   listAnswersForQuestionIds,
   listCadernoQuestionsPublishedOnDate,
-  listNextCadernoQuestionsToSend,
   listCadernosDueForRun,
+  listNextCadernoQuestionsToSend,
+  listNextPrivateCadernoQuestionsToSend,
+  listPrivateRecipientsDueForRun,
+  listPrivateRecipientsByCaderno,
   markCadernoQuestionPublished,
+  maybePausePrivateCadernoWhenExhausted,
+  recordPrivateSend,
   setCadernoStatus,
-  updateCadernoDayState
+  updateCadernoDayState,
+  updatePrivateRecipientDayState
 } from "./supabase";
 import {
   addDaysIso,
@@ -35,25 +45,62 @@ function jidComparableKey(jid: string): string {
   return `${userNoDevice}@${domain}`;
 }
 
-async function publishCadernoQuestion(
+/** Monta um CadernoRow “só agenda” para reutilizar decideAction no modo privado. */
+function syntheticCadernoForPrivateSchedule(
+  caderno: CadernoRow,
+  eff: ReturnType<typeof effectivePrivateRecipientSchedule>,
+  recipient: CadernoPrivateRecipientRow
+): CadernoRow {
+  return {
+    ...caderno,
+    questionsPerDay: eff.questionsPerDay,
+    startHour: eff.startHour,
+    startMinute: eff.startMinute,
+    waitForAnswers: eff.waitForAnswers,
+    randomOrder: eff.randomOrder,
+    timezone: eff.timezone,
+    currentDayDate: recipient.currentDayDate,
+    currentDaySent: recipient.currentDaySent,
+    nextRunAt: recipient.nextRunAt
+  };
+}
+
+async function publishCadernoQuestionToChat(
+  sock: WASocket,
+  destJid: string,
+  shortId: string,
+  cadernoName: string,
+  question: CadernoQuestionRow,
+  mode: "group" | "private"
+): Promise<void> {
+  const intro =
+    mode === "private"
+      ? `Sua questão #${shortId} (Caderno privado: ${cadernoName})`
+      : `Nova questão #${shortId} (Caderno: ${cadernoName})`;
+  const options =
+    question.questionType === "true_false"
+      ? `Responda no privado do bot:\nc ${shortId}\ne ${shortId}`
+      : `Responda no privado do bot:\na ${shortId}\nb ${shortId}\nc ${shortId}\nd ${shortId}\ne ${shortId}`;
+  const fullText = [intro, "", question.statementText, "", options].join("\n");
+  await sock.sendMessage(destJid, { text: fullText });
+}
+
+async function publishGroupCadernoQuestion(
   sock: WASocket,
   caderno: CadernoRow,
   question: CadernoQuestionRow
 ): Promise<{ shortId: string; dbId: number } | null> {
   try {
     const { shortId, dbId } = await createQuestionFromCaderno({ caderno, question });
-
-    const intro = `Nova questão #${shortId} (Caderno: ${caderno.name})`;
-    const options =
-      question.questionType === "true_false"
-        ? `Responda no privado do bot:\nc ${shortId}\ne ${shortId}`
-        : `Responda no privado do bot:\na ${shortId}\nb ${shortId}\nc ${shortId}\nd ${shortId}\ne ${shortId}`;
-
-    const fullText = [intro, "", question.statementText, "", options].join("\n");
-
-    await sock.sendMessage(caderno.targetGroupJid, { text: fullText });
+    await publishCadernoQuestionToChat(
+      sock,
+      caderno.targetGroupJid,
+      shortId,
+      caderno.name,
+      question,
+      "group"
+    );
     await markCadernoQuestionPublished(question.id, dbId);
-
     console.log(
       `[caderno-scheduler] publicada questao #${shortId} (caderno ${caderno.id}, pos ${question.position})`
     );
@@ -67,10 +114,41 @@ async function publishCadernoQuestion(
   }
 }
 
-async function notifyOwnerEndOfCaderno(
+async function publishPrivateCadernoQuestion(
   sock: WASocket,
-  caderno: CadernoRow
-): Promise<void> {
+  caderno: CadernoRow,
+  recipient: CadernoPrivateRecipientRow,
+  question: CadernoQuestionRow
+): Promise<{ shortId: string; dbId: number } | null> {
+  try {
+    const { shortId, dbId } = await createQuestionFromCaderno({
+      caderno,
+      question,
+      recipientJid: recipient.userJid
+    });
+    await publishCadernoQuestionToChat(
+      sock,
+      recipient.userJid,
+      shortId,
+      caderno.name,
+      question,
+      "private"
+    );
+    await recordPrivateSend(caderno.id, recipient.userJid, question.id, dbId);
+    console.log(
+      `[caderno-scheduler] privado #${shortId} -> ${recipient.userJid} (caderno ${caderno.id}, pos ${question.position})`
+    );
+    return { shortId, dbId };
+  } catch (e) {
+    console.error(
+      `[caderno-scheduler] erro publicacao privada ${caderno.id} -> ${recipient.userJid}:`,
+      (e as Error).message
+    );
+    return null;
+  }
+}
+
+async function notifyOwnerEndOfCaderno(sock: WASocket, caderno: CadernoRow): Promise<void> {
   if (!caderno.createdByJid) return;
   const lines = [
     `Caderno "${caderno.name}" (#${caderno.id}) chegou ao fim das questões.`,
@@ -90,18 +168,24 @@ async function notifyOwnerEndOfCaderno(
   }
 }
 
-/**
- * Verifica se o dia `dayIso` foi "concluído" pelos engajados: todas as
- * questões publicadas nesse dia tiveram resposta de todos os engajados
- * elegíveis (cujo `engaged_since <= published_at`).
- *
- * Se não há engajados ou se não houve questões publicadas no dia,
- * retorna `true` (não trava).
- */
-async function isDayAnsweredByEngaged(
+async function notifyRecipientPrivateExhausted(
+  sock: WASocket,
   caderno: CadernoRow,
-  dayIso: string
-): Promise<boolean> {
+  recipientJid: string
+): Promise<void> {
+  const lines = [
+    `Você terminou todas as questões do caderno privado "${caderno.name}" (#${caderno.id}).`,
+    "",
+    "Peça ao dono do caderno para reciclar se quiserem recomeçar."
+  ];
+  try {
+    await sock.sendMessage(recipientJid, { text: lines.join("\n") });
+  } catch (e) {
+    console.warn(`[caderno-scheduler] falha avisando destinatario privado:`, (e as Error).message);
+  }
+}
+
+async function isDayAnsweredByEngaged(caderno: CadernoRow, dayIso: string): Promise<boolean> {
   const publishedToday = await listCadernoQuestionsPublishedOnDate(
     caderno.id,
     dayIso,
@@ -113,10 +197,7 @@ async function isDayAnsweredByEngaged(
   const answersByQ = await listAnswersForQuestionIds(questionIds);
 
   for (const pub of publishedToday) {
-    const eligible = await getEngagedEligibleUserJidsAt(
-      caderno.targetGroupJid,
-      pub.publishedAt
-    );
+    const eligible = await getEngagedEligibleUserJidsAt(caderno.targetGroupJid, pub.publishedAt);
     if (eligible.length === 0) continue;
     const eligibleSet = new Set(eligible.map((j) => jidComparableKey(j)));
     const answeredSet = answersByQ.get(pub.publishedQuestionId) ?? new Set<string>();
@@ -250,14 +331,14 @@ async function runCaderno(sock: WASocket, caderno: CadernoRow): Promise<void> {
       });
       return;
     }
-    await sendOneAndAdvance(sock, caderno, newDayIso, 0);
+    await sendOneGroupAndAdvance(sock, caderno, newDayIso, 0);
     return;
   }
 
-  await sendOneAndAdvance(sock, caderno, decision.dayIso, decision.sentBefore);
+  await sendOneGroupAndAdvance(sock, caderno, decision.dayIso, decision.sentBefore);
 }
 
-async function sendOneAndAdvance(
+async function sendOneGroupAndAdvance(
   sock: WASocket,
   caderno: CadernoRow,
   dayIso: string,
@@ -275,7 +356,7 @@ async function sendOneAndAdvance(
   }
 
   const question = pending[0];
-  const result = await publishCadernoQuestion(sock, caderno, question);
+  const result = await publishGroupCadernoQuestion(sock, caderno, question);
   const sentAfter = result ? sentBefore + 1 : sentBefore;
 
   const remaining = await countUnpublishedCadernoQuestions(caderno.id);
@@ -307,18 +388,164 @@ async function sendOneAndAdvance(
   );
 }
 
+async function runPrivateRecipient(
+  sock: WASocket,
+  caderno: CadernoRow,
+  recipient: CadernoPrivateRecipientRow
+): Promise<void> {
+  const eff = effectivePrivateRecipientSchedule(caderno, recipient);
+  const sched = syntheticCadernoForPrivateSchedule(caderno, eff, recipient);
+  const now = new Date();
+  const decision = decideAction(sched, now);
+
+  if (decision.kind === "wait_same_day") {
+    if (recipient.nextRunAt !== decision.nextRunIso) {
+      await updatePrivateRecipientDayState(recipient.id, { nextRunAtIso: decision.nextRunIso });
+    }
+    return;
+  }
+
+  if (decision.kind === "wait_for_answers") {
+    const ok = await isPrivateRecipientDayComplete(
+      caderno.id,
+      recipient.userJid,
+      decision.previousDayIso,
+      eff.timezone
+    );
+    if (!ok) {
+      const retryIso = new Date(Date.now() + WAIT_RETRY_MS).toISOString();
+      await updatePrivateRecipientDayState(recipient.id, { nextRunAtIso: retryIso });
+      console.log(
+        `[caderno-scheduler] privado caderno ${caderno.id} user ${recipient.userJid}: aguardando respostas do dia ${decision.previousDayIso}.`
+      );
+      return;
+    }
+
+    let newDayIso = addDaysIso(decision.previousDayIso, 1);
+    const tzToday = dateIsoInTimezone(now, eff.timezone);
+    if (tzToday > newDayIso) newDayIso = tzToday;
+    const firstSlot = dailySlotUtc(
+      newDayIso,
+      eff.startHour,
+      eff.startMinute,
+      Math.max(1, eff.questionsPerDay),
+      0,
+      eff.timezone
+    );
+    if (firstSlot.getTime() > now.getTime()) {
+      await updatePrivateRecipientDayState(recipient.id, {
+        currentDayDate: newDayIso,
+        currentDaySent: 0,
+        nextRunAtIso: firstSlot.toISOString()
+      });
+      return;
+    }
+    await sendOnePrivateAndAdvance(sock, caderno, recipient, eff, newDayIso, 0);
+    return;
+  }
+
+  await sendOnePrivateAndAdvance(sock, caderno, recipient, eff, decision.dayIso, decision.sentBefore);
+}
+
+async function sendOnePrivateAndAdvance(
+  sock: WASocket,
+  caderno: CadernoRow,
+  recipient: CadernoPrivateRecipientRow,
+  eff: ReturnType<typeof effectivePrivateRecipientSchedule>,
+  dayIso: string,
+  sentBefore: number
+): Promise<void> {
+  const pending = await listNextPrivateCadernoQuestionsToSend(
+    caderno.id,
+    recipient.userJid,
+    1,
+    eff.randomOrder
+  );
+  if (pending.length === 0) {
+    await updatePrivateRecipientDayState(recipient.id, {
+      nextRunAtIso: null,
+      updateLastRun: true,
+      active: false
+    });
+    await notifyRecipientPrivateExhausted(sock, caderno, recipient.userJid);
+    const paused = await maybePausePrivateCadernoWhenExhausted(caderno.id);
+    if (paused) await notifyOwnerEndOfCaderno(sock, caderno);
+    console.log(
+      `[caderno-scheduler] destinatario ${recipient.userJid} esgotou questoes do caderno ${caderno.id}.`
+    );
+    return;
+  }
+
+  const question = pending[0];
+  const result = await publishPrivateCadernoQuestion(sock, caderno, recipient, question);
+  const sentAfter = result ? sentBefore + 1 : sentBefore;
+
+  const sched = syntheticCadernoForPrivateSchedule(caderno, eff, {
+    ...recipient,
+    currentDayDate: dayIso,
+    currentDaySent: sentAfter
+  });
+
+  const remaining = await countUnsentPrivateQuestionsForRecipient(caderno.id, recipient.userJid);
+  if (remaining <= 0) {
+    await updatePrivateRecipientDayState(recipient.id, {
+      currentDayDate: dayIso,
+      currentDaySent: sentAfter,
+      nextRunAtIso: null,
+      updateLastRun: true,
+      active: false
+    });
+    await notifyRecipientPrivateExhausted(sock, caderno, recipient.userJid);
+    const paused = await maybePausePrivateCadernoWhenExhausted(caderno.id);
+    if (paused) await notifyOwnerEndOfCaderno(sock, caderno);
+    console.log(`[caderno-scheduler] caderno ${caderno.id} privado terminou após este envio.`);
+    return;
+  }
+
+  const nextRun = computeNextRunForDay(sched, dayIso, sentAfter);
+  const nextRunIso = nextRun.toISOString();
+  await updatePrivateRecipientDayState(recipient.id, {
+    currentDayDate: dayIso,
+    currentDaySent: sentAfter,
+    nextRunAtIso: nextRunIso,
+    updateLastRun: true
+  });
+  console.log(
+    `[caderno-scheduler] privado ${caderno.id} -> ${recipient.userJid}: dia ${dayIso} ${sentAfter}/${eff.questionsPerDay}, próximo ${formatNextRunPretty(nextRunIso, eff.timezone)}`
+  );
+}
+
 async function tick(sock: WASocket): Promise<void> {
   if (running) return;
   running = true;
   try {
     const due = await listCadernosDueForRun();
-    if (due.length === 0) return;
     for (const caderno of due) {
       try {
         await runCaderno(sock, caderno);
       } catch (e) {
         console.error(
           `[caderno-scheduler] erro processando caderno ${caderno.id}:`,
+          (e as Error).message
+        );
+      }
+    }
+
+    let duePrivate: { caderno: CadernoRow; recipient: CadernoPrivateRecipientRow }[] = [];
+    try {
+      duePrivate = await listPrivateRecipientsDueForRun();
+    } catch (e) {
+      const msg = (e as Error).message.toLowerCase();
+      if (!msg.includes("relation") && !msg.includes("does not exist")) {
+        console.error("[caderno-scheduler] listPrivateRecipientsDueForRun:", (e as Error).message);
+      }
+    }
+    for (const { caderno, recipient } of duePrivate) {
+      try {
+        await runPrivateRecipient(sock, caderno, recipient);
+      } catch (e) {
+        console.error(
+          `[caderno-scheduler] erro privado caderno ${caderno.id}:`,
           (e as Error).message
         );
       }
@@ -346,11 +573,15 @@ export function stopCadernoScheduler(): void {
   }
 }
 
-/**
- * Força disparo imediato (botão "Enviar questão" ou comando `/caderno next`):
- * apenas chama `runCaderno`, que pode mandar ou apenas reagendar dependendo
- * do estado do dia.
- */
 export async function forceRunCaderno(sock: WASocket, caderno: CadernoRow): Promise<void> {
+  if (caderno.deliveryMode === "private") {
+    const recs = await listPrivateRecipientsByCaderno(caderno.id);
+    const nowIso = new Date().toISOString();
+    for (const r of recs) {
+      if (!r.active) continue;
+      await updatePrivateRecipientDayState(r.id, { nextRunAtIso: nowIso });
+    }
+    return;
+  }
   await runCaderno(sock, caderno);
 }

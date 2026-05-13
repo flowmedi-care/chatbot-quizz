@@ -220,6 +220,28 @@
             </span>
           </label>
 
+          <fieldset class="caderno-delivery-fieldset">
+            <legend>Tipo de envio</legend>
+            <label class="caderno-delivery-option">
+              <input type="radio" name="caderno-delivery" id="caderno-delivery-group" value="group" checked />
+              <span>Grupo — publica no WhatsApp do grupo (como hoje).</span>
+            </label>
+            <label class="caderno-delivery-option">
+              <input type="radio" name="caderno-delivery" id="caderno-delivery-private" value="private" />
+              <span>Privado — manda no privado de cada pessoa; não polui o grupo nem métricas do grupo.</span>
+            </label>
+          </fieldset>
+
+          <div id="caderno-private-add-panel" class="caderno-private-panel hidden">
+            <label class="report-field">
+              <span>Seu WhatsApp (DDI + DDD + número, só dígitos)</span>
+              <input type="text" id="caderno-owner-phone" placeholder="ex: 5521999998888" inputmode="numeric" />
+            </label>
+            <p class="report-sub">
+              Obrigatório no modo privado. Depois, em Editar, você pode marcar outros membros do grupo com agenda própria.
+            </p>
+          </div>
+
           <div class="caderno-actions">
             <button type="button" id="btn-caderno-preview" class="btn-tutorial">Pré-visualizar</button>
             <button type="button" id="btn-caderno-save" class="btn-reveal">Salvar como inativo</button>
@@ -286,6 +308,29 @@
               </small>
             </span>
           </label>
+
+          <fieldset class="caderno-delivery-fieldset">
+            <legend>Tipo de envio</legend>
+            <label class="caderno-delivery-option">
+              <input type="radio" name="caderno-edit-delivery" id="caderno-edit-delivery-group" value="group" />
+              <span>Grupo</span>
+            </label>
+            <label class="caderno-delivery-option">
+              <input type="radio" name="caderno-edit-delivery" id="caderno-edit-delivery-private" value="private" />
+              <span>Privado (WhatsApp direto)</span>
+            </label>
+          </fieldset>
+
+          <div id="caderno-edit-private-panel" class="caderno-private-panel hidden">
+            <p class="report-sub">
+              Destinatários (marque quem recebe no privado). Cada um pode ter questões/dia e horário próprios; vazio =
+              usar os valores do caderno acima.
+            </p>
+            <button type="button" id="btn-caderno-edit-load-members" class="btn-tutorial">
+              Carregar membros do grupo
+            </button>
+            <ul id="caderno-edit-private-list" class="caderno-private-list"></ul>
+          </div>
 
           <div class="caderno-actions">
             <button type="button" id="btn-caderno-edit-cancel" class="btn-tutorial">Cancelar</button>

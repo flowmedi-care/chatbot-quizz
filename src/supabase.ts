@@ -741,6 +741,7 @@ export type CadernoRow = {
   name: string;
   targetGroupJid: string;
   createdByJid: string | null;
+  deliveryMode: "group" | "private";
   status: "inactive" | "active" | "paused_waiting_decision" | "finished";
   /** Modelo novo: total de questões enviadas por dia, espaçadas em 24h/N. */
   questionsPerDay: number;
@@ -786,6 +787,7 @@ function mapCadernoRow(row: Record<string, unknown>): CadernoRow {
     name: String(row.name),
     targetGroupJid: String(row.target_group_jid),
     createdByJid: row.created_by_jid ? String(row.created_by_jid) : null,
+    deliveryMode: (row.delivery_mode === "private" ? "private" : "group") as CadernoRow["deliveryMode"],
     status: String(row.status) as CadernoRow["status"],
     questionsPerDay: Number.isFinite(questionsPerDayRaw) ? questionsPerDayRaw : 3,
     startHour: Number.isFinite(startHourRaw) ? startHourRaw : 7,
@@ -805,8 +807,18 @@ function mapCadernoRow(row: Record<string, unknown>): CadernoRow {
   };
 }
 
+function formatDateInTimezone(d: Date, timeZone: string): string {
+  const fmt = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  });
+  return fmt.format(d);
+}
+
 const CADERNO_SELECT_COLUMNS =
-  "id, name, target_group_jid, created_by_jid, status, questions_per_day, start_hour, start_minute, wait_for_answers, current_day_date, current_day_sent, questions_per_run, interval_days, send_hour, send_minute, timezone, cursor, random_order, last_run_at, next_run_at";
+  "id, name, target_group_jid, created_by_jid, delivery_mode, status, questions_per_day, start_hour, start_minute, wait_for_answers, current_day_date, current_day_sent, questions_per_run, interval_days, send_hour, send_minute, timezone, cursor, random_order, last_run_at, next_run_at";
 
 function mapCadernoQuestionRow(row: Record<string, unknown>): CadernoQuestionRow {
   return {
@@ -823,18 +835,39 @@ function mapCadernoQuestionRow(row: Record<string, unknown>): CadernoQuestionRow
   };
 }
 
-/** Cadernos prontos para envio: status=active e next_run_at <= now. */
+/** Cadernos em modo grupo: agenda em `cadernos.next_run_at`. */
 export async function listCadernosDueForRun(): Promise<CadernoRow[]> {
   const nowIso = new Date().toISOString();
-  const { data, error } = await supabase
+  const colsWithDm = CADERNO_SELECT_COLUMNS;
+  const colsNoDm = CADERNO_SELECT_COLUMNS.replace(", delivery_mode", "");
+
+  let { data, error } = await supabase
     .from("cadernos")
-    .select(CADERNO_SELECT_COLUMNS)
+    .select(colsWithDm)
     .eq("status", "active")
+    .neq("delivery_mode", "private")
     .lte("next_run_at", nowIso);
 
   if (error) {
     const msg = error.message.toLowerCase();
     if (msg.includes("relation") && msg.includes("does not exist")) return [];
+    if (msg.includes("column") && msg.includes("delivery_mode")) {
+      const r = await supabase
+        .from("cadernos")
+        .select(colsNoDm)
+        .eq("status", "active")
+        .lte("next_run_at", nowIso);
+      if (r.error) {
+        if (r.error.message.toLowerCase().includes("relation")) return [];
+        throw new Error(`Erro ao listar cadernos: ${r.error.message}`);
+      }
+      return (r.data ?? []).map((row) =>
+        mapCadernoRow({
+          ...(row as unknown as Record<string, unknown>),
+          delivery_mode: "group"
+        })
+      );
+    }
     throw new Error(`Erro ao listar cadernos: ${error.message}`);
   }
 
@@ -855,6 +888,376 @@ export async function getCadernoById(id: number): Promise<CadernoRow | null> {
   }
   if (!data) return null;
   return mapCadernoRow(data);
+}
+
+export type CadernoPrivateRecipientRow = {
+  id: number;
+  cadernoId: number;
+  userJid: string;
+  active: boolean;
+  questionsPerDay: number | null;
+  startHour: number | null;
+  startMinute: number | null;
+  waitForAnswers: boolean | null;
+  randomOrder: boolean | null;
+  timezone: string | null;
+  currentDayDate: string | null;
+  currentDaySent: number;
+  lastRunAt: string | null;
+  nextRunAt: string | null;
+};
+
+function mapPrivateRecipientRow(row: Record<string, unknown>): CadernoPrivateRecipientRow {
+  return {
+    id: Number(row.id),
+    cadernoId: Number(row.caderno_id),
+    userJid: String(row.user_jid),
+    active: Boolean(row.active),
+    questionsPerDay: row.questions_per_day != null ? Number(row.questions_per_day) : null,
+    startHour: row.start_hour != null ? Number(row.start_hour) : null,
+    startMinute: row.start_minute != null ? Number(row.start_minute) : null,
+    waitForAnswers: row.wait_for_answers != null ? Boolean(row.wait_for_answers) : null,
+    randomOrder: row.random_order != null ? Boolean(row.random_order) : null,
+    timezone: row.timezone != null ? String(row.timezone) : null,
+    currentDayDate: row.current_day_date ? String(row.current_day_date) : null,
+    currentDaySent: Number(row.current_day_sent || 0),
+    lastRunAt: row.last_run_at ? String(row.last_run_at) : null,
+    nextRunAt: row.next_run_at ? String(row.next_run_at) : null
+  };
+}
+
+/** Agenda efetiva do destinatário (null no registro = herdar do caderno). */
+export function effectivePrivateRecipientSchedule(
+  caderno: CadernoRow,
+  r: CadernoPrivateRecipientRow
+): {
+  questionsPerDay: number;
+  startHour: number;
+  startMinute: number;
+  waitForAnswers: boolean;
+  randomOrder: boolean;
+  timezone: string;
+} {
+  return {
+    questionsPerDay: r.questionsPerDay ?? caderno.questionsPerDay,
+    startHour: r.startHour ?? caderno.startHour,
+    startMinute: r.startMinute ?? caderno.startMinute,
+    waitForAnswers: r.waitForAnswers ?? caderno.waitForAnswers,
+    randomOrder: r.randomOrder ?? caderno.randomOrder,
+    timezone: (r.timezone && r.timezone.trim()) || caderno.timezone
+  };
+}
+
+export async function listPrivateRecipientsDueForRun(): Promise<
+  { caderno: CadernoRow; recipient: CadernoPrivateRecipientRow }[]
+> {
+  const nowIso = new Date().toISOString();
+  const { data: recs, error } = await supabase
+    .from("caderno_private_recipients")
+    .select(
+      "id, caderno_id, user_jid, active, questions_per_day, start_hour, start_minute, wait_for_answers, random_order, timezone, current_day_date, current_day_sent, last_run_at, next_run_at"
+    )
+    .eq("active", true)
+    .lte("next_run_at", nowIso);
+
+  if (error) {
+    const msg = error.message.toLowerCase();
+    if (msg.includes("relation") && msg.includes("does not exist")) return [];
+    throw new Error(`Erro ao listar destinatarios privados: ${error.message}`);
+  }
+
+  const out: { caderno: CadernoRow; recipient: CadernoPrivateRecipientRow }[] = [];
+  for (const row of recs ?? []) {
+    const caderno = await getCadernoById(Number(row.caderno_id));
+    if (!caderno || caderno.deliveryMode !== "private" || caderno.status !== "active") continue;
+    out.push({ caderno, recipient: mapPrivateRecipientRow(row) });
+  }
+  return out;
+}
+
+export async function listPrivateRecipientsByCaderno(
+  cadernoId: number
+): Promise<CadernoPrivateRecipientRow[]> {
+  const { data, error } = await supabase
+    .from("caderno_private_recipients")
+    .select(
+      "id, caderno_id, user_jid, active, questions_per_day, start_hour, start_minute, wait_for_answers, random_order, timezone, current_day_date, current_day_sent, last_run_at, next_run_at"
+    )
+    .eq("caderno_id", cadernoId)
+    .order("user_jid", { ascending: true });
+
+  if (error) {
+    const msg = error.message.toLowerCase();
+    if (msg.includes("relation") && msg.includes("does not exist")) return [];
+    throw new Error(`Erro ao listar destinatarios: ${error.message}`);
+  }
+  return (data ?? []).map((row) => mapPrivateRecipientRow(row as Record<string, unknown>));
+}
+
+export async function replacePrivateRecipientsForCaderno(
+  cadernoId: number,
+  rows: {
+    userJid: string;
+    active?: boolean;
+    questionsPerDay?: number | null;
+    startHour?: number | null;
+    startMinute?: number | null;
+    waitForAnswers?: boolean | null;
+    randomOrder?: boolean | null;
+    timezone?: string | null;
+    nextRunAtIso?: string | null;
+  }[]
+): Promise<void> {
+  const { error: delErr } = await supabase
+    .from("caderno_private_recipients")
+    .delete()
+    .eq("caderno_id", cadernoId);
+  if (delErr) throw new Error(`Erro ao limpar destinatarios: ${delErr.message}`);
+
+  if (rows.length === 0) return;
+
+  const insert = rows.map((r) => ({
+    caderno_id: cadernoId,
+    user_jid: r.userJid,
+    active: r.active !== false,
+    questions_per_day: r.questionsPerDay ?? null,
+    start_hour: r.startHour ?? null,
+    start_minute: r.startMinute ?? null,
+    wait_for_answers: r.waitForAnswers ?? null,
+    random_order: r.randomOrder ?? null,
+    timezone: r.timezone ?? null,
+    current_day_date: null,
+    current_day_sent: 0,
+    next_run_at: r.nextRunAtIso ?? null
+  }));
+
+  const { error: insErr } = await supabase.from("caderno_private_recipients").insert(insert);
+  if (insErr) throw new Error(`Erro ao gravar destinatarios: ${insErr.message}`);
+}
+
+export async function listPrivateSendsPublishedOnDate(
+  cadernoId: number,
+  recipientJid: string,
+  dayIso: string,
+  timeZone: string
+): Promise<{ publishedQuestionId: number; publishedAt: string }[]> {
+  const { data, error } = await supabase
+    .from("caderno_private_send")
+    .select("published_question_id, published_at")
+    .eq("caderno_id", cadernoId)
+    .eq("recipient_jid", recipientJid)
+    .not("published_question_id", "is", null);
+
+  if (error) throw new Error(`Erro ao listar envios privados do dia: ${error.message}`);
+
+  const out: { publishedQuestionId: number; publishedAt: string }[] = [];
+  for (const row of data ?? []) {
+    const pubAt = row.published_at ? String(row.published_at) : null;
+    const pubId = row.published_question_id != null ? Number(row.published_question_id) : null;
+    if (!pubAt || !pubId) continue;
+    const isoDay = formatDateInTimezone(new Date(pubAt), timeZone);
+    if (isoDay === dayIso) {
+      out.push({ publishedQuestionId: pubId, publishedAt: pubAt });
+    }
+  }
+  return out;
+}
+
+async function listSentQuestionIdsForPrivateRecipient(
+  cadernoId: number,
+  recipientJid: string
+): Promise<number[]> {
+  const { data, error } = await supabase
+    .from("caderno_private_send")
+    .select("caderno_question_id")
+    .eq("caderno_id", cadernoId)
+    .eq("recipient_jid", recipientJid);
+
+  if (error) throw new Error(`Erro ao listar envios privados: ${error.message}`);
+  return (data ?? [])
+    .map((r) => Number(r.caderno_question_id))
+    .filter((id) => Number.isFinite(id));
+}
+
+/** Próximas questões do PDF ainda não enviadas a este destinatário (modo privado). */
+export async function listNextPrivateCadernoQuestionsToSend(
+  cadernoId: number,
+  recipientJid: string,
+  limit: number,
+  randomOrder: boolean
+): Promise<CadernoQuestionRow[]> {
+  const selectCols =
+    "id, caderno_id, position, tec_question_id, tec_url, banca, subject, question_type, statement_text, answer_key";
+
+  const sentIds = await listSentQuestionIdsForPrivateRecipient(cadernoId, recipientJid);
+  const sentSet = new Set(sentIds);
+
+  if (!randomOrder) {
+    const { data, error } = await supabase
+      .from("caderno_questions")
+      .select(selectCols)
+      .eq("caderno_id", cadernoId)
+      .order("position", { ascending: true })
+      .limit(500);
+
+    if (error) throw new Error(`Erro ao listar questoes do caderno (privado): ${error.message}`);
+    const rows = (data ?? []).map(mapCadernoQuestionRow).filter((q) => !sentSet.has(q.id));
+    return rows.slice(0, limit);
+  }
+
+  const bufferSize = Math.min(200, Math.max(limit * 10, limit + 5));
+  const { data, error } = await supabase
+    .from("caderno_questions")
+    .select(selectCols)
+    .eq("caderno_id", cadernoId)
+    .order("position", { ascending: true })
+    .limit(bufferSize);
+
+  if (error) throw new Error(`Erro ao listar questoes do caderno (privado): ${error.message}`);
+
+  const rows = (data ?? []).map(mapCadernoQuestionRow).filter((q) => !sentSet.has(q.id));
+  for (let i = rows.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [rows[i], rows[j]] = [rows[j], rows[i]];
+  }
+  return rows.slice(0, limit);
+}
+
+export async function countUnsentPrivateQuestionsForRecipient(
+  cadernoId: number,
+  recipientJid: string
+): Promise<number> {
+  const total = await countCadernoQuestions(cadernoId);
+  const { count, error } = await supabase
+    .from("caderno_private_send")
+    .select("id", { count: "exact", head: true })
+    .eq("caderno_id", cadernoId)
+    .eq("recipient_jid", recipientJid);
+
+  if (error) throw new Error(`Erro ao contar envios privados: ${error.message}`);
+  const sent = count || 0;
+  return Math.max(0, total - sent);
+}
+
+export async function recordPrivateSend(
+  cadernoId: number,
+  recipientJid: string,
+  cadernoQuestionId: number,
+  publishedQuestionDbId: number
+): Promise<void> {
+  const { error } = await supabase.from("caderno_private_send").insert({
+    caderno_id: cadernoId,
+    recipient_jid: recipientJid,
+    caderno_question_id: cadernoQuestionId,
+    published_question_id: publishedQuestionDbId,
+    published_at: new Date().toISOString()
+  });
+  if (error) throw new Error(`Erro ao registrar envio privado: ${error.message}`);
+}
+
+export async function updatePrivateRecipientDayState(
+  recipientRowId: number,
+  patch: {
+    currentDayDate?: string | null;
+    currentDaySent?: number;
+    nextRunAtIso?: string | null;
+    updateLastRun?: boolean;
+    active?: boolean;
+  }
+): Promise<void> {
+  const update: Record<string, unknown> = {};
+  if (Object.prototype.hasOwnProperty.call(patch, "currentDayDate")) {
+    update.current_day_date = patch.currentDayDate;
+  }
+  if (typeof patch.currentDaySent === "number") {
+    update.current_day_sent = patch.currentDaySent;
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, "nextRunAtIso")) {
+    update.next_run_at = patch.nextRunAtIso;
+  }
+  if (patch.updateLastRun) {
+    update.last_run_at = new Date().toISOString();
+  }
+  if (typeof patch.active === "boolean") {
+    update.active = patch.active;
+  }
+  if (Object.keys(update).length === 0) return;
+
+  const { error } = await supabase
+    .from("caderno_private_recipients")
+    .update(update)
+    .eq("id", recipientRowId);
+
+  if (error) throw new Error(`Erro ao atualizar destinatario privado: ${error.message}`);
+}
+
+export async function deletePrivateSendsForCaderno(cadernoId: number): Promise<void> {
+  const { error } = await supabase.from("caderno_private_send").delete().eq("caderno_id", cadernoId);
+  if (error) throw new Error(`Erro ao limpar envios privados: ${error.message}`);
+}
+
+export async function resetPrivateRecipientsProgress(cadernoId: number): Promise<void> {
+  const { error } = await supabase
+    .from("caderno_private_recipients")
+    .update({
+      current_day_date: null,
+      current_day_sent: 0,
+      last_run_at: null
+    })
+    .eq("caderno_id", cadernoId);
+
+  if (error) throw new Error(`Erro ao resetar destinatarios: ${error.message}`);
+}
+
+/**
+ * Verifica se `recipientJid` respondeu todas as questões publicadas no dia
+ * (modo privado — não usa engajamento do grupo).
+ */
+export async function isPrivateRecipientDayComplete(
+  cadernoId: number,
+  recipientJid: string,
+  dayIso: string,
+  timeZone: string
+): Promise<boolean> {
+  const published = await listPrivateSendsPublishedOnDate(
+    cadernoId,
+    recipientJid,
+    dayIso,
+    timeZone
+  );
+  if (published.length === 0) return true;
+
+  const questionIds = published.map((p) => p.publishedQuestionId);
+  const answersByQ = await listAnswersForQuestionIds(questionIds);
+  const pk = jidComparableKeyShared(recipientJid);
+
+  for (const pub of published) {
+    const set = answersByQ.get(pub.publishedQuestionId) ?? new Set<string>();
+    if (!set.has(pk)) return false;
+  }
+  return true;
+}
+
+async function anyActivePrivateRecipientHasPendingQuestions(cadernoId: number): Promise<boolean> {
+  const recs = await listPrivateRecipientsByCaderno(cadernoId);
+  for (const r of recs) {
+    if (!r.active) continue;
+    const left = await countUnsentPrivateQuestionsForRecipient(cadernoId, r.userJid);
+    if (left > 0) return true;
+  }
+  return false;
+}
+
+/** Se nenhum destinatário ativo tem questão pendente, pausa o caderno. */
+export async function maybePausePrivateCadernoWhenExhausted(
+  cadernoId: number
+): Promise<boolean> {
+  const c = await getCadernoById(cadernoId);
+  if (!c || c.deliveryMode !== "private" || c.status !== "active") return false;
+  const pending = await anyActivePrivateRecipientHasPendingQuestions(cadernoId);
+  if (pending) return false;
+  await setCadernoStatus(cadernoId, "paused_waiting_decision", { nextRunAt: null });
+  return true;
 }
 
 /**
@@ -946,6 +1349,14 @@ export async function resetCadernoPublishedQuestions(cadernoId: number): Promise
     .eq("caderno_id", cadernoId);
 
   if (error) throw new Error(`Erro ao reciclar caderno: ${error.message}`);
+
+  try {
+    await deletePrivateSendsForCaderno(cadernoId);
+    await resetPrivateRecipientsProgress(cadernoId);
+  } catch (e) {
+    const msg = (e as Error).message.toLowerCase();
+    if (!msg.includes("relation") && !msg.includes("does not exist")) throw e;
+  }
 }
 
 export async function listCadernosForOwner(
@@ -1053,16 +1464,6 @@ export async function listCadernoQuestionsPublishedOnDate(
   return out;
 }
 
-function formatDateInTimezone(d: Date, timeZone: string): string {
-  const fmt = new Intl.DateTimeFormat("en-CA", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit"
-  });
-  return fmt.format(d);
-}
-
 /** Lista IDs de quem respondeu (set por question_id). */
 export async function listAnswersForQuestionIds(
   questionIds: number[]
@@ -1127,6 +1528,8 @@ export async function markCadernoQuestionPublished(
 export type CadernoQuestionPublishInput = {
   caderno: CadernoRow;
   question: CadernoQuestionRow;
+  /** Se definido, a questão fica associada ao privado deste JID (métricas só dele). */
+  recipientJid?: string | null;
 };
 
 /**
@@ -1137,9 +1540,10 @@ export type CadernoQuestionPublishInput = {
 export async function createQuestionFromCaderno(
   input: CadernoQuestionPublishInput
 ): Promise<{ shortId: string; dbId: number }> {
-  const { caderno, question } = input;
+  const { caderno, question, recipientJid } = input;
   const creatorJid = `caderno:${caderno.id}@bot`;
   const creatorName = `Caderno: ${caderno.name}`;
+  const targetJid = (recipientJid && recipientJid.trim()) || caderno.targetGroupJid;
 
   const explanationParts: string[] = [
     "Resolução completa no Tec Concursos:",
@@ -1149,12 +1553,14 @@ export async function createQuestionFromCaderno(
   if (question.subject) explanationParts.push(`Matéria: ${question.subject}`);
   const explanationText = explanationParts.join("\n");
 
+  const suffix = recipientJid ? `-${jidComparableKeyShared(recipientJid)}` : "";
+
   const { data, error } = await supabase
     .from("questions")
     .insert({
       creator_jid: creatorJid,
       creator_name: creatorName,
-      target_group_jid: caderno.targetGroupJid,
+      target_group_jid: targetJid,
       question_type: question.questionType,
       statement_text: question.statementText,
       statement_media_url: null,
@@ -1163,12 +1569,12 @@ export async function createQuestionFromCaderno(
       explanation_text: explanationText,
       explanation_media_url: null,
       explanation_media_mime_type: null,
-      group_jid: caderno.targetGroupJid,
+      group_jid: targetJid,
       sender_jid: creatorJid,
       message_type: "text",
       text_content: question.statementText,
       media_mime_type: null,
-      wa_message_id: `caderno-${caderno.id}-${question.id}-${Date.now()}`,
+      wa_message_id: `caderno-${caderno.id}-${question.id}${suffix}-${Date.now()}`,
       sent_at: new Date().toISOString()
     })
     .select("id")
@@ -1215,6 +1621,79 @@ export async function getCadernoProgress(cadernoId: number): Promise<CadernoProg
   if (!caderno) return null;
 
   const totalQuestions = await countCadernoQuestions(cadernoId);
+
+  if (caderno.deliveryMode === "private") {
+    const { data: sends, error: sErr } = await supabase
+      .from("caderno_private_send")
+      .select("published_question_id, recipient_jid")
+      .eq("caderno_id", cadernoId)
+      .not("published_question_id", "is", null);
+
+    if (sErr) throw new Error(`Erro ao buscar envios privados: ${sErr.message}`);
+
+    const publishedIds = (sends ?? [])
+      .map((r) => Number(r.published_question_id))
+      .filter((x) => Number.isFinite(x));
+    const publishedCount = publishedIds.length;
+
+    const recs = await listPrivateRecipientsByCaderno(cadernoId);
+    const engagedCount = recs.filter((r) => r.active).length;
+
+    if (publishedCount === 0) {
+      return {
+        caderno,
+        totalQuestions,
+        publishedCount: 0,
+        resolvedByEngaged: 0,
+        withAnyAnswer: 0,
+        engagedCount
+      };
+    }
+
+    const { data: answers, error: ansErr } = await supabase
+      .from("answers")
+      .select("question_id, user_jid")
+      .in("question_id", publishedIds);
+
+    if (ansErr) throw new Error(`Erro ao buscar respostas para progresso: ${ansErr.message}`);
+
+    const answeredByQuestion = new Map<number, Set<string>>();
+    for (const row of answers ?? []) {
+      const qid = Number(row.question_id);
+      if (!Number.isFinite(qid)) continue;
+      const userJid = String(row.user_jid || "");
+      if (!userJid) continue;
+      let set = answeredByQuestion.get(qid);
+      if (!set) {
+        set = new Set<string>();
+        answeredByQuestion.set(qid, set);
+      }
+      set.add(jidComparableKeyShared(userJid));
+    }
+
+    let resolvedByEngaged = 0;
+    let withAnyAnswer = 0;
+    for (const row of sends ?? []) {
+      const qid = Number(row.published_question_id);
+      const who = String(row.recipient_jid || "");
+      if (!Number.isFinite(qid) || !who) continue;
+      const userSet = answeredByQuestion.get(qid);
+      if (!userSet || userSet.size === 0) continue;
+      withAnyAnswer += 1;
+      if (userSet.has(jidComparableKeyShared(who))) {
+        resolvedByEngaged += 1;
+      }
+    }
+
+    return {
+      caderno,
+      totalQuestions,
+      publishedCount,
+      resolvedByEngaged,
+      withAnyAnswer,
+      engagedCount
+    };
+  }
 
   const { data: publishedRows, error: pubErr } = await supabase
     .from("caderno_questions")

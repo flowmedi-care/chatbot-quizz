@@ -25,6 +25,8 @@ module.exports = async (req, res) => {
   const previewOnly = Boolean(body.previewOnly);
   const activate = Boolean(body.activate);
 
+  const deliveryMode = body.deliveryMode === "private" ? "private" : "group";
+
   const sched = body.schedule || {};
   // Modelo novo: questionsPerDay + startHour/startMinute + waitForAnswers.
   // Mantemos compat com chamadas antigas (questionsPerRun, sendHour, sendMinute).
@@ -61,6 +63,11 @@ module.exports = async (req, res) => {
   }
   if (!previewOnly && !targetGroupJid) {
     return res.status(400).json({ error: "Sem grupo de destino configurado." });
+  }
+  if (!previewOnly && deliveryMode === "private" && !createdByJid) {
+    return res.status(400).json({
+      error: "Caderno privado exige createdByJid (WhatsApp do dono) para receber as questões."
+    });
   }
   if (!pdfBase64) {
     return res.status(400).json({ error: "Envie pdfBase64 (PDF em base64)." });
@@ -137,9 +144,10 @@ module.exports = async (req, res) => {
 
   const nowDate = new Date();
   const status = activate ? "active" : "inactive";
-  const nextRunAt = activate
-    ? firstDailySlotUtc(nowDate, startHour, startMinute, timezone).toISOString()
-    : null;
+  const nextRunAt =
+    activate && deliveryMode === "group"
+      ? firstDailySlotUtc(nowDate, startHour, startMinute, timezone).toISOString()
+      : null;
 
   const { data: cadernoRow, error: cadernoErr } = await supabase
     .from("cadernos")
@@ -147,6 +155,7 @@ module.exports = async (req, res) => {
       name,
       target_group_jid: targetGroupJid,
       created_by_jid: createdByJid,
+      delivery_mode: deliveryMode,
       // Novos campos:
       questions_per_day: questionsPerDay,
       start_hour: startHour,
@@ -196,10 +205,37 @@ module.exports = async (req, res) => {
     return res.status(500).json({ error: `Erro ao salvar questoes: ${bulkErr.message}` });
   }
 
+  if (deliveryMode === "private") {
+    const recNext = activate
+      ? firstDailySlotUtc(nowDate, startHour, startMinute, timezone).toISOString()
+      : null;
+    const { error: prErr } = await supabase.from("caderno_private_recipients").insert({
+      caderno_id: cadernoId,
+      user_jid: createdByJid,
+      active: true,
+      questions_per_day: null,
+      start_hour: null,
+      start_minute: null,
+      wait_for_answers: null,
+      random_order: null,
+      timezone: null,
+      current_day_date: null,
+      current_day_sent: 0,
+      next_run_at: recNext
+    });
+    if (prErr) {
+      await supabase.from("cadernos").delete().eq("id", cadernoId);
+      await supabase.from("caderno_questions").delete().eq("caderno_id", cadernoId);
+      console.error("[caderno-upload] insert destinatario privado:", prErr);
+      return res.status(500).json({ error: `Erro ao criar destinatario privado: ${prErr.message}` });
+    }
+  }
+
   return res.status(200).json({
     cadernoId,
     name,
     targetGroupJid,
+    deliveryMode,
     totalQuestions: validForInsert.length,
     totalGabaritoEntries,
     status,

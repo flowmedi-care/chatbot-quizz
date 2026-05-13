@@ -171,6 +171,27 @@ async function maybePostAutoGabaritoToGroup(sock: WASocket, rawShortId: string):
     if (!meta) return;
 
     const { targetGroupJid: groupJid, creatorJid } = meta;
+    const isPrivateQuizTarget =
+      groupJid.endsWith("@s.whatsapp.net") || groupJid.endsWith("@lid");
+
+    if (isPrivateQuizTarget) {
+      const answered = await listAnswerUserJidsForQuestion(shortUp);
+      const expectJid = groupJid;
+      const pk = jidComparableKey(expectJid);
+      const answeredComparable = answered.map((j) => jidComparableKey(j));
+      const selfAnswered = answeredComparable.some((jc) => jc === pk);
+      if (!selfAnswered) return;
+
+      autoGabaritoPostedQuestionIds.add(shortUp);
+      const result = await getQuestionResult(shortUp);
+      const header = "[Resposta registrada]\nResultado enviado automaticamente (caderno privado).\n";
+      await sock.sendMessage(groupJid, {
+        text: `${header}${buildResultMessage(result)}`
+      });
+      await sendExplanationMedia(sock, groupJid, result);
+      return;
+    }
+
     const engaged = await getEngagedUserJidsForGroup(groupJid);
     if (engaged.length === 0) {
       console.log(
