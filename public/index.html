@@ -233,13 +233,14 @@
           </fieldset>
 
           <div id="caderno-private-add-panel" class="caderno-private-panel hidden">
-            <label class="report-field">
-              <span>Seu WhatsApp (DDI + DDD + número, só dígitos)</span>
-              <input type="text" id="caderno-owner-phone" placeholder="ex: 5521999998888" inputmode="numeric" />
-            </label>
-            <p class="report-sub">
-              Obrigatório no modo privado. Depois, em Editar, você pode marcar outros membros do grupo com agenda própria.
+            <p class="report-sub" style="margin-bottom: 8px;">
+              Escolha quem recebe no WhatsApp privado (mesmos contatos do engajamento). Marque um ou mais; agenda
+              global vale para quem deixar “questões/dia” e “início” em branco.
             </p>
+            <button type="button" id="btn-caderno-add-load-members" class="btn-tutorial">
+              Carregar membros do grupo
+            </button>
+            <ul id="caderno-add-private-list" class="caderno-private-list"></ul>
           </div>
 
           <div class="caderno-actions">

@@ -22,6 +22,18 @@ module.exports = async (req, res) => {
   const targetGroupJidRaw = body.targetGroupJid ? String(body.targetGroupJid).trim() : "";
   const targetGroupJid = targetGroupJidRaw || pickTargetGroupJid();
   const createdByJid = body.createdByJid ? String(body.createdByJid).trim() : null;
+  const privateRecipientsRaw = Array.isArray(body.privateRecipients) ? body.privateRecipients : [];
+  const byRecipientJid = new Map();
+  for (const item of privateRecipientsRaw) {
+    const userJid = item.userJid != null ? String(item.userJid).trim() : "";
+    if (!userJid) continue;
+    byRecipientJid.set(userJid, item);
+  }
+  const privateRecipientsNorm = [...byRecipientJid.values()];
+  const firstActiveJid = privateRecipientsNorm.find((i) => i.active !== false)?.userJid;
+  const effectiveCreatedBy =
+    (createdByJid && createdByJid.trim()) || (firstActiveJid ? String(firstActiveJid).trim() : null);
+
   const previewOnly = Boolean(body.previewOnly);
   const activate = Boolean(body.activate);
 
@@ -64,10 +76,16 @@ module.exports = async (req, res) => {
   if (!previewOnly && !targetGroupJid) {
     return res.status(400).json({ error: "Sem grupo de destino configurado." });
   }
-  if (!previewOnly && deliveryMode === "private" && !createdByJid) {
-    return res.status(400).json({
-      error: "Caderno privado exige createdByJid (WhatsApp do dono) para receber as questões."
-    });
+  if (!previewOnly && deliveryMode === "private") {
+    if (!effectiveCreatedBy) {
+      return res.status(400).json({
+        error:
+          "Caderno privado: selecione ao menos um participante do engajamento ou envie createdByJid."
+      });
+    }
+    if (privateRecipientsNorm.length > 0 && !firstActiveJid) {
+      return res.status(400).json({ error: "Marque ao menos um destinatário ativo no modo privado." });
+    }
   }
   if (!pdfBase64) {
     return res.status(400).json({ error: "Envie pdfBase64 (PDF em base64)." });
@@ -154,7 +172,7 @@ module.exports = async (req, res) => {
     .insert({
       name,
       target_group_jid: targetGroupJid,
-      created_by_jid: createdByJid,
+      created_by_jid: effectiveCreatedBy,
       delivery_mode: deliveryMode,
       // Novos campos:
       questions_per_day: questionsPerDay,
@@ -206,23 +224,34 @@ module.exports = async (req, res) => {
   }
 
   if (deliveryMode === "private") {
-    const recNext = activate
-      ? firstDailySlotUtc(nowDate, startHour, startMinute, timezone).toISOString()
-      : null;
-    const { error: prErr } = await supabase.from("caderno_private_recipients").insert({
-      caderno_id: cadernoId,
-      user_jid: createdByJid,
-      active: true,
-      questions_per_day: null,
-      start_hour: null,
-      start_minute: null,
-      wait_for_answers: null,
-      random_order: null,
-      timezone: null,
-      current_day_date: null,
-      current_day_sent: 0,
-      next_run_at: recNext
+    const insertItems =
+      privateRecipientsNorm.length > 0
+        ? privateRecipientsNorm
+        : [{ userJid: effectiveCreatedBy, active: true }];
+    const prRows = insertItems.map((item) => {
+      const userJid = String(item.userJid).trim();
+      const shUse = item.startHour != null ? clampInt(item.startHour, 0, 23, startHour) : startHour;
+      const smUse = item.startMinute != null ? clampInt(item.startMinute, 0, 59, startMinute) : startMinute;
+      const recNext = activate
+        ? firstDailySlotUtc(nowDate, shUse, smUse, timezone).toISOString()
+        : null;
+      return {
+        caderno_id: cadernoId,
+        user_jid: userJid,
+        active: item.active !== false,
+        questions_per_day:
+          item.questionsPerDay != null ? clampInt(item.questionsPerDay, 1, 24, questionsPerDay) : null,
+        start_hour: item.startHour != null ? clampInt(item.startHour, 0, 23, startHour) : null,
+        start_minute: item.startMinute != null ? clampInt(item.startMinute, 0, 59, startMinute) : null,
+        wait_for_answers: null,
+        random_order: null,
+        timezone: null,
+        current_day_date: null,
+        current_day_sent: 0,
+        next_run_at: recNext
+      };
     });
+    const { error: prErr } = await supabase.from("caderno_private_recipients").insert(prRows);
     if (prErr) {
       await supabase.from("cadernos").delete().eq("id", cadernoId);
       await supabase.from("caderno_questions").delete().eq("caderno_id", cadernoId);

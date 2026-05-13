@@ -64,7 +64,8 @@
     cadernoDeliveryGroup: document.getElementById("caderno-delivery-group"),
     cadernoDeliveryPrivate: document.getElementById("caderno-delivery-private"),
     cadernoPrivateAddPanel: document.getElementById("caderno-private-add-panel"),
-    cadernoOwnerPhone: document.getElementById("caderno-owner-phone"),
+    cadernoAddPrivateList: document.getElementById("caderno-add-private-list"),
+    btnCadernoAddLoadMembers: document.getElementById("btn-caderno-add-load-members"),
     btnCadernoPreview: document.getElementById("btn-caderno-preview"),
     btnCadernoSave: document.getElementById("btn-caderno-save"),
     btnCadernoSaveActivate: document.getElementById("btn-caderno-save-activate"),
@@ -831,12 +832,6 @@
     return n < 10 ? `0${n}` : String(n);
   }
 
-  function digitsToWhatsAppJid(raw) {
-    const d = String(raw || "").replace(/\D/g, "");
-    if (d.length < 10 || d.length > 15) return null;
-    return `${d}@s.whatsapp.net`;
-  }
-
   function getCadernoAddDeliveryMode() {
     return els.cadernoDeliveryPrivate && els.cadernoDeliveryPrivate.checked ? "private" : "group";
   }
@@ -881,10 +876,10 @@
     </li>`;
   }
 
-  function collectEditPrivateRecipients() {
-    if (!els.cadernoEditPrivateList) return [];
+  function collectPrivateRecipientsFromList(ul) {
+    if (!ul) return [];
     const out = [];
-    els.cadernoEditPrivateList.querySelectorAll("li[data-jid]").forEach((li) => {
+    ul.querySelectorAll("li[data-jid]").forEach((li) => {
       const userJid = li.getAttribute("data-jid") || "";
       if (!userJid) return;
       const active = li.querySelector(".caderno-priv-active")?.checked !== false;
@@ -909,6 +904,14 @@
       out.push({ userJid, active, questionsPerDay, startHour, startMinute });
     });
     return out;
+  }
+
+  function collectEditPrivateRecipients() {
+    return collectPrivateRecipientsFromList(els.cadernoEditPrivateList);
+  }
+
+  function collectAddPrivateRecipients() {
+    return collectPrivateRecipientsFromList(els.cadernoAddPrivateList);
   }
 
   async function onCadernoEditLoadMembers() {
@@ -951,6 +954,43 @@
     if (getCadernoEditDeliveryMode() !== "private" || !els.cadernoEditPrivateList) return;
     const has = els.cadernoEditPrivateList.querySelector("li[data-jid]");
     if (!has) await onCadernoEditLoadMembers();
+  }
+
+  async function onCadernoAddLoadMembers() {
+    if (!els.cadernoAddPrivateList || !els.cadernoAddStatus) return;
+    els.cadernoAddStatus.textContent = "Carregando membros…";
+    try {
+      const data = await fetchJson(API.engagement);
+      const members = data.members || [];
+      const existing = new Set(
+        [...els.cadernoAddPrivateList.querySelectorAll("li[data-jid]")].map(
+          (li) => li.getAttribute("data-jid") || ""
+        )
+      );
+      for (const m of members) {
+        const jid = m.userJid;
+        if (!jid || existing.has(jid)) continue;
+        existing.add(jid);
+        const row = renderPrivateRecipientEditRow({
+          userJid: jid,
+          active: true,
+          displayLabel: m.displayLabel || m.userLabel || jid
+        });
+        els.cadernoAddPrivateList.insertAdjacentHTML("beforeend", row);
+      }
+      els.cadernoAddStatus.textContent = members.length
+        ? `${members.length} membro(s) no grupo — adicionados os que faltavam na lista.`
+        : "Lista vazia. Rode /sync-membros no WhatsApp.";
+    } catch (e) {
+      els.cadernoAddStatus.textContent = e.message || "Falha ao carregar.";
+    }
+  }
+
+  async function onCadernoAddDeliveryChange() {
+    syncCadernoAddPrivatePanel();
+    if (getCadernoAddDeliveryMode() !== "private" || !els.cadernoAddPrivateList) return;
+    const has = els.cadernoAddPrivateList.querySelector("li[data-jid]");
+    if (!has) await onCadernoAddLoadMembers();
   }
 
   function renderCadernos() {
@@ -1158,13 +1198,17 @@
     const randomOrder = Boolean(els.cadernoRandom && els.cadernoRandom.checked);
     const waitForAnswers = Boolean(els.cadernoWait && els.cadernoWait.checked);
     const deliveryMode = getCadernoAddDeliveryMode();
+    const privateRecipients = deliveryMode === "private" ? collectAddPrivateRecipients() : [];
     const createdByJid =
-      deliveryMode === "private" ? digitsToWhatsAppJid((els.cadernoOwnerPhone && els.cadernoOwnerPhone.value) || "") : null;
+      deliveryMode === "private"
+        ? privateRecipients.find((r) => r.active !== false && r.userJid)?.userJid || null
+        : null;
     return {
       file,
       name,
       deliveryMode,
       createdByJid,
+      privateRecipients,
       schedule: {
         questionsPerDay: Number.isFinite(questionsPerDay) ? questionsPerDay : 3,
         startHour: Number.isFinite(startHour) ? startHour : 7,
@@ -1238,6 +1282,9 @@
       createdByJid: form.createdByJid,
       ...extra
     };
+    if (form.deliveryMode === "private" && Array.isArray(form.privateRecipients)) {
+      body.privateRecipients = form.privateRecipients;
+    }
     return fetchJson(API.cadernoUpload, {
       method: "POST",
       body: JSON.stringify(body)
@@ -1266,10 +1313,13 @@
     els.cadernoAddStatus.textContent = activate ? "Salvando e ativando…" : "Salvando…";
     try {
       const form = getCadernoFormPayload();
-      if (form.deliveryMode === "private" && !form.createdByJid) {
-        els.cadernoAddStatus.textContent =
-          "Modo privado: preencha seu WhatsApp (DDI+DDD+número, só dígitos).";
-        return;
+      if (form.deliveryMode === "private") {
+        const hasActive = (form.privateRecipients || []).some((r) => r.active !== false && r.userJid);
+        if (!hasActive) {
+          els.cadernoAddStatus.textContent =
+            "Modo privado: use “Carregar membros do grupo” e marque ao menos um destinatário.";
+          return;
+        }
       }
       const result = await callCadernoUpload({ activate });
       els.cadernoAddStatus.textContent = `Caderno #${result.cadernoId} salvo (${result.totalQuestions} questões).`;
@@ -1420,7 +1470,7 @@
     if (els.cadernoWait) els.cadernoWait.checked = false;
     if (els.cadernoDeliveryGroup) els.cadernoDeliveryGroup.checked = true;
     if (els.cadernoDeliveryPrivate) els.cadernoDeliveryPrivate.checked = false;
-    if (els.cadernoOwnerPhone) els.cadernoOwnerPhone.value = "";
+    if (els.cadernoAddPrivateList) els.cadernoAddPrivateList.innerHTML = "";
     syncCadernoAddPrivatePanel();
     if (els.cadernoAddStatus) els.cadernoAddStatus.textContent = "";
     renderCadernoPreview(null);
@@ -1555,8 +1605,12 @@
   }
   if (els.btnCadernoEditSave) els.btnCadernoEditSave.addEventListener("click", onCadernoEditSave);
 
-  if (els.cadernoDeliveryGroup) els.cadernoDeliveryGroup.addEventListener("change", syncCadernoAddPrivatePanel);
-  if (els.cadernoDeliveryPrivate) els.cadernoDeliveryPrivate.addEventListener("change", syncCadernoAddPrivatePanel);
+  if (els.cadernoDeliveryGroup) els.cadernoDeliveryGroup.addEventListener("change", onCadernoAddDeliveryChange);
+  if (els.cadernoDeliveryPrivate) els.cadernoDeliveryPrivate.addEventListener("change", onCadernoAddDeliveryChange);
+  if (els.btnCadernoAddLoadMembers) {
+    els.btnCadernoAddLoadMembers.addEventListener("click", () => onCadernoAddLoadMembers());
+  }
+
   if (els.cadernoEditDeliveryGroup) els.cadernoEditDeliveryGroup.addEventListener("change", onCadernoEditDeliveryChange);
   if (els.cadernoEditDeliveryPrivate) els.cadernoEditDeliveryPrivate.addEventListener("change", onCadernoEditDeliveryChange);
   if (els.btnCadernoEditLoadMembers) {
