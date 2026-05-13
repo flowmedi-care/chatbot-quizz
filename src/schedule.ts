@@ -108,26 +108,36 @@ export function addDaysIso(isoDate: string, days: number): string {
 
 /**
  * Instante UTC do slot `index` (0..N-1) no dia `dayIso` (YYYY-MM-DD no fuso `timeZone`).
- * Espaçamento de 24h/N a partir de `startHour:startMinute`.
+ * Distribui as N questões **uniformemente entre início e fim** (inclusive), no mesmo dia local.
+ * Se fim <= início, cai no comportamento antigo: espaçamento 24h/N a partir do início.
  *
- * Ex.: N=3, start=07:00, dayIso=2026-05-13 ⇒
- *      slot 0 = 2026-05-13 07:00 (TZ)
- *      slot 1 = 2026-05-13 15:00 (TZ)
- *      slot 2 = 2026-05-13 23:00 (TZ)
+ * Ex.: N=5, 07:00–22:00 ⇒ 5 pontos ao longo de 15h (primeira às 07:00, última às 22:00).
  */
 export function dailySlotUtc(
   dayIso: string,
   startHour: number,
   startMinute: number,
+  endHour: number,
+  endMinute: number,
   questionsPerDay: number,
   index: number,
   timeZone: string
 ): Date {
   const [y, m, d] = dayIso.split("-").map((s) => Number(s));
   const safeN = Math.max(1, questionsPerDay);
-  const gapMs = Math.round((24 * 60 * 60 * 1000) / safeN);
-  const base = zonedDateToUtc(y, m, d, startHour, startMinute, timeZone);
-  return new Date(base.getTime() + index * gapMs);
+  const safeIndex = Math.min(Math.max(0, index), safeN - 1);
+  const start = zonedDateToUtc(y, m, d, startHour, startMinute, timeZone);
+  const end = zonedDateToUtc(y, m, d, endHour, endMinute, timeZone);
+  let windowMs = end.getTime() - start.getTime();
+
+  if (windowMs <= 0) {
+    const gapMs = Math.round((24 * 60 * 60 * 1000) / safeN);
+    return new Date(start.getTime() + safeIndex * gapMs);
+  }
+
+  if (safeN <= 1) return start;
+  const offsetMs = (windowMs * safeIndex) / (safeN - 1);
+  return new Date(start.getTime() + offsetMs);
 }
 
 export function formatNextRunPretty(iso: string | null, timeZone: string): string {

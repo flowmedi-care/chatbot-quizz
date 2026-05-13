@@ -56,6 +56,8 @@ function syntheticCadernoForPrivateSchedule(
     questionsPerDay: eff.questionsPerDay,
     startHour: eff.startHour,
     startMinute: eff.startMinute,
+    endHour: eff.endHour,
+    endMinute: eff.endMinute,
     waitForAnswers: eff.waitForAnswers,
     randomOrder: eff.randomOrder,
     timezone: eff.timezone,
@@ -225,6 +227,8 @@ function decideAction(caderno: CadernoRow, now: Date): DayDecision {
       caderno.currentDayDate,
       caderno.startHour,
       caderno.startMinute,
+      caderno.endHour,
+      caderno.endMinute,
       N,
       sent,
       caderno.timezone
@@ -254,6 +258,8 @@ function decideAction(caderno: CadernoRow, now: Date): DayDecision {
     nextDayIso,
     caderno.startHour,
     caderno.startMinute,
+    caderno.endHour,
+    caderno.endMinute,
     N,
     0,
     caderno.timezone
@@ -272,6 +278,8 @@ function computeNextRunForDay(caderno: CadernoRow, dayIso: string, sentNow: numb
       dayIso,
       caderno.startHour,
       caderno.startMinute,
+      caderno.endHour,
+      caderno.endMinute,
       N,
       sentNow,
       caderno.timezone
@@ -282,6 +290,8 @@ function computeNextRunForDay(caderno: CadernoRow, dayIso: string, sentNow: numb
     nextDay,
     caderno.startHour,
     caderno.startMinute,
+    caderno.endHour,
+    caderno.endMinute,
     N,
     0,
     caderno.timezone
@@ -319,6 +329,8 @@ async function runCaderno(sock: WASocket, caderno: CadernoRow): Promise<void> {
       newDayIso,
       caderno.startHour,
       caderno.startMinute,
+      caderno.endHour,
+      caderno.endMinute,
       Math.max(1, caderno.questionsPerDay),
       0,
       caderno.timezone
@@ -428,6 +440,8 @@ async function runPrivateRecipient(
       newDayIso,
       eff.startHour,
       eff.startMinute,
+      eff.endHour,
+      eff.endMinute,
       Math.max(1, eff.questionsPerDay),
       0,
       eff.timezone

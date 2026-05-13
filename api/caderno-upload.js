@@ -60,6 +60,8 @@ module.exports = async (req, res) => {
     59,
     0
   );
+  const endHour = clampInt(sched.endHour != null ? sched.endHour : 22, 0, 23, 22);
+  const endMinute = clampInt(sched.endMinute != null ? sched.endMinute : 0, 0, 59, 0);
   const waitForAnswers = Boolean(sched.waitForAnswers);
   const timezone = String(sched.timezone || "America/Sao_Paulo");
   const randomOrder = Boolean(sched.randomOrder);
@@ -178,6 +180,8 @@ module.exports = async (req, res) => {
       questions_per_day: questionsPerDay,
       start_hour: startHour,
       start_minute: startMinute,
+      end_hour: endHour,
+      end_minute: endMinute,
       wait_for_answers: waitForAnswers,
       current_day_date: null,
       current_day_sent: 0,
@@ -243,6 +247,8 @@ module.exports = async (req, res) => {
           item.questionsPerDay != null ? clampInt(item.questionsPerDay, 1, 24, questionsPerDay) : null,
         start_hour: item.startHour != null ? clampInt(item.startHour, 0, 23, startHour) : null,
         start_minute: item.startMinute != null ? clampInt(item.startMinute, 0, 59, startMinute) : null,
+        end_hour: item.endHour != null ? clampInt(item.endHour, 0, 23, endHour) : null,
+        end_minute: item.endMinute != null ? clampInt(item.endMinute, 0, 59, endMinute) : null,
         wait_for_answers: null,
         random_order: null,
         timezone: null,

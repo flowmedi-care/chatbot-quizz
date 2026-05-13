@@ -55,7 +55,7 @@ import {
   upsertGroupMembersFromSync
 } from "./supabase";
 import { computeNextRunAt, formatNextRunPretty } from "./schedule";
-import { forceRunCaderno, startCadernoScheduler } from "./caderno-scheduler";
+import { forceRunCaderno, startCadernoScheduler, stopCadernoScheduler } from "./caderno-scheduler";
 import { MediaPayload, QuestionDraft, QuestionType } from "./types";
 
 function toIsoTimestamp(value: unknown): string {
@@ -639,6 +639,7 @@ async function startBot(): Promise<void> {
     }
 
     if (connection === "close") {
+      stopCadernoScheduler();
       const statusCode = (lastDisconnect?.error as { output?: { statusCode?: number } })?.output
         ?.statusCode;
       const reason = (lastDisconnect?.error as Error | undefined)?.message ?? "sem motivo";

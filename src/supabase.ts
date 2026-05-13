@@ -743,10 +743,13 @@ export type CadernoRow = {
   createdByJid: string | null;
   deliveryMode: "group" | "private";
   status: "inactive" | "active" | "paused_waiting_decision" | "finished";
-  /** Modelo novo: total de questões enviadas por dia, espaçadas em 24h/N. */
+  /** Modelo novo: total de questões enviadas por dia, espaçadas na janela início–fim. */
   questionsPerDay: number;
   startHour: number;
   startMinute: number;
+  /** Fim da janela de envio no mesmo dia (fuso do caderno). */
+  endHour: number;
+  endMinute: number;
   waitForAnswers: boolean;
   currentDayDate: string | null;
   currentDaySent: number;
@@ -792,6 +795,8 @@ function mapCadernoRow(row: Record<string, unknown>): CadernoRow {
     questionsPerDay: Number.isFinite(questionsPerDayRaw) ? questionsPerDayRaw : 3,
     startHour: Number.isFinite(startHourRaw) ? startHourRaw : 7,
     startMinute: Number.isFinite(startMinuteRaw) ? startMinuteRaw : 0,
+    endHour: Number.isFinite(Number(row.end_hour)) ? Number(row.end_hour) : 22,
+    endMinute: Number.isFinite(Number(row.end_minute)) ? Number(row.end_minute) : 0,
     waitForAnswers: Boolean(row.wait_for_answers),
     currentDayDate: row.current_day_date ? String(row.current_day_date) : null,
     currentDaySent: Number(row.current_day_sent || 0),
@@ -818,7 +823,7 @@ function formatDateInTimezone(d: Date, timeZone: string): string {
 }
 
 const CADERNO_SELECT_COLUMNS =
-  "id, name, target_group_jid, created_by_jid, delivery_mode, status, questions_per_day, start_hour, start_minute, wait_for_answers, current_day_date, current_day_sent, questions_per_run, interval_days, send_hour, send_minute, timezone, cursor, random_order, last_run_at, next_run_at";
+  "id, name, target_group_jid, created_by_jid, delivery_mode, status, questions_per_day, start_hour, start_minute, end_hour, end_minute, wait_for_answers, current_day_date, current_day_sent, questions_per_run, interval_days, send_hour, send_minute, timezone, cursor, random_order, last_run_at, next_run_at";
 
 function mapCadernoQuestionRow(row: Record<string, unknown>): CadernoQuestionRow {
   return {
@@ -898,6 +903,8 @@ export type CadernoPrivateRecipientRow = {
   questionsPerDay: number | null;
   startHour: number | null;
   startMinute: number | null;
+  endHour: number | null;
+  endMinute: number | null;
   waitForAnswers: boolean | null;
   randomOrder: boolean | null;
   timezone: string | null;
@@ -916,6 +923,8 @@ function mapPrivateRecipientRow(row: Record<string, unknown>): CadernoPrivateRec
     questionsPerDay: row.questions_per_day != null ? Number(row.questions_per_day) : null,
     startHour: row.start_hour != null ? Number(row.start_hour) : null,
     startMinute: row.start_minute != null ? Number(row.start_minute) : null,
+    endHour: row.end_hour != null ? Number(row.end_hour) : null,
+    endMinute: row.end_minute != null ? Number(row.end_minute) : null,
     waitForAnswers: row.wait_for_answers != null ? Boolean(row.wait_for_answers) : null,
     randomOrder: row.random_order != null ? Boolean(row.random_order) : null,
     timezone: row.timezone != null ? String(row.timezone) : null,
@@ -934,6 +943,8 @@ export function effectivePrivateRecipientSchedule(
   questionsPerDay: number;
   startHour: number;
   startMinute: number;
+  endHour: number;
+  endMinute: number;
   waitForAnswers: boolean;
   randomOrder: boolean;
   timezone: string;
@@ -942,6 +953,8 @@ export function effectivePrivateRecipientSchedule(
     questionsPerDay: r.questionsPerDay ?? caderno.questionsPerDay,
     startHour: r.startHour ?? caderno.startHour,
     startMinute: r.startMinute ?? caderno.startMinute,
+    endHour: r.endHour ?? caderno.endHour,
+    endMinute: r.endMinute ?? caderno.endMinute,
     waitForAnswers: r.waitForAnswers ?? caderno.waitForAnswers,
     randomOrder: r.randomOrder ?? caderno.randomOrder,
     timezone: (r.timezone && r.timezone.trim()) || caderno.timezone
@@ -955,7 +968,7 @@ export async function listPrivateRecipientsDueForRun(): Promise<
   const { data: recs, error } = await supabase
     .from("caderno_private_recipients")
     .select(
-      "id, caderno_id, user_jid, active, questions_per_day, start_hour, start_minute, wait_for_answers, random_order, timezone, current_day_date, current_day_sent, last_run_at, next_run_at"
+      "id, caderno_id, user_jid, active, questions_per_day, start_hour, start_minute, end_hour, end_minute, wait_for_answers, random_order, timezone, current_day_date, current_day_sent, last_run_at, next_run_at"
     )
     .eq("active", true)
     .lte("next_run_at", nowIso);
@@ -981,7 +994,7 @@ export async function listPrivateRecipientsByCaderno(
   const { data, error } = await supabase
     .from("caderno_private_recipients")
     .select(
-      "id, caderno_id, user_jid, active, questions_per_day, start_hour, start_minute, wait_for_answers, random_order, timezone, current_day_date, current_day_sent, last_run_at, next_run_at"
+      "id, caderno_id, user_jid, active, questions_per_day, start_hour, start_minute, end_hour, end_minute, wait_for_answers, random_order, timezone, current_day_date, current_day_sent, last_run_at, next_run_at"
     )
     .eq("caderno_id", cadernoId)
     .order("user_jid", { ascending: true });
@@ -1002,6 +1015,8 @@ export async function replacePrivateRecipientsForCaderno(
     questionsPerDay?: number | null;
     startHour?: number | null;
     startMinute?: number | null;
+    endHour?: number | null;
+    endMinute?: number | null;
     waitForAnswers?: boolean | null;
     randomOrder?: boolean | null;
     timezone?: string | null;
@@ -1023,6 +1038,8 @@ export async function replacePrivateRecipientsForCaderno(
     questions_per_day: r.questionsPerDay ?? null,
     start_hour: r.startHour ?? null,
     start_minute: r.startMinute ?? null,
+    end_hour: r.endHour ?? null,
+    end_minute: r.endMinute ?? null,
     wait_for_answers: r.waitForAnswers ?? null,
     random_order: r.randomOrder ?? null,
     timezone: r.timezone ?? null,
@@ -1435,6 +1452,11 @@ export async function updateCadernoDayState(
  * Lista as questões `caderno_questions` publicadas em uma data específica
  * (`current_day_date` no fuso do caderno). Retorna a published_at e o id da
  * linha em `questions` para checar respostas.
+ *
+ * Só entram linhas em que o agendador de **grupo** chamou `markCadernoQuestionPublished`
+ * (envio automático no grupo). Questões do wizard/site e envios privados do caderno
+ * não atualizam `caderno_questions.published_question_id`, logo não entram no
+ * `waitForAnswers` / calendário do caderno em grupo.
  */
 export async function listCadernoQuestionsPublishedOnDate(
   cadernoId: number,
@@ -1525,6 +1547,48 @@ export async function markCadernoQuestionPublished(
   }
 }
 
+/** Prefixo do `short_id` das questões geradas pelo agendador no grupo (não mistura com privado nem com wizard). */
+function groupCadernoShortIdPrefix(cadernoId: number): string {
+  return `CG-${cadernoId}-`;
+}
+
+/** Prefixo do `short_id` no modo privado: um contador por caderno + destinatário. */
+function privateCadernoShortIdPrefix(cadernoId: number, recipientJid: string): string {
+  const tag = recipientKeyForPrivateShortId(recipientJid);
+  return `CP-${cadernoId}-${tag}-`;
+}
+
+function recipientKeyForPrivateShortId(recipientJid: string): string {
+  const raw = jidComparableKeyShared(recipientJid);
+  const at = raw.indexOf("@");
+  const userPart = at < 0 ? raw : raw.slice(0, at);
+  const digits = userPart.replace(/\D/g, "");
+  if (digits.length >= 6) return digits.slice(-11);
+  const alnum = userPart.replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
+  const fallback = (alnum.length >= 4 ? alnum.slice(-10) : (alnum || "u").padEnd(4, "x")).slice(0, 11);
+  return fallback;
+}
+
+/**
+ * Próximo sufixo numérico para `prefix` (ex.: CG-1- → 7 vira CG-1-7).
+ * Varre `questions.short_id` com esse prefixo para não colidir após falha de envio ou reciclagem.
+ */
+async function nextNumericShortSuffixAfterPrefix(prefix: string): Promise<number> {
+  const { data, error } = await supabase.from("questions").select("short_id").like("short_id", `${prefix}%`);
+  if (error) throw new Error(`Erro ao alocar short_id do caderno: ${error.message}`);
+  let max = 0;
+  const escaped = prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const re = new RegExp(`^${escaped}(\\d+)$`, "i");
+  for (const row of data ?? []) {
+    const s = String(row.short_id ?? "").trim();
+    const m = re.exec(s);
+    if (!m) continue;
+    const n = parseInt(m[1], 10);
+    if (Number.isFinite(n) && n > max) max = n;
+  }
+  return max + 1;
+}
+
 export type CadernoQuestionPublishInput = {
   caderno: CadernoRow;
   question: CadernoQuestionRow;
@@ -1534,8 +1598,8 @@ export type CadernoQuestionPublishInput = {
 
 /**
  * Cria uma linha em `questions` para uma questao do caderno, sem midia.
- * Retorna { shortId, dbId } — `shortId` e mostrado no grupo; `dbId` linka
- * a published_question_id na caderno_questions.
+ * Retorna { shortId, dbId } — `shortId` é o id público (CG-/CP-); `dbId` linka
+ * `published_question_id` / `caderno_private_send`.
  */
 export async function createQuestionFromCaderno(
   input: CadernoQuestionPublishInput
@@ -1584,7 +1648,12 @@ export async function createQuestionFromCaderno(
     throw new Error(`Erro ao criar questao a partir de caderno: ${error?.message ?? "sem dados"}`);
   }
 
-  const shortId = String(data.id).trim();
+  const priv = recipientJid && recipientJid.trim();
+  const idPrefix = priv
+    ? privateCadernoShortIdPrefix(caderno.id, recipientJid.trim())
+    : groupCadernoShortIdPrefix(caderno.id);
+  const nextSuffix = await nextNumericShortSuffixAfterPrefix(idPrefix);
+  const shortId = `${idPrefix}${nextSuffix}`;
 
   const { error: updateError } = await supabase
     .from("questions")

@@ -66,11 +66,11 @@ export function isSlashSessionCommand(text: string): boolean {
 export function parseRespondentsCommand(text: string): string | null {
   const t = normalizeInput(text.trim());
   const patterns = [
-    /^quem\s+respondeu\s+([a-z0-9]+)$/,
-    /^respondentes\s+([a-z0-9]+)$/,
-    /^responderam\s+([a-z0-9]+)$/,
-    /^\/responderam\s+([a-z0-9]+)$/,
-    /^respondidos\s+([a-z0-9]+)$/
+    /^quem\s+respondeu\s+([a-z0-9-]+)$/,
+    /^respondentes\s+([a-z0-9-]+)$/,
+    /^responderam\s+([a-z0-9-]+)$/,
+    /^\/responderam\s+([a-z0-9-]+)$/,
+    /^respondidos\s+([a-z0-9-]+)$/
   ];
   for (const re of patterns) {
     const m = t.match(re);
@@ -82,7 +82,8 @@ export function parseRespondentsCommand(text: string): string | null {
 export function parseGabaritoCommand(text: string): string | null {
   const normalized = normalizeInput(text.trim());
   const m =
-    normalized.match(/^\/gabarito\s+([a-z0-9]+)$/i) ?? normalized.match(/^gabarito\s+([a-z0-9]+)$/i);
+    normalized.match(/^\/gabarito\s+([a-z0-9-]+)$/i) ??
+    normalized.match(/^gabarito\s+([a-z0-9-]+)$/i);
   return m ? m[1].toUpperCase() : null;
 }
 
@@ -101,7 +102,7 @@ export function parseSyncMembrosCommand(text: string): boolean {
 /** Repetir enunciado salvo: /questao 5 ou questao 7B */
 export function parseRepeatQuestionCommand(text: string): { shortId: string } | null {
   const t = text.trim();
-  const m = t.match(/^\/questao\s+([a-z0-9]+)$/i) ?? t.match(/^questao\s+([a-z0-9]+)$/i);
+  const m = t.match(/^\/questao\s+([a-z0-9-]+)$/i) ?? t.match(/^questao\s+([a-z0-9-]+)$/i);
   if (!m) return null;
   return { shortId: m[1].toUpperCase() };
 }
@@ -196,9 +197,9 @@ export function parsePrivateCommand(text: string):
   }
 
   /* Letra + id (ex: c 9, c9, e 12). Opcional: id + letra (ex: 9 c, 12e). */
-  let answerMatch = normalized.match(/^([abcde])\s*([a-z0-9]+)$/i);
+  let answerMatch = normalized.match(/^([abcde])\s*([a-z0-9-]+)$/i);
   if (!answerMatch) {
-    answerMatch = normalized.match(/^([a-z0-9]+)\s*([abcde])$/i);
+    answerMatch = normalized.match(/^([a-z0-9-]+)\s*([abcde])$/i);
     if (answerMatch) {
       return {
         kind: "answer",

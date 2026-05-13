@@ -2,10 +2,10 @@ const { getClient, applyCors, pickTargetGroupJid } = require("./_lib.js");
 const { firstDailySlotUtc } = require("./_schedule.js");
 
 const SELECT_COLUMNS =
-  "id, name, target_group_jid, created_by_jid, delivery_mode, status, questions_per_day, start_hour, start_minute, wait_for_answers, current_day_date, current_day_sent, questions_per_run, interval_days, send_hour, send_minute, timezone, cursor, random_order, last_run_at, next_run_at, created_at";
+  "id, name, target_group_jid, created_by_jid, delivery_mode, status, questions_per_day, start_hour, start_minute, end_hour, end_minute, wait_for_answers, current_day_date, current_day_sent, questions_per_run, interval_days, send_hour, send_minute, timezone, cursor, random_order, last_run_at, next_run_at, created_at";
 
 const SELECT_COLUMNS_NO_DM =
-  "id, name, target_group_jid, created_by_jid, status, questions_per_day, start_hour, start_minute, wait_for_answers, current_day_date, current_day_sent, questions_per_run, interval_days, send_hour, send_minute, timezone, cursor, random_order, last_run_at, next_run_at, created_at";
+  "id, name, target_group_jid, created_by_jid, status, questions_per_day, start_hour, start_minute, end_hour, end_minute, wait_for_answers, current_day_date, current_day_sent, questions_per_run, interval_days, send_hour, send_minute, timezone, cursor, random_order, last_run_at, next_run_at, created_at";
 
 module.exports = async (req, res) => {
   applyCors(res);
@@ -94,7 +94,7 @@ async function handleGet(req, res, supabase) {
       const { data: recs, error: rErr } = await supabase
         .from("caderno_private_recipients")
         .select(
-          "id, caderno_id, user_jid, active, questions_per_day, start_hour, start_minute, wait_for_answers, random_order, timezone, current_day_date, current_day_sent, next_run_at"
+          "id, caderno_id, user_jid, active, questions_per_day, start_hour, start_minute, end_hour, end_minute, wait_for_answers, random_order, timezone, current_day_date, current_day_sent, next_run_at"
         )
         .in("caderno_id", privateIds);
       if (!rErr && recs) {
@@ -108,6 +108,8 @@ async function handleGet(req, res, supabase) {
             questionsPerDay: r.questions_per_day,
             startHour: r.start_hour,
             startMinute: r.start_minute,
+            endHour: r.end_hour,
+            endMinute: r.end_minute,
             waitForAnswers: r.wait_for_answers,
             randomOrder: r.random_order,
             timezone: r.timezone,
@@ -136,6 +138,8 @@ async function handleGet(req, res, supabase) {
         questionsPerDay: c.questions_per_day ?? c.questions_per_run,
         startHour: c.start_hour ?? c.send_hour,
         startMinute: c.start_minute ?? c.send_minute,
+        endHour: c.end_hour != null ? Number(c.end_hour) : 22,
+        endMinute: c.end_minute != null ? Number(c.end_minute) : 0,
         waitForAnswers: Boolean(c.wait_for_answers),
         currentDayDate: c.current_day_date,
         currentDaySent: c.current_day_sent || 0,
@@ -175,6 +179,8 @@ async function replacePrivateRecipients(supabase, cadernoId, list, template) {
   const qd = template.questions_per_day ?? template.questions_per_run ?? 3;
   const sh = template.start_hour ?? template.send_hour ?? 7;
   const sm = template.start_minute ?? template.send_minute ?? 0;
+  const eh = template.end_hour != null ? Number(template.end_hour) : 22;
+  const em = template.end_minute != null ? Number(template.end_minute) : 0;
   const tz = template.timezone || "America/Sao_Paulo";
   const wa = Boolean(template.wait_for_answers);
   const ro = Boolean(template.random_order);
@@ -191,6 +197,8 @@ async function replacePrivateRecipients(supabase, cadernoId, list, template) {
         item.questionsPerDay != null ? clampInt(item.questionsPerDay, 1, 24, qd) : null,
       start_hour: item.startHour != null ? clampInt(item.startHour, 0, 23, sh) : null,
       start_minute: item.startMinute != null ? clampInt(item.startMinute, 0, 59, sm) : null,
+      end_hour: item.endHour != null ? clampInt(item.endHour, 0, 23, eh) : null,
+      end_minute: item.endMinute != null ? clampInt(item.endMinute, 0, 59, em) : null,
       wait_for_answers: item.waitForAnswers != null ? Boolean(item.waitForAnswers) : null,
       random_order: item.randomOrder != null ? Boolean(item.randomOrder) : null,
       timezone: item.timezone != null ? String(item.timezone).trim() || null : null,
@@ -208,7 +216,7 @@ async function reschedulePrivateRecipients(supabase, cadernoId, template) {
   const { data: recs, error } = await supabase
     .from("caderno_private_recipients")
     .select(
-      "id, questions_per_day, start_hour, start_minute, wait_for_answers, random_order, timezone"
+      "id, questions_per_day, start_hour, start_minute, end_hour, end_minute, wait_for_answers, random_order, timezone"
     )
     .eq("caderno_id", cadernoId);
   if (error) return;
@@ -274,6 +282,8 @@ async function handlePatch(req, res, supabase) {
   const existingQuestionsPerDay = existing.questions_per_day ?? existing.questions_per_run ?? 3;
   const existingStartHour = existing.start_hour ?? existing.send_hour ?? 7;
   const existingStartMinute = existing.start_minute ?? existing.send_minute ?? 0;
+  const existingEndHour = existing.end_hour != null ? Number(existing.end_hour) : 22;
+  const existingEndMinute = existing.end_minute != null ? Number(existing.end_minute) : 0;
 
   const update = {};
   if (typeof body.name === "string" && body.name.trim()) update.name = body.name.trim();
@@ -312,6 +322,13 @@ async function handlePatch(req, res, supabase) {
     update.start_minute = m;
   }
 
+  if (body.endHour !== undefined) {
+    update.end_hour = clampInt(body.endHour, 0, 23, existingEndHour);
+  }
+  if (body.endMinute !== undefined) {
+    update.end_minute = clampInt(body.endMinute, 0, 59, existingEndMinute);
+  }
+
   if (typeof body.waitForAnswers === "boolean") {
     update.wait_for_answers = body.waitForAnswers;
   }
@@ -344,6 +361,8 @@ async function handlePatch(req, res, supabase) {
   const scheduleChanged =
     update.start_hour !== undefined ||
     update.start_minute !== undefined ||
+    update.end_hour !== undefined ||
+    update.end_minute !== undefined ||
     update.timezone !== undefined ||
     update.questions_per_day !== undefined;
 

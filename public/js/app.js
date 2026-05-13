@@ -57,6 +57,8 @@
     cadernoPdf: document.getElementById("caderno-pdf"),
     cadernoPerDay: document.getElementById("caderno-per-day"),
     cadernoTime: document.getElementById("caderno-time"),
+    cadernoEndTime: document.getElementById("caderno-end-time"),
+    cadernoAddGroupSchedule: document.getElementById("caderno-add-group-schedule"),
     cadernoAddStatus: document.getElementById("caderno-add-status"),
     cadernoPreviewBox: document.getElementById("caderno-preview-box"),
     cadernoRandom: document.getElementById("caderno-random"),
@@ -75,6 +77,8 @@
     cadernoEditName: document.getElementById("caderno-edit-name"),
     cadernoEditPerDay: document.getElementById("caderno-edit-per-day"),
     cadernoEditTime: document.getElementById("caderno-edit-time"),
+    cadernoEditEndTime: document.getElementById("caderno-edit-end-time"),
+    cadernoEditGroupSchedule: document.getElementById("caderno-edit-group-schedule"),
     cadernoEditRandom: document.getElementById("caderno-edit-random"),
     cadernoEditWait: document.getElementById("caderno-edit-wait"),
     cadernoEditDeliveryGroup: document.getElementById("caderno-edit-delivery-group"),
@@ -839,6 +843,7 @@
   function syncCadernoAddPrivatePanel() {
     const priv = getCadernoAddDeliveryMode() === "private";
     if (els.cadernoPrivateAddPanel) els.cadernoPrivateAddPanel.classList.toggle("hidden", !priv);
+    if (els.cadernoAddGroupSchedule) els.cadernoAddGroupSchedule.classList.toggle("hidden", priv);
   }
 
   function getCadernoEditDeliveryMode() {
@@ -850,6 +855,7 @@
   function syncCadernoEditPrivatePanel() {
     const priv = getCadernoEditDeliveryMode() === "private";
     if (els.cadernoEditPrivatePanel) els.cadernoEditPrivatePanel.classList.toggle("hidden", !priv);
+    if (els.cadernoEditGroupSchedule) els.cadernoEditGroupSchedule.classList.toggle("hidden", priv);
   }
 
   function renderPrivateRecipientEditRow(r) {
@@ -858,20 +864,23 @@
     const qpd =
       r.questionsPerDay != null && Number.isFinite(Number(r.questionsPerDay))
         ? String(r.questionsPerDay)
-        : "";
-    let timeVal = "";
-    if (r.startHour != null && r.startMinute != null) {
-      timeVal = `${pad2(Number(r.startHour))}:${pad2(Number(r.startMinute))}`;
-    }
+        : "5";
+    const sh = r.startHour != null ? Number(r.startHour) : 7;
+    const sm = r.startMinute != null ? Number(r.startMinute) : 0;
+    const timeVal = `${pad2(sh)}:${pad2(sm)}`;
+    const eh = r.endHour != null ? Number(r.endHour) : 22;
+    const em = r.endMinute != null ? Number(r.endMinute) : 0;
+    const timeEndVal = `${pad2(eh)}:${pad2(em)}`;
     const checked = r.active !== false ? "checked" : "";
     return `<li data-jid="${escAttr(jid)}">
       <label class="caderno-priv-label"><input type="checkbox" class="caderno-priv-active" ${checked} /> ${esc(
       label
     )}</label>
-      <input class="caderno-priv-qpd" type="number" min="1" max="24" placeholder="—" value="${escAttr(
-      qpd
-    )}" title="Questões/dia (vazio = herdado)" />
-      <input class="caderno-priv-time" type="time" value="${escAttr(timeVal)}" title="Início (vazio = herdado)" />
+      <input class="caderno-priv-qpd" type="number" min="1" max="24" value="${escAttr(qpd)}" title="Questões/dia" />
+      <input class="caderno-priv-time" type="time" value="${escAttr(timeVal)}" title="Início" />
+      <input class="caderno-priv-end-time" type="time" value="${escAttr(
+        timeEndVal
+      )}" title="Fim (último envio do dia)" />
       <span class="caderno-priv-meta">${esc(jid)}</span>
     </li>`;
   }
@@ -885,6 +894,7 @@
       const active = li.querySelector(".caderno-priv-active")?.checked !== false;
       const qRaw = li.querySelector(".caderno-priv-qpd")?.value?.trim() ?? "";
       const tRaw = li.querySelector(".caderno-priv-time")?.value?.trim() ?? "";
+      const tEndRaw = li.querySelector(".caderno-priv-end-time")?.value?.trim() ?? "";
       let questionsPerDay = null;
       if (qRaw !== "") {
         const n = Number(qRaw);
@@ -901,7 +911,18 @@
           startMinute = m;
         }
       }
-      out.push({ userJid, active, questionsPerDay, startHour, startMinute });
+      let endHour = null;
+      let endMinute = null;
+      if (tEndRaw && tEndRaw.includes(":")) {
+        const [hh, mm] = tEndRaw.split(":");
+        const h = Number(hh);
+        const m = Number(mm);
+        if (Number.isFinite(h) && Number.isFinite(m)) {
+          endHour = h;
+          endMinute = m;
+        }
+      }
+      out.push({ userJid, active, questionsPerDay, startHour, startMinute, endHour, endMinute });
     });
     return out;
   }
@@ -1051,8 +1072,10 @@
           <div class="caderno-card-meta">
             <div><strong>Envio:</strong> ${
               c.deliveryMode === "private"
-                ? `Privado — até ${(c.privateRecipients || []).filter((r) => r.active).length} destinatário(s); base ${perDay} q./dia às ${horario}`
-                : `${perDay} q./dia a partir das ${horario}`
+                ? `Privado — ${(c.privateRecipients || []).filter((r) => r.active).length} destinatário(s); agenda por pessoa (início–fim na edição)`
+                : `${perDay} q./dia entre ${horario} e ${pad2(c.endHour != null ? c.endHour : 22)}:${pad2(
+                    c.endMinute != null ? c.endMinute : 0
+                  )}`
             }</div>
             <div><strong>Progresso:</strong> ${totalLabel}</div>
             ${dayLine}
@@ -1195,6 +1218,9 @@
     const [hh, mm] = String((els.cadernoTime && els.cadernoTime.value) || "07:00").split(":");
     const startHour = Number(hh);
     const startMinute = Number(mm);
+    const [he, me] = String((els.cadernoEndTime && els.cadernoEndTime.value) || "22:00").split(":");
+    const endHour = Number(he);
+    const endMinute = Number(me);
     const randomOrder = Boolean(els.cadernoRandom && els.cadernoRandom.checked);
     const waitForAnswers = Boolean(els.cadernoWait && els.cadernoWait.checked);
     const deliveryMode = getCadernoAddDeliveryMode();
@@ -1213,6 +1239,8 @@
         questionsPerDay: Number.isFinite(questionsPerDay) ? questionsPerDay : 3,
         startHour: Number.isFinite(startHour) ? startHour : 7,
         startMinute: Number.isFinite(startMinute) ? startMinute : 0,
+        endHour: Number.isFinite(endHour) ? endHour : 22,
+        endMinute: Number.isFinite(endMinute) ? endMinute : 0,
         timezone: "America/Sao_Paulo",
         randomOrder,
         waitForAnswers
@@ -1313,12 +1341,39 @@
     els.cadernoAddStatus.textContent = activate ? "Salvando e ativando…" : "Salvando…";
     try {
       const form = getCadernoFormPayload();
+      if (form.deliveryMode !== "private") {
+        const s = form.schedule.startHour * 60 + form.schedule.startMinute;
+        const e = form.schedule.endHour * 60 + form.schedule.endMinute;
+        if (e <= s) {
+          els.cadernoAddStatus.textContent = "Grupo: o horário de fim deve ser depois do início.";
+          return;
+        }
+      }
       if (form.deliveryMode === "private") {
         const hasActive = (form.privateRecipients || []).some((r) => r.active !== false && r.userJid);
         if (!hasActive) {
           els.cadernoAddStatus.textContent =
             "Modo privado: use “Carregar membros do grupo” e marque ao menos um destinatário.";
           return;
+        }
+        for (const r of form.privateRecipients) {
+          if (r.active === false || !r.userJid) continue;
+          if (
+            r.questionsPerDay == null ||
+            r.startHour == null ||
+            r.startMinute == null ||
+            r.endHour == null ||
+            r.endMinute == null
+          ) {
+            els.cadernoAddStatus.textContent =
+              "Privado: preencha Q/dia, início e fim em cada destinatário marcado.";
+            return;
+          }
+          if (r.endHour * 60 + r.endMinute <= r.startHour * 60 + r.startMinute) {
+            els.cadernoAddStatus.textContent =
+              "Privado: o horário de fim deve ser depois do início em cada linha.";
+            return;
+          }
         }
       }
       const result = await callCadernoUpload({ activate });
@@ -1351,6 +1406,9 @@
         : Number(caderno.sendMinute || 0);
     els.cadernoEditPerDay.value = String(perDay);
     els.cadernoEditTime.value = `${pad2(startHour)}:${pad2(startMinute)}`;
+    const endH = caderno.endHour != null ? Number(caderno.endHour) : 22;
+    const endM = caderno.endMinute != null ? Number(caderno.endMinute) : 0;
+    if (els.cadernoEditEndTime) els.cadernoEditEndTime.value = `${pad2(endH)}:${pad2(endM)}`;
     els.cadernoEditRandom.checked = Boolean(caderno.randomOrder);
     if (els.cadernoEditWait) els.cadernoEditWait.checked = Boolean(caderno.waitForAnswers);
     const dm = caderno.deliveryMode === "private" ? "private" : "group";
@@ -1367,6 +1425,8 @@
             questionsPerDay: r.questionsPerDay,
             startHour: r.startHour,
             startMinute: r.startMinute,
+            endHour: r.endHour,
+            endMinute: r.endMinute,
             displayLabel: r.userJid
           })
         )
@@ -1393,10 +1453,6 @@
     }
 
     const name = (els.cadernoEditName.value || "").trim();
-    const questionsPerDay = Number(els.cadernoEditPerDay.value || 3);
-    const [hh, mm] = String(els.cadernoEditTime.value || "07:00").split(":");
-    const startHour = Number(hh);
-    const startMinute = Number(mm);
     const randomOrder = Boolean(els.cadernoEditRandom.checked);
     const waitForAnswers = Boolean(els.cadernoEditWait && els.cadernoEditWait.checked);
     const editDm = getCadernoEditDeliveryMode();
@@ -1408,34 +1464,76 @@
       current.startHour != null ? Number(current.startHour) : Number(current.sendHour);
     const currentStartMinute =
       current.startMinute != null ? Number(current.startMinute) : Number(current.sendMinute);
+    const currentEndHour = current.endHour != null ? Number(current.endHour) : 22;
+    const currentEndMinute = current.endMinute != null ? Number(current.endMinute) : 0;
 
     const payload = { id };
     if (name && name !== current.name) payload.name = name;
-    if (questionsPerDay !== currentPerDay) payload.questionsPerDay = questionsPerDay;
-    if (Number.isFinite(startHour) && startHour !== currentStartHour)
-      payload.startHour = startHour;
-    if (Number.isFinite(startMinute) && startMinute !== currentStartMinute)
-      payload.startMinute = startMinute;
     if (randomOrder !== Boolean(current.randomOrder)) payload.randomOrder = randomOrder;
-    if (waitForAnswers !== Boolean(current.waitForAnswers))
-      payload.waitForAnswers = waitForAnswers;
+    if (waitForAnswers !== Boolean(current.waitForAnswers)) payload.waitForAnswers = waitForAnswers;
 
     if (editDm !== currentDm) payload.deliveryMode = editDm;
-    let includePrivateRecipients = false;
-    if (editDm === "private") {
-      if (editDm !== currentDm) includePrivateRecipients = true;
-      if (els.cadernoEditPrivateList && els.cadernoEditPrivateList.dataset.touched === "1") {
-        includePrivateRecipients = true;
+
+    if (editDm === "group") {
+      const questionsPerDay = Number(els.cadernoEditPerDay.value || 3);
+      const [hh, mm] = String(els.cadernoEditTime.value || "07:00").split(":");
+      const startHour = Number(hh);
+      const startMinute = Number(mm);
+      const [he, me] = String((els.cadernoEditEndTime && els.cadernoEditEndTime.value) || "22:00").split(":");
+      const endHour = Number(he);
+      const endMinute = Number(me);
+      if (questionsPerDay !== currentPerDay) payload.questionsPerDay = questionsPerDay;
+      if (Number.isFinite(startHour) && startHour !== currentStartHour) payload.startHour = startHour;
+      if (Number.isFinite(startMinute) && startMinute !== currentStartMinute) payload.startMinute = startMinute;
+      if (Number.isFinite(endHour) && endHour !== currentEndHour) payload.endHour = endHour;
+      if (Number.isFinite(endMinute) && endMinute !== currentEndMinute) payload.endMinute = endMinute;
+      if (
+        Number.isFinite(startHour) &&
+        Number.isFinite(startMinute) &&
+        Number.isFinite(endHour) &&
+        Number.isFinite(endMinute) &&
+        endHour * 60 + endMinute <= startHour * 60 + startMinute
+      ) {
+        els.cadernoEditStatus.textContent = "Grupo: o horário de fim deve ser depois do início.";
+        return;
       }
-      if (includePrivateRecipients) {
-        const pr = collectEditPrivateRecipients();
-        if (pr.length === 0) {
+    } else {
+      const pr = collectEditPrivateRecipients();
+      if (pr.length === 0) {
+        els.cadernoEditStatus.textContent =
+          "Modo privado: marque ao menos um destinatário (use “Carregar membros do grupo”).";
+        return;
+      }
+      const active = pr.filter((r) => r.active !== false && r.userJid);
+      if (active.length === 0) {
+        els.cadernoEditStatus.textContent = "Modo privado: marque ao menos um destinatário ativo.";
+        return;
+      }
+      for (const r of active) {
+        if (
+          r.questionsPerDay == null ||
+          r.startHour == null ||
+          r.startMinute == null ||
+          r.endHour == null ||
+          r.endMinute == null
+        ) {
           els.cadernoEditStatus.textContent =
-            "Modo privado: marque ao menos um destinatário (use “Carregar membros do grupo”).";
+            "Privado: cada destinatário marcado precisa de Q/dia, início e fim.";
           return;
         }
-        payload.privateRecipients = pr;
+        if (r.endHour * 60 + r.endMinute <= r.startHour * 60 + r.startMinute) {
+          els.cadernoEditStatus.textContent =
+            "Privado: o fim deve ser depois do início em cada destinatário.";
+          return;
+        }
       }
+      const lead = active[0];
+      payload.privateRecipients = pr;
+      if (lead.questionsPerDay !== currentPerDay) payload.questionsPerDay = lead.questionsPerDay;
+      if (lead.startHour !== currentStartHour) payload.startHour = lead.startHour;
+      if (lead.startMinute !== currentStartMinute) payload.startMinute = lead.startMinute;
+      if (lead.endHour !== currentEndHour) payload.endHour = lead.endHour;
+      if (lead.endMinute !== currentEndMinute) payload.endMinute = lead.endMinute;
     }
 
     if (Object.keys(payload).length === 1) {
@@ -1618,12 +1716,12 @@
   }
   if (els.cadernoEditPrivateList) {
     els.cadernoEditPrivateList.addEventListener("change", (ev) => {
-      if (ev.target.closest(".caderno-priv-active, .caderno-priv-qpd, .caderno-priv-time")) {
+      if (ev.target.closest(".caderno-priv-active, .caderno-priv-qpd, .caderno-priv-time, .caderno-priv-end-time")) {
         markCadernoEditPrivateRecipientsTouched();
       }
     });
     els.cadernoEditPrivateList.addEventListener("input", (ev) => {
-      if (ev.target.closest(".caderno-priv-qpd, .caderno-priv-time")) {
+      if (ev.target.closest(".caderno-priv-qpd, .caderno-priv-time, .caderno-priv-end-time")) {
         markCadernoEditPrivateRecipientsTouched();
       }
     });
