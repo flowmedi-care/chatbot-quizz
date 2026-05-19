@@ -204,9 +204,16 @@
             </label>
           </div>
 
-          <p class="report-sub" id="caderno-spread-hint" style="margin-top: -6px;">
-            As questões do dia são distribuídas <strong>uniformemente</strong> entre o início e o fim (ex.: 07:00–22:00).
-          </p>
+          <div id="caderno-send-times-wrap" class="caderno-send-times-wrap">
+            <p class="report-sub" id="caderno-spread-hint" style="margin-top: -6px;">
+              Defina o horário de envio de <strong>cada</strong> questão do dia (ou use o botão para preencher
+              uniformemente entre início e fim).
+            </p>
+            <button type="button" id="btn-caderno-fill-uniform" class="btn-tutorial">
+              Distribuir entre início e fim
+            </button>
+            <div id="caderno-send-times-list" class="caderno-send-times-list" role="group" aria-label="Horários por questão"></div>
+          </div>
 
           <label class="caderno-toggle">
             <input type="checkbox" id="caderno-random" />
@@ -299,10 +306,15 @@
               </label>
             </div>
 
-            <p class="report-sub" id="caderno-edit-spread-hint" style="margin-top: -6px;">
-              As questões do dia são distribuídas <strong>uniformemente</strong> entre o início e o fim (somente envio
-              em <strong>grupo</strong>).
-            </p>
+            <div id="caderno-edit-send-times-wrap" class="caderno-send-times-wrap">
+              <p class="report-sub" id="caderno-edit-spread-hint" style="margin-top: -6px;">
+                Horário de cada questão do dia (envio em <strong>grupo</strong>).
+              </p>
+              <button type="button" id="btn-caderno-edit-fill-uniform" class="btn-tutorial">
+                Distribuir entre início e fim
+              </button>
+              <div id="caderno-edit-send-times-list" class="caderno-send-times-list" role="group" aria-label="Horários por questão"></div>
+            </div>
           </div>
 
           <label class="caderno-toggle">

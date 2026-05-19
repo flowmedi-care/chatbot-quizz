@@ -1,6 +1,8 @@
 import { createClient } from "@supabase/supabase-js";
 import crypto from "node:crypto";
 import { config } from "./config";
+import type { SendTimeSlot } from "./schedule";
+import { parseSendTimesJson } from "./schedule";
 import { AnswerInput, CreateQuestionInput, QuestionType } from "./types";
 
 const supabase = createClient(config.supabaseUrl, config.supabaseServiceRoleKey);
@@ -1023,6 +1025,8 @@ export type CadernoRow = {
   status: "inactive" | "active" | "paused_waiting_decision" | "finished";
   /** Modelo novo: total de questões enviadas por dia, espaçadas na janela início–fim. */
   questionsPerDay: number;
+  /** Horários explícitos por questão do dia; se null, distribui entre início e fim. */
+  sendTimes: SendTimeSlot[] | null;
   startHour: number;
   startMinute: number;
   /** Fim da janela de envio no mesmo dia (fuso do caderno). */
@@ -1071,6 +1075,7 @@ function mapCadernoRow(row: Record<string, unknown>): CadernoRow {
     deliveryMode: (row.delivery_mode === "private" ? "private" : "group") as CadernoRow["deliveryMode"],
     status: String(row.status) as CadernoRow["status"],
     questionsPerDay: Number.isFinite(questionsPerDayRaw) ? questionsPerDayRaw : 3,
+    sendTimes: parseSendTimesJson(row.send_times),
     startHour: Number.isFinite(startHourRaw) ? startHourRaw : 7,
     startMinute: Number.isFinite(startMinuteRaw) ? startMinuteRaw : 0,
     endHour: Number.isFinite(Number(row.end_hour)) ? Number(row.end_hour) : 22,
@@ -1101,7 +1106,7 @@ function formatDateInTimezone(d: Date, timeZone: string): string {
 }
 
 const CADERNO_SELECT_COLUMNS =
-  "id, name, target_group_jid, created_by_jid, delivery_mode, status, questions_per_day, start_hour, start_minute, end_hour, end_minute, wait_for_answers, current_day_date, current_day_sent, questions_per_run, interval_days, send_hour, send_minute, timezone, cursor, random_order, last_run_at, next_run_at";
+  "id, name, target_group_jid, created_by_jid, delivery_mode, status, questions_per_day, send_times, start_hour, start_minute, end_hour, end_minute, wait_for_answers, current_day_date, current_day_sent, questions_per_run, interval_days, send_hour, send_minute, timezone, cursor, random_order, last_run_at, next_run_at";
 
 function mapCadernoQuestionRow(row: Record<string, unknown>): CadernoQuestionRow {
   return {
@@ -1179,6 +1184,7 @@ export type CadernoPrivateRecipientRow = {
   userJid: string;
   active: boolean;
   questionsPerDay: number | null;
+  sendTimes: SendTimeSlot[] | null;
   startHour: number | null;
   startMinute: number | null;
   endHour: number | null;
@@ -1199,6 +1205,7 @@ function mapPrivateRecipientRow(row: Record<string, unknown>): CadernoPrivateRec
     userJid: String(row.user_jid),
     active: Boolean(row.active),
     questionsPerDay: row.questions_per_day != null ? Number(row.questions_per_day) : null,
+    sendTimes: parseSendTimesJson(row.send_times),
     startHour: row.start_hour != null ? Number(row.start_hour) : null,
     startMinute: row.start_minute != null ? Number(row.start_minute) : null,
     endHour: row.end_hour != null ? Number(row.end_hour) : null,
@@ -1219,6 +1226,7 @@ export function effectivePrivateRecipientSchedule(
   r: CadernoPrivateRecipientRow
 ): {
   questionsPerDay: number;
+  sendTimes: SendTimeSlot[] | null;
   startHour: number;
   startMinute: number;
   endHour: number;
@@ -1229,6 +1237,7 @@ export function effectivePrivateRecipientSchedule(
 } {
   return {
     questionsPerDay: r.questionsPerDay ?? caderno.questionsPerDay,
+    sendTimes: r.sendTimes ?? caderno.sendTimes,
     startHour: r.startHour ?? caderno.startHour,
     startMinute: r.startMinute ?? caderno.startMinute,
     endHour: r.endHour ?? caderno.endHour,
@@ -1246,7 +1255,7 @@ export async function listPrivateRecipientsDueForRun(): Promise<
   const { data: recs, error } = await supabase
     .from("caderno_private_recipients")
     .select(
-      "id, caderno_id, user_jid, active, questions_per_day, start_hour, start_minute, end_hour, end_minute, wait_for_answers, random_order, timezone, current_day_date, current_day_sent, last_run_at, next_run_at"
+      "id, caderno_id, user_jid, active, questions_per_day, send_times, start_hour, start_minute, end_hour, end_minute, wait_for_answers, random_order, timezone, current_day_date, current_day_sent, last_run_at, next_run_at"
     )
     .eq("active", true)
     .lte("next_run_at", nowIso);
@@ -1272,7 +1281,7 @@ export async function listPrivateRecipientsByCaderno(
   const { data, error } = await supabase
     .from("caderno_private_recipients")
     .select(
-      "id, caderno_id, user_jid, active, questions_per_day, start_hour, start_minute, end_hour, end_minute, wait_for_answers, random_order, timezone, current_day_date, current_day_sent, last_run_at, next_run_at"
+      "id, caderno_id, user_jid, active, questions_per_day, send_times, start_hour, start_minute, end_hour, end_minute, wait_for_answers, random_order, timezone, current_day_date, current_day_sent, last_run_at, next_run_at"
     )
     .eq("caderno_id", cadernoId)
     .order("user_jid", { ascending: true });
@@ -1291,6 +1300,7 @@ export async function replacePrivateRecipientsForCaderno(
     userJid: string;
     active?: boolean;
     questionsPerDay?: number | null;
+    sendTimes?: SendTimeSlot[] | null;
     startHour?: number | null;
     startMinute?: number | null;
     endHour?: number | null;
@@ -1314,6 +1324,7 @@ export async function replacePrivateRecipientsForCaderno(
     user_jid: r.userJid,
     active: r.active !== false,
     questions_per_day: r.questionsPerDay ?? null,
+    send_times: r.sendTimes != null ? r.sendTimes : null,
     start_hour: r.startHour ?? null,
     start_minute: r.startMinute ?? null,
     end_hour: r.endHour ?? null,

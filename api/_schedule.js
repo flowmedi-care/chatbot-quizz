@@ -109,4 +109,78 @@ function firstDailySlotUtc(from, startHour, startMinute, timeZone) {
   return candidate;
 }
 
-module.exports = { computeNextRunAt, firstDailySlotUtc, getZonedParts, zonedDateToUtc };
+function dateIsoInTimezone(date, timeZone) {
+  const z = getZonedParts(date, timeZone);
+  const mm = z.month < 10 ? `0${z.month}` : String(z.month);
+  const dd = z.day < 10 ? `0${z.day}` : String(z.day);
+  return `${z.year}-${mm}-${dd}`;
+}
+
+function addDaysIso(isoDate, days) {
+  const [y, m, d] = isoDate.split("-").map((s) => Number(s));
+  const dt = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
+  dt.setUTCDate(dt.getUTCDate() + days);
+  const yy = dt.getUTCFullYear();
+  const mm = dt.getUTCMonth() + 1;
+  const dd = dt.getUTCDate();
+  return `${yy}-${mm < 10 ? `0${mm}` : mm}-${dd < 10 ? `0${dd}` : dd}`;
+}
+
+function dailySlotUtc(dayIso, startHour, startMinute, endHour, endMinute, questionsPerDay, index, timeZone) {
+  const [y, m, d] = dayIso.split("-").map((s) => Number(s));
+  const safeN = Math.max(1, questionsPerDay);
+  const safeIndex = Math.min(Math.max(0, index), safeN - 1);
+  const start = zonedDateToUtc(y, m, d, startHour, startMinute, timeZone);
+  const end = zonedDateToUtc(y, m, d, endHour, endMinute, timeZone);
+  let windowMs = end.getTime() - start.getTime();
+  if (windowMs <= 0) {
+    const gapMs = Math.round((24 * 60 * 60 * 1000) / safeN);
+    return new Date(start.getTime() + safeIndex * gapMs);
+  }
+  if (safeN <= 1) return start;
+  const offsetMs = (windowMs * safeIndex) / (safeN - 1);
+  return new Date(start.getTime() + offsetMs);
+}
+
+function resolveDailySlotUtc(dayIso, index, timeZone, schedule) {
+  const N = Math.max(1, schedule.questionsPerDay || 1);
+  const safeIndex = Math.min(Math.max(0, index), N - 1);
+  const times = schedule.sendTimes;
+  if (times && times.length >= N && times[safeIndex]) {
+    const [y, m, d] = dayIso.split("-").map((s) => Number(s));
+    const slot = times[safeIndex];
+    return zonedDateToUtc(y, m, d, slot.hour, slot.minute, timeZone);
+  }
+  return dailySlotUtc(
+    dayIso,
+    schedule.startHour,
+    schedule.startMinute,
+    schedule.endHour,
+    schedule.endMinute,
+    N,
+    safeIndex,
+    timeZone
+  );
+}
+
+function firstSlotFromSchedule(from, timeZone, schedule) {
+  const dayIso = dateIsoInTimezone(from, timeZone);
+  let slot = resolveDailySlotUtc(dayIso, 0, timeZone, schedule);
+  if (slot.getTime() <= from.getTime()) {
+    const nextDay = addDaysIso(dayIso, 1);
+    slot = resolveDailySlotUtc(nextDay, 0, timeZone, schedule);
+  }
+  return slot;
+}
+
+module.exports = {
+  computeNextRunAt,
+  firstDailySlotUtc,
+  firstSlotFromSchedule,
+  resolveDailySlotUtc,
+  dailySlotUtc,
+  dateIsoInTimezone,
+  getZonedParts,
+  zonedDateToUtc
+};
+

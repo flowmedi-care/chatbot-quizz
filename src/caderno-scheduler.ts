@@ -29,9 +29,10 @@ import {
 } from "./supabase";
 import {
   addDaysIso,
-  dailySlotUtc,
+  DailyScheduleSlots,
   dateIsoInTimezone,
-  formatNextRunPretty
+  formatNextRunPretty,
+  resolveDailySlotUtc
 } from "./schedule";
 
 const TICK_INTERVAL_MS = 60 * 1000;
@@ -58,6 +59,7 @@ function syntheticCadernoForPrivateSchedule(
   return {
     ...caderno,
     questionsPerDay: eff.questionsPerDay,
+    sendTimes: eff.sendTimes,
     startHour: eff.startHour,
     startMinute: eff.startMinute,
     endHour: eff.endHour,
@@ -254,22 +256,25 @@ type DayDecision =
   | { kind: "wait_same_day"; nextRunIso: string }
   | { kind: "wait_for_answers"; previousDayIso: string };
 
+function scheduleSlotsFromCaderno(caderno: CadernoRow): DailyScheduleSlots {
+  return {
+    sendTimes: caderno.sendTimes,
+    startHour: caderno.startHour,
+    startMinute: caderno.startMinute,
+    endHour: caderno.endHour,
+    endMinute: caderno.endMinute,
+    questionsPerDay: Math.max(1, caderno.questionsPerDay)
+  };
+}
+
 function decideAction(caderno: CadernoRow, now: Date): DayDecision {
   const tzNow = dateIsoInTimezone(now, caderno.timezone);
   const N = Math.max(1, caderno.questionsPerDay);
+  const slots = scheduleSlotsFromCaderno(caderno);
 
   if (caderno.currentDayDate && caderno.currentDaySent < N) {
     const sent = caderno.currentDaySent;
-    const slot = dailySlotUtc(
-      caderno.currentDayDate,
-      caderno.startHour,
-      caderno.startMinute,
-      caderno.endHour,
-      caderno.endMinute,
-      N,
-      sent,
-      caderno.timezone
-    );
+    const slot = resolveDailySlotUtc(caderno.currentDayDate, sent, caderno.timezone, slots);
     if (slot.getTime() <= now.getTime()) {
       return { kind: "send", dayIso: caderno.currentDayDate, sentBefore: sent };
     }
@@ -291,16 +296,7 @@ function decideAction(caderno: CadernoRow, now: Date): DayDecision {
     return { kind: "wait_for_answers", previousDayIso: caderno.currentDayDate };
   }
 
-  const firstSlot = dailySlotUtc(
-    nextDayIso,
-    caderno.startHour,
-    caderno.startMinute,
-    caderno.endHour,
-    caderno.endMinute,
-    N,
-    0,
-    caderno.timezone
-  );
+  const firstSlot = resolveDailySlotUtc(nextDayIso, 0, caderno.timezone, slots);
 
   if (firstSlot.getTime() > now.getTime()) {
     return { kind: "wait_same_day", nextRunIso: firstSlot.toISOString() };
@@ -309,30 +305,13 @@ function decideAction(caderno: CadernoRow, now: Date): DayDecision {
 }
 
 function computeNextRunForDay(caderno: CadernoRow, dayIso: string, sentNow: number): Date {
-  const N = Math.max(1, caderno.questionsPerDay);
+  const slots = scheduleSlotsFromCaderno(caderno);
+  const N = slots.questionsPerDay;
   if (sentNow < N) {
-    return dailySlotUtc(
-      dayIso,
-      caderno.startHour,
-      caderno.startMinute,
-      caderno.endHour,
-      caderno.endMinute,
-      N,
-      sentNow,
-      caderno.timezone
-    );
+    return resolveDailySlotUtc(dayIso, sentNow, caderno.timezone, slots);
   }
   const nextDay = addDaysIso(dayIso, 1);
-  return dailySlotUtc(
-    nextDay,
-    caderno.startHour,
-    caderno.startMinute,
-    caderno.endHour,
-    caderno.endMinute,
-    N,
-    0,
-    caderno.timezone
-  );
+  return resolveDailySlotUtc(nextDay, 0, caderno.timezone, slots);
 }
 
 async function runCaderno(sock: WASocket, caderno: CadernoRow): Promise<void> {
@@ -362,15 +341,11 @@ async function runCaderno(sock: WASocket, caderno: CadernoRow): Promise<void> {
     let newDayIso = addDaysIso(decision.previousDayIso, 1);
     const tzToday = dateIsoInTimezone(now, caderno.timezone);
     if (tzToday > newDayIso) newDayIso = tzToday;
-    const firstSlot = dailySlotUtc(
+    const firstSlot = resolveDailySlotUtc(
       newDayIso,
-      caderno.startHour,
-      caderno.startMinute,
-      caderno.endHour,
-      caderno.endMinute,
-      Math.max(1, caderno.questionsPerDay),
       0,
-      caderno.timezone
+      caderno.timezone,
+      scheduleSlotsFromCaderno(caderno)
     );
     if (firstSlot.getTime() > now.getTime()) {
       await updateCadernoDayState(caderno.id, {
@@ -473,16 +448,14 @@ async function runPrivateRecipient(
     let newDayIso = addDaysIso(decision.previousDayIso, 1);
     const tzToday = dateIsoInTimezone(now, eff.timezone);
     if (tzToday > newDayIso) newDayIso = tzToday;
-    const firstSlot = dailySlotUtc(
-      newDayIso,
-      eff.startHour,
-      eff.startMinute,
-      eff.endHour,
-      eff.endMinute,
-      Math.max(1, eff.questionsPerDay),
-      0,
-      eff.timezone
-    );
+    const firstSlot = resolveDailySlotUtc(newDayIso, 0, eff.timezone, {
+      sendTimes: eff.sendTimes,
+      startHour: eff.startHour,
+      startMinute: eff.startMinute,
+      endHour: eff.endHour,
+      endMinute: eff.endMinute,
+      questionsPerDay: Math.max(1, eff.questionsPerDay)
+    });
     if (firstSlot.getTime() > now.getTime()) {
       await updatePrivateRecipientDayState(recipient.id, {
         currentDayDate: newDayIso,

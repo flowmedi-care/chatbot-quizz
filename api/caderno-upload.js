@@ -1,7 +1,8 @@
 const pdfParse = require("pdf-parse/lib/pdf-parse.js");
 const { getClient, applyCors, pickTargetGroupJid } = require("./_lib.js");
 const { parseTecConcursosPdf } = require("./_pdf-parser.js");
-const { firstDailySlotUtc } = require("./_schedule.js");
+const { firstSlotFromSchedule } = require("./_schedule.js");
+const { normalizeSendTimesForDay } = require("./_send-times.js");
 
 const MAX_PDF_BYTES = 8 * 1024 * 1024;
 
@@ -65,6 +66,7 @@ module.exports = async (req, res) => {
   const waitForAnswers = Boolean(sched.waitForAnswers);
   const timezone = String(sched.timezone || "America/Sao_Paulo");
   const randomOrder = Boolean(sched.randomOrder);
+  const sendTimes = normalizeSendTimesForDay(sched.sendTimes, questionsPerDay);
 
   // Legados: persistimos espelhando os campos novos para não violar NOT NULL.
   const questionsPerRun = Math.min(20, questionsPerDay);
@@ -91,6 +93,12 @@ module.exports = async (req, res) => {
   }
   if (!pdfBase64) {
     return res.status(400).json({ error: "Envie pdfBase64 (PDF em base64)." });
+  }
+  if (sched.sendTimes != null && !sendTimes) {
+    return res.status(400).json({
+      error:
+        "sendTimes invalido: informe exatamente um horario por questao/dia, em ordem crescente (ex.: [{\"hour\":7,\"minute\":0},...])."
+    });
   }
 
   let pdfBuffer;
@@ -164,9 +172,17 @@ module.exports = async (req, res) => {
 
   const nowDate = new Date();
   const status = activate ? "active" : "inactive";
+  const groupSchedule = {
+    sendTimes,
+    startHour,
+    startMinute,
+    endHour,
+    endMinute,
+    questionsPerDay
+  };
   const nextRunAt =
     activate && deliveryMode === "group"
-      ? firstDailySlotUtc(nowDate, startHour, startMinute, timezone).toISOString()
+      ? firstSlotFromSchedule(nowDate, timezone, groupSchedule).toISOString()
       : null;
 
   const { data: cadernoRow, error: cadernoErr } = await supabase
@@ -182,6 +198,7 @@ module.exports = async (req, res) => {
       start_minute: startMinute,
       end_hour: endHour,
       end_minute: endMinute,
+      send_times: sendTimes,
       wait_for_answers: waitForAnswers,
       current_day_date: null,
       current_day_sent: 0,
@@ -232,23 +249,42 @@ module.exports = async (req, res) => {
       privateRecipientsNorm.length > 0
         ? privateRecipientsNorm
         : [{ userJid: effectiveCreatedBy, active: true }];
-    const prRows = insertItems.map((item) => {
+    let prRows;
+    try {
+      prRows = insertItems.map((item) => {
       const userJid = String(item.userJid).trim();
+      const qpdUse =
+        item.questionsPerDay != null ? clampInt(item.questionsPerDay, 1, 24, questionsPerDay) : questionsPerDay;
       const shUse = item.startHour != null ? clampInt(item.startHour, 0, 23, startHour) : startHour;
       const smUse = item.startMinute != null ? clampInt(item.startMinute, 0, 59, startMinute) : startMinute;
-      const recNext = activate
-        ? firstDailySlotUtc(nowDate, shUse, smUse, timezone).toISOString()
-        : null;
+      const ehUse = item.endHour != null ? clampInt(item.endHour, 0, 23, endHour) : endHour;
+      const emUse = item.endMinute != null ? clampInt(item.endMinute, 0, 59, endMinute) : endMinute;
+      const recSendTimes =
+        item.sendTimes != null
+          ? normalizeSendTimesForDay(item.sendTimes, qpdUse)
+          : sendTimes;
+      if (item.sendTimes != null && !recSendTimes) {
+        throw new Error(`Horarios invalidos para destinatario ${userJid}`);
+      }
+      const recSchedule = {
+        sendTimes: recSendTimes,
+        startHour: shUse,
+        startMinute: smUse,
+        endHour: ehUse,
+        endMinute: emUse,
+        questionsPerDay: qpdUse
+      };
+      const recNext = activate ? firstSlotFromSchedule(nowDate, timezone, recSchedule).toISOString() : null;
       return {
         caderno_id: cadernoId,
         user_jid: userJid,
         active: item.active !== false,
-        questions_per_day:
-          item.questionsPerDay != null ? clampInt(item.questionsPerDay, 1, 24, questionsPerDay) : null,
-        start_hour: item.startHour != null ? clampInt(item.startHour, 0, 23, startHour) : null,
-        start_minute: item.startMinute != null ? clampInt(item.startMinute, 0, 59, startMinute) : null,
-        end_hour: item.endHour != null ? clampInt(item.endHour, 0, 23, endHour) : null,
-        end_minute: item.endMinute != null ? clampInt(item.endMinute, 0, 59, endMinute) : null,
+        questions_per_day: item.questionsPerDay != null ? qpdUse : null,
+        send_times: recSendTimes,
+        start_hour: item.startHour != null ? shUse : null,
+        start_minute: item.startMinute != null ? smUse : null,
+        end_hour: item.endHour != null ? ehUse : null,
+        end_minute: item.endMinute != null ? emUse : null,
         wait_for_answers: null,
         random_order: null,
         timezone: null,
@@ -256,7 +292,12 @@ module.exports = async (req, res) => {
         current_day_sent: 0,
         next_run_at: recNext
       };
-    });
+      });
+    } catch (e) {
+      await supabase.from("cadernos").delete().eq("id", cadernoId);
+      await supabase.from("caderno_questions").delete().eq("caderno_id", cadernoId);
+      return res.status(400).json({ error: e.message || "Horarios invalidos no modo privado." });
+    }
     const { error: prErr } = await supabase.from("caderno_private_recipients").insert(prRows);
     if (prErr) {
       await supabase.from("cadernos").delete().eq("id", cadernoId);

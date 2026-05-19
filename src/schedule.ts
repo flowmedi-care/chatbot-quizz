@@ -106,12 +106,106 @@ export function addDaysIso(isoDate: string, days: number): string {
   return `${yy}-${mm < 10 ? `0${mm}` : mm}-${dd < 10 ? `0${dd}` : dd}`;
 }
 
+export type SendTimeSlot = { hour: number; minute: number };
+
+export type DailyScheduleSlots = {
+  sendTimes: SendTimeSlot[] | null;
+  startHour: number;
+  startMinute: number;
+  endHour: number;
+  endMinute: number;
+  questionsPerDay: number;
+};
+
+/** Parseia `send_times` do Supabase (jsonb ou string). */
+export function parseSendTimesJson(raw: unknown): SendTimeSlot[] | null {
+  if (raw == null) return null;
+  let arr: unknown = raw;
+  if (typeof raw === "string") {
+    try {
+      arr = JSON.parse(raw);
+    } catch {
+      return null;
+    }
+  }
+  if (!Array.isArray(arr)) return null;
+  const out: SendTimeSlot[] = [];
+  for (const item of arr) {
+    if (item == null || typeof item !== "object") continue;
+    const rec = item as Record<string, unknown>;
+    const hour = Number(rec.hour);
+    const minute = Number(rec.minute ?? 0);
+    if (!Number.isFinite(hour) || hour < 0 || hour > 23) continue;
+    if (!Number.isFinite(minute) || minute < 0 || minute > 59) continue;
+    out.push({ hour, minute });
+  }
+  return out.length ? out : null;
+}
+
+/** Valida array com exatamente `questionsPerDay` horários em ordem não decrescente. */
+export function normalizeSendTimesForDay(
+  raw: unknown,
+  questionsPerDay: number
+): SendTimeSlot[] | null {
+  const parsed = parseSendTimesJson(raw);
+  const n = Math.max(1, Math.min(24, questionsPerDay));
+  if (!parsed || parsed.length !== n) return null;
+  let prev = -1;
+  for (const slot of parsed) {
+    const mins = slot.hour * 60 + slot.minute;
+    if (mins < prev) return null;
+    prev = mins;
+  }
+  return parsed;
+}
+
+/**
+ * Instante UTC do slot `index` (0..N-1) no dia `dayIso` (YYYY-MM-DD no fuso `timeZone`).
+ * Usa `sendTimes` quando definido com N itens; senão distribui uniformemente entre início e fim.
+ */
+export function resolveDailySlotUtc(
+  dayIso: string,
+  index: number,
+  timeZone: string,
+  schedule: DailyScheduleSlots
+): Date {
+  const N = Math.max(1, schedule.questionsPerDay);
+  const safeIndex = Math.min(Math.max(0, index), N - 1);
+  const times = schedule.sendTimes;
+  if (times && times.length >= N && times[safeIndex]) {
+    const [y, m, d] = dayIso.split("-").map((s) => Number(s));
+    const slot = times[safeIndex];
+    return zonedDateToUtc(y, m, d, slot.hour, slot.minute, timeZone);
+  }
+  return dailySlotUtc(
+    dayIso,
+    schedule.startHour,
+    schedule.startMinute,
+    schedule.endHour,
+    schedule.endMinute,
+    N,
+    safeIndex,
+    timeZone
+  );
+}
+
+/** Próximo slot 0 do dia (ou amanhã) conforme agenda. */
+export function firstSlotFromSchedule(from: Date, timeZone: string, schedule: DailyScheduleSlots): Date {
+  const dayIso = dateIsoInTimezone(from, timeZone);
+  let slot = resolveDailySlotUtc(dayIso, 0, timeZone, schedule);
+  if (slot.getTime() <= from.getTime()) {
+    const nextDay = addDaysIso(dayIso, 1);
+    slot = resolveDailySlotUtc(nextDay, 0, timeZone, schedule);
+  }
+  return slot;
+}
+
 /**
  * Instante UTC do slot `index` (0..N-1) no dia `dayIso` (YYYY-MM-DD no fuso `timeZone`).
  * Distribui as N questões **uniformemente entre início e fim** (inclusive), no mesmo dia local.
  * Se fim <= início, cai no comportamento antigo: espaçamento 24h/N a partir do início.
  *
- * Ex.: N=5, 07:00–22:00 ⇒ 5 pontos ao longo de 15h (primeira às 07:00, última às 22:00).
+ * Ex.: N=2, 07:00–22:00 ⇒ 07:00 e 22:00. N=5 ⇒ 5 pontos ao longo de 15h.
  */
 export function dailySlotUtc(
   dayIso: string,

@@ -533,11 +533,20 @@ async function buildCadernoProgressMessage(cadernoId: number): Promise<string> {
       ? `Resolvidas pelos engajados: ${resolvedByEngaged}/${publishedCount} (${pct}%)`
       : `Resolvidas pelos engajados: — (nenhum engajado cadastrado, rode /sync-membros e marque no site)`;
 
+  const scheduleLine =
+    caderno.sendTimes && caderno.sendTimes.length >= caderno.questionsPerDay
+      ? `Horários: ${caderno.sendTimes
+          .slice(0, caderno.questionsPerDay)
+          .map((t) => `${pad2(t.hour)}:${pad2(t.minute)}`)
+          .join(", ")} (${caderno.questionsPerDay}/dia)`
+      : `Horários: ${pad2(caderno.startHour)}:${pad2(caderno.startMinute)}–${pad2(caderno.endHour)}:${pad2(caderno.endMinute)} (${caderno.questionsPerDay}/dia, uniforme)`;
+
   const lines = [
     `Progresso do Caderno #${caderno.id} — "${caderno.name}"`,
     "",
     `Status: ${caderno.status}`,
     `Modo: ${caderno.randomOrder ? "ordem aleatória (entre todas as pendentes)" : "ordem do PDF"}`,
+    scheduleLine,
     "",
     `Total no caderno: ${totalQuestions}`,
     `Enviadas: ${publishedCount}/${totalQuestions}`,

@@ -58,6 +58,8 @@
     cadernoPerDay: document.getElementById("caderno-per-day"),
     cadernoTime: document.getElementById("caderno-time"),
     cadernoEndTime: document.getElementById("caderno-end-time"),
+    cadernoSendTimesList: document.getElementById("caderno-send-times-list"),
+    btnCadernoFillUniform: document.getElementById("btn-caderno-fill-uniform"),
     cadernoAddGroupSchedule: document.getElementById("caderno-add-group-schedule"),
     cadernoAddStatus: document.getElementById("caderno-add-status"),
     cadernoPreviewBox: document.getElementById("caderno-preview-box"),
@@ -78,6 +80,8 @@
     cadernoEditPerDay: document.getElementById("caderno-edit-per-day"),
     cadernoEditTime: document.getElementById("caderno-edit-time"),
     cadernoEditEndTime: document.getElementById("caderno-edit-end-time"),
+    cadernoEditSendTimesList: document.getElementById("caderno-edit-send-times-list"),
+    btnCadernoEditFillUniform: document.getElementById("btn-caderno-edit-fill-uniform"),
     cadernoEditGroupSchedule: document.getElementById("caderno-edit-group-schedule"),
     cadernoEditRandom: document.getElementById("caderno-edit-random"),
     cadernoEditWait: document.getElementById("caderno-edit-wait"),
@@ -837,6 +841,125 @@
     return n < 10 ? `0${n}` : String(n);
   }
 
+  function parseTimeInputValue(raw, fallbackH, fallbackM) {
+    const t = String(raw || "").trim();
+    if (!t.includes(":")) return { hour: fallbackH, minute: fallbackM };
+    const [hh, mm] = t.split(":");
+    const hour = Number(hh);
+    const minute = Number(mm);
+    if (!Number.isFinite(hour) || !Number.isFinite(minute)) return { hour: fallbackH, minute: fallbackM };
+    return { hour, minute };
+  }
+
+  /** Espelha o backend: N pontos uniformes entre início e fim (inclusive). */
+  function computeUniformSendTimes(n, startHour, startMinute, endHour, endMinute) {
+    const safeN = Math.max(1, Math.min(24, Number(n) || 1));
+    const start = startHour * 60 + startMinute;
+    let end = endHour * 60 + endMinute;
+    if (end <= start) {
+      const gap = Math.round((24 * 60) / safeN);
+      const out = [];
+      for (let i = 0; i < safeN; i++) {
+        const mins = (start + i * gap) % (24 * 60);
+        out.push({ hour: Math.floor(mins / 60), minute: mins % 60 });
+      }
+      return out;
+    }
+    if (safeN <= 1) return [{ hour: startHour, minute: startMinute }];
+    const out = [];
+    for (let i = 0; i < safeN; i++) {
+      const mins = Math.round(start + ((end - start) * i) / (safeN - 1));
+      out.push({ hour: Math.floor(mins / 60), minute: mins % 60 });
+    }
+    return out;
+  }
+
+  function formatSendTimesForDisplay(times) {
+    if (!times || !times.length) return "";
+    return times.map((t) => `${pad2(t.hour)}:${pad2(t.minute)}`).join(", ");
+  }
+
+  function renderSendTimesList(container, count, times, labelPrefix) {
+    if (!container) return;
+    const n = Math.max(1, Math.min(24, Number(count) || 1));
+    const existing = Array.isArray(times) ? times : [];
+    const labels = [];
+    for (let i = 0; i < n; i++) {
+      const slot = existing[i] || { hour: 7, minute: 0 };
+      const val = `${pad2(slot.hour)}:${pad2(slot.minute)}`;
+      labels.push(
+        `<label><span>${labelPrefix || "Questão"} ${i + 1}</span><input type="time" class="caderno-slot-time" value="${escAttr(
+          val
+        )}" /></label>`
+      );
+    }
+    container.innerHTML = labels.join("");
+  }
+
+  function collectSendTimesFromList(container) {
+    if (!container) return [];
+    const out = [];
+    container.querySelectorAll(".caderno-slot-time").forEach((inp) => {
+      const raw = inp.value?.trim() ?? "";
+      const { hour, minute } = parseTimeInputValue(raw, 0, 0);
+      out.push({ hour, minute });
+    });
+    return out;
+  }
+
+  function validateSendTimesAscending(times) {
+    if (!times || !times.length) return "Informe pelo menos um horário.";
+    let prev = -1;
+    for (let i = 0; i < times.length; i++) {
+      const mins = times[i].hour * 60 + times[i].minute;
+      if (mins < prev) {
+        return `Horário da questão ${i + 1} deve ser igual ou depois da questão ${i}.`;
+      }
+      prev = mins;
+    }
+    return null;
+  }
+
+  function readGroupWindowFromEls(startEl, endEl) {
+    const start = parseTimeInputValue(startEl?.value, 7, 0);
+    const end = parseTimeInputValue(endEl?.value, 22, 0);
+    return { ...start, endHour: end.hour, endMinute: end.minute };
+  }
+
+  function syncCadernoAddSendTimes(preserve) {
+    const n = Number(els.cadernoPerDay?.value || 3);
+    const w = readGroupWindowFromEls(els.cadernoTime, els.cadernoEndTime);
+    let times = preserve ? collectSendTimesFromList(els.cadernoSendTimesList) : null;
+    if (!times || times.length !== n) {
+      times = computeUniformSendTimes(n, w.hour, w.minute, w.endHour, w.endMinute);
+    }
+    renderSendTimesList(els.cadernoSendTimesList, n, times, "Questão");
+  }
+
+  function syncCadernoEditSendTimes(preserve) {
+    const n = Number(els.cadernoEditPerDay?.value || 3);
+    const w = readGroupWindowFromEls(els.cadernoEditTime, els.cadernoEditEndTime);
+    let times = preserve ? collectSendTimesFromList(els.cadernoEditSendTimesList) : null;
+    if (!times || times.length !== n) {
+      times = computeUniformSendTimes(n, w.hour, w.minute, w.endHour, w.endMinute);
+    }
+    renderSendTimesList(els.cadernoEditSendTimesList, n, times, "Questão");
+  }
+
+  function syncPrivateRowSendTimes(li, preserve) {
+    if (!li) return;
+    const box = li.querySelector(".caderno-priv-send-times");
+    if (!box) return;
+    const n = Math.max(1, Math.min(24, Number(li.querySelector(".caderno-priv-qpd")?.value || 5)));
+    const start = parseTimeInputValue(li.querySelector(".caderno-priv-time")?.value, 7, 0);
+    const end = parseTimeInputValue(li.querySelector(".caderno-priv-end-time")?.value, 22, 0);
+    let times = preserve ? collectSendTimesFromList(box) : null;
+    if (!times || times.length !== n) {
+      times = computeUniformSendTimes(n, start.hour, start.minute, end.hour, end.minute);
+    }
+    renderSendTimesList(box, n, times, "Q");
+  }
+
   function getCadernoAddDeliveryMode() {
     return els.cadernoDeliveryPrivate && els.cadernoDeliveryPrivate.checked ? "private" : "group";
   }
@@ -872,16 +995,31 @@
     const eh = r.endHour != null ? Number(r.endHour) : 22;
     const em = r.endMinute != null ? Number(r.endMinute) : 0;
     const timeEndVal = `${pad2(eh)}:${pad2(em)}`;
+    const qpdN = Math.max(1, Math.min(24, Number(qpd) || 5));
+    const sendTimes =
+      r.sendTimes && r.sendTimes.length >= qpdN
+        ? r.sendTimes
+        : computeUniformSendTimes(qpdN, sh, sm, eh, em);
+    const slotsHtml = sendTimes
+      .slice(0, qpdN)
+      .map((slot, i) => {
+        const val = `${pad2(slot.hour)}:${pad2(slot.minute)}`;
+        return `<label><span>Q${i + 1}</span><input type="time" class="caderno-slot-time" value="${escAttr(
+          val
+        )}" /></label>`;
+      })
+      .join("");
     const checked = r.active !== false ? "checked" : "";
     return `<li data-jid="${escAttr(jid)}">
       <label class="caderno-priv-label"><input type="checkbox" class="caderno-priv-active" ${checked} /> ${esc(
       label
     )}</label>
       <input class="caderno-priv-qpd" type="number" min="1" max="24" value="${escAttr(qpd)}" title="Questões/dia" />
-      <input class="caderno-priv-time" type="time" value="${escAttr(timeVal)}" title="Início" />
+      <input class="caderno-priv-time" type="time" value="${escAttr(timeVal)}" title="Início (preencher uniforme)" />
       <input class="caderno-priv-end-time" type="time" value="${escAttr(
         timeEndVal
-      )}" title="Fim (último envio do dia)" />
+      )}" title="Fim (preencher uniforme)" />
+      <div class="caderno-priv-send-times" role="group" aria-label="Horários por questão">${slotsHtml}</div>
       <span class="caderno-priv-meta">${esc(jid)}</span>
     </li>`;
   }
@@ -923,7 +1061,17 @@
           endMinute = m;
         }
       }
-      out.push({ userJid, active, questionsPerDay, startHour, startMinute, endHour, endMinute });
+      const sendTimes = collectSendTimesFromList(li.querySelector(".caderno-priv-send-times"));
+      out.push({
+        userJid,
+        active,
+        questionsPerDay,
+        sendTimes,
+        startHour,
+        startMinute,
+        endHour,
+        endMinute
+      });
     });
     return out;
   }
@@ -1049,6 +1197,10 @@
         const startMinute = c.startMinute != null ? c.startMinute : c.sendMinute;
         const horario = `${pad2(startHour)}:${pad2(startMinute)}`;
         const perDay = c.questionsPerDay != null ? c.questionsPerDay : c.questionsPerRun;
+        const timesLabel =
+          c.sendTimes && c.sendTimes.length >= perDay
+            ? formatSendTimesForDisplay(c.sendTimes.slice(0, perDay))
+            : null;
         const isActive = c.status === "active";
         const canResume = c.status !== "active" && c.status !== "finished";
         const canRecycle =
@@ -1073,10 +1225,12 @@
           <div class="caderno-card-meta">
             <div><strong>Envio:</strong> ${
               c.deliveryMode === "private"
-                ? `Privado — ${(c.privateRecipients || []).filter((r) => r.active).length} destinatário(s); agenda por pessoa (início–fim na edição)`
-                : `${perDay} q./dia entre ${horario} e ${pad2(c.endHour != null ? c.endHour : 22)}:${pad2(
-                    c.endMinute != null ? c.endMinute : 0
-                  )}`
+                ? `Privado — ${(c.privateRecipients || []).filter((r) => r.active).length} destinatário(s); horário por pessoa na edição`
+                : timesLabel
+                  ? `${perDay} q./dia às ${timesLabel}`
+                  : `${perDay} q./dia entre ${horario} e ${pad2(c.endHour != null ? c.endHour : 22)}:${pad2(
+                      c.endMinute != null ? c.endMinute : 0
+                    )} (uniforme)`
             }</div>
             <div><strong>Progresso:</strong> ${totalLabel}</div>
             ${dayLine}
@@ -1225,6 +1379,8 @@
     const randomOrder = Boolean(els.cadernoRandom && els.cadernoRandom.checked);
     const waitForAnswers = Boolean(els.cadernoWait && els.cadernoWait.checked);
     const deliveryMode = getCadernoAddDeliveryMode();
+    const sendTimes =
+      deliveryMode === "group" ? collectSendTimesFromList(els.cadernoSendTimesList) : null;
     const privateRecipients = deliveryMode === "private" ? collectAddPrivateRecipients() : [];
     const createdByJid =
       deliveryMode === "private"
@@ -1238,6 +1394,7 @@
       privateRecipients,
       schedule: {
         questionsPerDay: Number.isFinite(questionsPerDay) ? questionsPerDay : 3,
+        sendTimes,
         startHour: Number.isFinite(startHour) ? startHour : 7,
         startMinute: Number.isFinite(startMinute) ? startMinute : 0,
         endHour: Number.isFinite(endHour) ? endHour : 22,
@@ -1343,10 +1500,11 @@
     try {
       const form = getCadernoFormPayload();
       if (form.deliveryMode !== "private") {
-        const s = form.schedule.startHour * 60 + form.schedule.startMinute;
-        const e = form.schedule.endHour * 60 + form.schedule.endMinute;
-        if (e <= s) {
-          els.cadernoAddStatus.textContent = "Grupo: o horário de fim deve ser depois do início.";
+        const qpd = form.schedule.questionsPerDay;
+        const timesErr = validateSendTimesAscending(form.schedule.sendTimes);
+        if (timesErr || !form.schedule.sendTimes || form.schedule.sendTimes.length !== qpd) {
+          els.cadernoAddStatus.textContent =
+            timesErr || `Grupo: informe ${qpd} horário(s), um por questão do dia.`;
           return;
         }
       }
@@ -1359,20 +1517,14 @@
         }
         for (const r of form.privateRecipients) {
           if (r.active === false || !r.userJid) continue;
-          if (
-            r.questionsPerDay == null ||
-            r.startHour == null ||
-            r.startMinute == null ||
-            r.endHour == null ||
-            r.endMinute == null
-          ) {
+          if (r.questionsPerDay == null || !r.sendTimes || r.sendTimes.length !== r.questionsPerDay) {
             els.cadernoAddStatus.textContent =
-              "Privado: preencha Q/dia, início e fim em cada destinatário marcado.";
+              "Privado: preencha Q/dia e um horário por questão em cada destinatário marcado.";
             return;
           }
-          if (r.endHour * 60 + r.endMinute <= r.startHour * 60 + r.startMinute) {
-            els.cadernoAddStatus.textContent =
-              "Privado: o horário de fim deve ser depois do início em cada linha.";
+          const privTimesErr = validateSendTimesAscending(r.sendTimes);
+          if (privTimesErr) {
+            els.cadernoAddStatus.textContent = `Privado (${r.userJid}): ${privTimesErr}`;
             return;
           }
         }
@@ -1410,6 +1562,11 @@
     const endH = caderno.endHour != null ? Number(caderno.endHour) : 22;
     const endM = caderno.endMinute != null ? Number(caderno.endMinute) : 0;
     if (els.cadernoEditEndTime) els.cadernoEditEndTime.value = `${pad2(endH)}:${pad2(endM)}`;
+    const editTimes =
+      caderno.sendTimes && caderno.sendTimes.length >= perDay
+        ? caderno.sendTimes.slice(0, perDay)
+        : computeUniformSendTimes(perDay, startHour, startMinute, endH, endM);
+    renderSendTimesList(els.cadernoEditSendTimesList, perDay, editTimes, "Questão");
     els.cadernoEditRandom.checked = Boolean(caderno.randomOrder);
     if (els.cadernoEditWait) els.cadernoEditWait.checked = Boolean(caderno.waitForAnswers);
     const dm = caderno.deliveryMode === "private" ? "private" : "group";
@@ -1428,6 +1585,7 @@
             startMinute: r.startMinute,
             endHour: r.endHour,
             endMinute: r.endMinute,
+            sendTimes: r.sendTimes,
             displayLabel: r.userJid
           })
         )
@@ -1483,21 +1641,23 @@
       const [he, me] = String((els.cadernoEditEndTime && els.cadernoEditEndTime.value) || "22:00").split(":");
       const endHour = Number(he);
       const endMinute = Number(me);
+      const sendTimes = collectSendTimesFromList(els.cadernoEditSendTimesList);
+      const timesErr = validateSendTimesAscending(sendTimes);
+      if (timesErr || sendTimes.length !== questionsPerDay) {
+        els.cadernoEditStatus.textContent =
+          timesErr || `Grupo: informe ${questionsPerDay} horário(s), um por questão.`;
+        return;
+      }
       if (questionsPerDay !== currentPerDay) payload.questionsPerDay = questionsPerDay;
       if (Number.isFinite(startHour) && startHour !== currentStartHour) payload.startHour = startHour;
       if (Number.isFinite(startMinute) && startMinute !== currentStartMinute) payload.startMinute = startMinute;
       if (Number.isFinite(endHour) && endHour !== currentEndHour) payload.endHour = endHour;
       if (Number.isFinite(endMinute) && endMinute !== currentEndMinute) payload.endMinute = endMinute;
-      if (
-        Number.isFinite(startHour) &&
-        Number.isFinite(startMinute) &&
-        Number.isFinite(endHour) &&
-        Number.isFinite(endMinute) &&
-        endHour * 60 + endMinute <= startHour * 60 + startMinute
-      ) {
-        els.cadernoEditStatus.textContent = "Grupo: o horário de fim deve ser depois do início.";
-        return;
-      }
+      const currentTimes = current.sendTimes || [];
+      const timesChanged =
+        sendTimes.length !== currentTimes.length ||
+        sendTimes.some((t, i) => t.hour !== currentTimes[i]?.hour || t.minute !== currentTimes[i]?.minute);
+      if (timesChanged) payload.sendTimes = sendTimes;
     } else {
       const pr = collectEditPrivateRecipients();
       if (pr.length === 0) {
@@ -1511,20 +1671,14 @@
         return;
       }
       for (const r of active) {
-        if (
-          r.questionsPerDay == null ||
-          r.startHour == null ||
-          r.startMinute == null ||
-          r.endHour == null ||
-          r.endMinute == null
-        ) {
+        if (r.questionsPerDay == null || !r.sendTimes || r.sendTimes.length !== r.questionsPerDay) {
           els.cadernoEditStatus.textContent =
-            "Privado: cada destinatário marcado precisa de Q/dia, início e fim.";
+            "Privado: cada destinatário marcado precisa de Q/dia e horário por questão.";
           return;
         }
-        if (r.endHour * 60 + r.endMinute <= r.startHour * 60 + r.startMinute) {
-          els.cadernoEditStatus.textContent =
-            "Privado: o fim deve ser depois do início em cada destinatário.";
+        const privTimesErr = validateSendTimesAscending(r.sendTimes);
+        if (privTimesErr) {
+          els.cadernoEditStatus.textContent = `Privado (${r.userJid}): ${privTimesErr}`;
           return;
         }
       }
@@ -1565,6 +1719,8 @@
     if (els.cadernoPdf) els.cadernoPdf.value = "";
     if (els.cadernoPerDay) els.cadernoPerDay.value = "3";
     if (els.cadernoTime) els.cadernoTime.value = "07:00";
+    if (els.cadernoEndTime) els.cadernoEndTime.value = "22:00";
+    syncCadernoAddSendTimes(false);
     if (els.cadernoRandom) els.cadernoRandom.checked = false;
     if (els.cadernoWait) els.cadernoWait.checked = false;
     if (els.cadernoDeliveryGroup) els.cadernoDeliveryGroup.checked = true;
@@ -1709,6 +1865,27 @@
   if (els.btnCadernoAddLoadMembers) {
     els.btnCadernoAddLoadMembers.addEventListener("click", () => onCadernoAddLoadMembers());
   }
+  if (els.cadernoPerDay) {
+    els.cadernoPerDay.addEventListener("change", () => syncCadernoAddSendTimes(true));
+  }
+  if (els.btnCadernoFillUniform) {
+    els.btnCadernoFillUniform.addEventListener("click", () => syncCadernoAddSendTimes(false));
+  }
+  if (els.cadernoEditPerDay) {
+    els.cadernoEditPerDay.addEventListener("change", () => syncCadernoEditSendTimes(true));
+  }
+  if (els.btnCadernoEditFillUniform) {
+    els.btnCadernoEditFillUniform.addEventListener("click", () => syncCadernoEditSendTimes(false));
+  }
+  if (els.cadernoAddPrivateList) {
+    els.cadernoAddPrivateList.addEventListener("input", (ev) => {
+      const li = ev.target.closest("li[data-jid]");
+      if (!li) return;
+      if (ev.target.closest(".caderno-priv-qpd, .caderno-priv-time, .caderno-priv-end-time")) {
+        syncPrivateRowSendTimes(li, false);
+      }
+    });
+  }
 
   if (els.cadernoEditDeliveryGroup) els.cadernoEditDeliveryGroup.addEventListener("change", onCadernoEditDeliveryChange);
   if (els.cadernoEditDeliveryPrivate) els.cadernoEditDeliveryPrivate.addEventListener("change", onCadernoEditDeliveryChange);
@@ -1722,8 +1899,10 @@
       }
     });
     els.cadernoEditPrivateList.addEventListener("input", (ev) => {
+      const li = ev.target.closest("li[data-jid]");
       if (ev.target.closest(".caderno-priv-qpd, .caderno-priv-time, .caderno-priv-end-time")) {
         markCadernoEditPrivateRecipientsTouched();
+        if (li) syncPrivateRowSendTimes(li, false);
       }
     });
   }

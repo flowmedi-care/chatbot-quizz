@@ -1136,6 +1136,47 @@ table.tutorial-table code {
   overflow-y: auto;
 }
 
+.caderno-send-times-wrap {
+  margin: 0.35rem 0 0.75rem;
+}
+
+.caderno-send-times-wrap .btn-tutorial {
+  margin-top: 0.35rem;
+}
+
+.caderno-send-times-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(8.5rem, 1fr));
+  gap: 0.45rem;
+  margin-top: 0.55rem;
+}
+
+.caderno-send-times-list label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.8rem;
+}
+
+.caderno-send-times-list input[type="time"] {
+  width: 100%;
+}
+
+.caderno-priv-send-times {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(7.5rem, 1fr));
+  gap: 0.35rem;
+  margin-top: 0.25rem;
+}
+
+.caderno-priv-send-times label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  font-size: 0.75rem;
+}
+
 .caderno-private-list li {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto auto auto;

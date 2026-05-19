@@ -1,11 +1,12 @@
 const { getClient, applyCors, pickTargetGroupJid } = require("./_lib.js");
-const { firstDailySlotUtc } = require("./_schedule.js");
+const { firstSlotFromSchedule } = require("./_schedule.js");
+const { normalizeSendTimesForDay, parseSendTimes } = require("./_send-times.js");
 
 const SELECT_COLUMNS =
-  "id, name, target_group_jid, created_by_jid, delivery_mode, status, questions_per_day, start_hour, start_minute, end_hour, end_minute, wait_for_answers, current_day_date, current_day_sent, questions_per_run, interval_days, send_hour, send_minute, timezone, cursor, random_order, last_run_at, next_run_at, created_at";
+  "id, name, target_group_jid, created_by_jid, delivery_mode, status, questions_per_day, send_times, start_hour, start_minute, end_hour, end_minute, wait_for_answers, current_day_date, current_day_sent, questions_per_run, interval_days, send_hour, send_minute, timezone, cursor, random_order, last_run_at, next_run_at, created_at";
 
 const SELECT_COLUMNS_NO_DM =
-  "id, name, target_group_jid, created_by_jid, status, questions_per_day, start_hour, start_minute, end_hour, end_minute, wait_for_answers, current_day_date, current_day_sent, questions_per_run, interval_days, send_hour, send_minute, timezone, cursor, random_order, last_run_at, next_run_at, created_at";
+  "id, name, target_group_jid, created_by_jid, status, questions_per_day, send_times, start_hour, start_minute, end_hour, end_minute, wait_for_answers, current_day_date, current_day_sent, questions_per_run, interval_days, send_hour, send_minute, timezone, cursor, random_order, last_run_at, next_run_at, created_at";
 
 module.exports = async (req, res) => {
   applyCors(res);
@@ -94,7 +95,7 @@ async function handleGet(req, res, supabase) {
       const { data: recs, error: rErr } = await supabase
         .from("caderno_private_recipients")
         .select(
-          "id, caderno_id, user_jid, active, questions_per_day, start_hour, start_minute, end_hour, end_minute, wait_for_answers, random_order, timezone, current_day_date, current_day_sent, next_run_at"
+          "id, caderno_id, user_jid, active, questions_per_day, send_times, start_hour, start_minute, end_hour, end_minute, wait_for_answers, random_order, timezone, current_day_date, current_day_sent, next_run_at"
         )
         .in("caderno_id", privateIds);
       if (!rErr && recs) {
@@ -106,6 +107,7 @@ async function handleGet(req, res, supabase) {
             userJid: r.user_jid,
             active: Boolean(r.active),
             questionsPerDay: r.questions_per_day,
+            sendTimes: parseSendTimes(r.send_times),
             startHour: r.start_hour,
             startMinute: r.start_minute,
             endHour: r.end_hour,
@@ -136,6 +138,7 @@ async function handleGet(req, res, supabase) {
         deliveryMode: dm,
         status: c.status,
         questionsPerDay: c.questions_per_day ?? c.questions_per_run,
+        sendTimes: parseSendTimes(c.send_times),
         startHour: c.start_hour ?? c.send_hour,
         startMinute: c.start_minute ?? c.send_minute,
         endHour: c.end_hour != null ? Number(c.end_hour) : 22,
@@ -189,12 +192,23 @@ async function replacePrivateRecipients(supabase, cadernoId, list, template) {
   for (const item of list) {
     const userJid = item.userJid != null ? String(item.userJid).trim() : "";
     if (!userJid) continue;
+    const qpdItem =
+      item.questionsPerDay != null ? clampInt(item.questionsPerDay, 1, 24, qd) : null;
+    const sendTimesItem =
+      item.sendTimes != null && qpdItem != null
+        ? normalizeSendTimesForDay(item.sendTimes, qpdItem)
+        : item.sendTimes != null
+          ? normalizeSendTimesForDay(item.sendTimes, qd)
+          : null;
+    if (item.sendTimes != null && !sendTimesItem) {
+      throw new Error(`Horarios invalidos para ${userJid}`);
+    }
     rows.push({
       caderno_id: cadernoId,
       user_jid: userJid,
       active: item.active !== false,
-      questions_per_day:
-        item.questionsPerDay != null ? clampInt(item.questionsPerDay, 1, 24, qd) : null,
+      questions_per_day: qpdItem,
+      send_times: sendTimesItem,
       start_hour: item.startHour != null ? clampInt(item.startHour, 0, 23, sh) : null,
       start_minute: item.startMinute != null ? clampInt(item.startMinute, 0, 59, sm) : null,
       end_hour: item.endHour != null ? clampInt(item.endHour, 0, 23, eh) : null,
@@ -216,7 +230,7 @@ async function reschedulePrivateRecipients(supabase, cadernoId, template) {
   const { data: recs, error } = await supabase
     .from("caderno_private_recipients")
     .select(
-      "id, questions_per_day, start_hour, start_minute, end_hour, end_minute, wait_for_answers, random_order, timezone"
+      "id, questions_per_day, send_times, start_hour, start_minute, end_hour, end_minute, wait_for_answers, random_order, timezone"
     )
     .eq("caderno_id", cadernoId);
   if (error) return;
@@ -231,8 +245,18 @@ async function reschedulePrivateRecipients(supabase, cadernoId, template) {
     const qpd = r.questions_per_day ?? qd0;
     const sh = r.start_hour ?? sh0;
     const sm = r.start_minute ?? sm0;
+    const eh = r.end_hour != null ? Number(r.end_hour) : template.end_hour != null ? Number(template.end_hour) : 22;
+    const em = r.end_minute != null ? Number(r.end_minute) : template.end_minute != null ? Number(template.end_minute) : 0;
     const tz = r.timezone || tz0;
-    const next = firstDailySlotUtc(now, sh, sm, tz).toISOString();
+    const recSendTimes = parseSendTimes(r.send_times) || parseSendTimes(template.send_times);
+    const next = firstSlotFromSchedule(now, tz, {
+      sendTimes: recSendTimes,
+      startHour: sh,
+      startMinute: sm,
+      endHour: eh,
+      endMinute: em,
+      questionsPerDay: qpd
+    }).toISOString();
     await supabase
       .from("caderno_private_recipients")
       .update({
@@ -329,6 +353,26 @@ async function handlePatch(req, res, supabase) {
     update.end_minute = clampInt(body.endMinute, 0, 59, existingEndMinute);
   }
 
+  const mergedQpdForTimes =
+    update.questions_per_day !== undefined ? update.questions_per_day : existingQuestionsPerDay;
+  if (body.sendTimes !== undefined) {
+    if (body.sendTimes === null) {
+      update.send_times = null;
+    } else {
+      const normalized = normalizeSendTimesForDay(body.sendTimes, mergedQpdForTimes);
+      if (!normalized) {
+        return res.status(400).json({
+          error:
+            "sendTimes invalido: um horario por questao/dia, em ordem crescente (ex.: [{\"hour\":7,\"minute\":0}])."
+        });
+      }
+      update.send_times = normalized;
+    }
+  } else if (update.questions_per_day !== undefined && existing.send_times) {
+    const adjusted = normalizeSendTimesForDay(existing.send_times, mergedQpdForTimes);
+    update.send_times = adjusted;
+  }
+
   if (typeof body.waitForAnswers === "boolean") {
     update.wait_for_answers = body.waitForAnswers;
   }
@@ -364,7 +408,8 @@ async function handlePatch(req, res, supabase) {
     update.end_hour !== undefined ||
     update.end_minute !== undefined ||
     update.timezone !== undefined ||
-    update.questions_per_day !== undefined;
+    update.questions_per_day !== undefined ||
+    update.send_times !== undefined;
 
   if (newDm === "private" && (update.delivery_mode === "private" || existingDm !== "private")) {
     update.next_run_at = null;
@@ -374,12 +419,17 @@ async function handlePatch(req, res, supabase) {
     if (previousStatus !== "active" || body.recomputeNextRun === true || scheduleChanged) {
       update.current_day_date = null;
       update.current_day_sent = 0;
-      update.next_run_at = firstDailySlotUtc(
-        new Date(),
-        newStartHour,
-        newStartMinute,
-        newTimezone
-      ).toISOString();
+      const newEndHour = merged.end_hour != null ? Number(merged.end_hour) : 22;
+      const newEndMinute = merged.end_minute != null ? Number(merged.end_minute) : 0;
+      const newQpd = merged.questions_per_day ?? merged.questions_per_run ?? 3;
+      update.next_run_at = firstSlotFromSchedule(new Date(), newTimezone, {
+        sendTimes: parseSendTimes(merged.send_times),
+        startHour: newStartHour,
+        startMinute: newStartMinute,
+        endHour: newEndHour,
+        endMinute: newEndMinute,
+        questionsPerDay: newQpd
+      }).toISOString();
     }
   } else if (newStatus === "inactive" || newStatus === "finished") {
     update.next_run_at = null;
