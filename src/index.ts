@@ -537,7 +537,7 @@ async function buildCadernoProgressMessage(cadernoId: number): Promise<string> {
     `Progresso do Caderno #${caderno.id} — "${caderno.name}"`,
     "",
     `Status: ${caderno.status}`,
-    `Modo: ${caderno.randomOrder ? "ordem aleatória" : "ordem do PDF"}`,
+    `Modo: ${caderno.randomOrder ? "ordem aleatória (entre todas as pendentes)" : "ordem do PDF"}`,
     "",
     `Total no caderno: ${totalQuestions}`,
     `Enviadas: ${publishedCount}/${totalQuestions}`,

@@ -1400,7 +1400,8 @@ export async function listNextPrivateCadernoQuestionsToSend(
     return rows.slice(0, limit);
   }
 
-  const bufferSize = Math.min(200, Math.max(limit * 10, limit + 5));
+  const unsentCount = Math.max(0, (await countCadernoQuestions(cadernoId)) - sentSet.size);
+  const bufferSize = Math.min(500, Math.max(unsentCount, limit));
   const { data, error } = await supabase
     .from("caderno_questions")
     .select(selectCols)
@@ -1410,11 +1411,9 @@ export async function listNextPrivateCadernoQuestionsToSend(
 
   if (error) throw new Error(`Erro ao listar questoes do caderno (privado): ${error.message}`);
 
-  const rows = (data ?? []).map(mapCadernoQuestionRow).filter((q) => !sentSet.has(q.id));
-  for (let i = rows.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [rows[i], rows[j]] = [rows[j], rows[i]];
-  }
+  const rows = shuffleCadernoQuestionRows(
+    (data ?? []).map(mapCadernoQuestionRow).filter((q) => !sentSet.has(q.id))
+  );
   return rows.slice(0, limit);
 }
 
@@ -1580,10 +1579,17 @@ export async function maybePausePrivateCadernoWhenExhausted(
  * (ainda não foi publicada). Em modo aleatório embaralha o lote; senão segue por
  * `position` crescente.
  *
- * Para random, lemos um buffer maior (`limit * 10`, capado em 200) e sorteamos
- * `limit` localmente. Isso evita ORDER BY random() no Postgres (caro em tabelas
- * grandes) sem precisar de função RPC.
+ * Para random, embaralhamos todas as pendentes (até 500) em memória e tiramos `limit`.
+ * Antes o buffer era `limit * 10` (ex.: só 10 questões com limit=1), o que parecia ordem do PDF.
  */
+function shuffleCadernoQuestionRows(rows: CadernoQuestionRow[]): CadernoQuestionRow[] {
+  for (let i = rows.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [rows[i], rows[j]] = [rows[j], rows[i]];
+  }
+  return rows;
+}
+
 export async function listNextCadernoQuestionsToSend(
   cadernoId: number,
   limit: number,
@@ -1605,7 +1611,8 @@ export async function listNextCadernoQuestionsToSend(
     return (data ?? []).map(mapCadernoQuestionRow);
   }
 
-  const bufferSize = Math.min(200, Math.max(limit * 10, limit + 5));
+  const pendingCount = await countUnpublishedCadernoQuestions(cadernoId);
+  const bufferSize = Math.min(500, Math.max(pendingCount, limit));
   const { data, error } = await supabase
     .from("caderno_questions")
     .select(selectCols)
@@ -1616,11 +1623,7 @@ export async function listNextCadernoQuestionsToSend(
 
   if (error) throw new Error(`Erro ao listar questoes do caderno: ${error.message}`);
 
-  const rows = (data ?? []).map(mapCadernoQuestionRow);
-  for (let i = rows.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [rows[i], rows[j]] = [rows[j], rows[i]];
-  }
+  const rows = shuffleCadernoQuestionRows((data ?? []).map(mapCadernoQuestionRow));
   return rows.slice(0, limit);
 }
 
