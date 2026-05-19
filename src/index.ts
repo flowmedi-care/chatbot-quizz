@@ -923,7 +923,7 @@ async function startBot(): Promise<void> {
               const openIds = await listUnansweredShortIdsForUser(sender, gj, 30);
               if (openIds.length === 0) {
                 await sock.sendMessage(remoteJid, {
-                  text: "Voce nao tem questoes em aberto neste grupo (ou ja respondeu a todas)."
+                  text: "Voce nao tem questoes em aberto de outros participantes (ou ja respondeu a todas). Suas proprias questoes nao entram na lista."
                 });
                 continue;
               }

@@ -2197,13 +2197,18 @@ export async function listUnansweredShortIdsForUser(
   }
 
   const answeredIds = new Set((answered ?? []).map((r) => r.question_id as number));
+  const userKey = jidComparableKeyShared(userJid);
   const out: string[] = [];
   for (const q of questions ?? []) {
     if (!q.short_id) continue;
     const sid = String(q.short_id).toUpperCase();
     if (isPrivateCadernoShortId(sid)) continue;
     const qid = q.id as number;
-    if (isOrphanCadernoGroupQuestion(qid, String(q.creator_jid ?? ""), publishedCadernoIds)) {
+    const creatorJid = String(q.creator_jid ?? "");
+    if (creatorJid && jidComparableKeyShared(creatorJid) === userKey) {
+      continue;
+    }
+    if (isOrphanCadernoGroupQuestion(qid, creatorJid, publishedCadernoIds)) {
       continue;
     }
     if (answeredIds.has(qid)) continue;
