@@ -6,9 +6,48 @@ import { AnswerInput, CreateQuestionInput, QuestionType } from "./types";
 const supabase = createClient(config.supabaseUrl, config.supabaseServiceRoleKey);
 const ASSETS_BUCKET = "question-assets";
 
-/** ID curto exibido nas mensagens = id numerico da linha no Supabase (legivel, ex. 12, 348). */
+/** ID curto exibido nas mensagens do grupo = sequência 1, 2, 3… por target_group_jid. */
 function toShortId(id: number | string): string {
   return String(id).trim();
+}
+
+export function isPrivateQuizTargetJid(jid: string): boolean {
+  const t = jid.trim().toLowerCase();
+  return t.endsWith("@s.whatsapp.net") || t.endsWith("@lid");
+}
+
+export function isPrivateCadernoShortId(shortId: string): boolean {
+  return /^\d+-\d+(-[A-Z0-9]+)?$/i.test(shortId.trim());
+}
+
+export function isGroupQuizTargetJid(jid: string): boolean {
+  if (isPrivateQuizTargetJid(jid)) return false;
+  return jid.trim().toLowerCase().endsWith("@g.us");
+}
+
+export function isBotCreatorJid(creatorJid: string): boolean {
+  return creatorJid.trim().toLowerCase().startsWith("caderno:");
+}
+
+/** Próximo # sequencial para questões publicadas no grupo (não usa id da linha). */
+export async function nextGroupQuestionShortId(groupJid: string): Promise<string> {
+  const { data, error } = await supabase
+    .from("questions")
+    .select("short_id")
+    .eq("target_group_jid", groupJid);
+
+  if (error) {
+    throw new Error(`Erro ao calcular proximo numero da questao: ${error.message}`);
+  }
+
+  let max = 0;
+  for (const row of data ?? []) {
+    const s = String(row.short_id ?? "").trim();
+    if (/^\d+$/.test(s)) {
+      max = Math.max(max, parseInt(s, 10));
+    }
+  }
+  return String(max + 1);
 }
 
 async function ensureBucket(): Promise<void> {
@@ -84,7 +123,9 @@ export async function createQuestion(input: CreateQuestionInput): Promise<{ shor
     throw new Error(`Erro ao criar questao: ${error?.message ?? "sem dados"}`);
   }
 
-  const shortId = toShortId(data.id);
+  const shortId = isGroupQuizTargetJid(input.targetGroupJid)
+    ? await nextGroupQuestionShortId(input.targetGroupJid)
+    : toShortId(data.id);
 
   const { error: updateError } = await supabase
     .from("questions")
@@ -304,6 +345,8 @@ export type QuestionResult = {
   shortId: string;
   answerKey: string;
   questionType: QuestionType;
+  statementText: string | null;
+  statementHasMedia: boolean;
   explanationText: string | null;
   explanationMediaUrl: string | null;
   explanationMediaMimeType: string | null;
@@ -347,7 +390,7 @@ export async function getQuestionResult(shortId: string): Promise<QuestionResult
   const { data: question, error: questionError } = await supabase
     .from("questions")
     .select(
-      "id, short_id, question_type, answer_key, explanation_text, explanation_media_url, explanation_media_mime_type"
+      "id, short_id, question_type, answer_key, statement_text, statement_media_url, explanation_text, explanation_media_url, explanation_media_mime_type"
     )
     .eq("short_id", normalizedId)
     .maybeSingle();
@@ -388,10 +431,15 @@ export async function getQuestionResult(shortId: string): Promise<QuestionResult
     }
   }
 
+  const statementRaw = question.statement_text ? String(question.statement_text).trim() : "";
+  const statementText = statementRaw.length > 0 ? statementRaw : null;
+
   return {
     shortId: normalizedId,
     answerKey: String(question.answer_key).toUpperCase(),
     questionType: question.question_type as QuestionType,
+    statementText,
+    statementHasMedia: Boolean(question.statement_media_url),
     explanationText: question.explanation_text,
     explanationMediaUrl: question.explanation_media_url,
     explanationMediaMimeType: question.explanation_media_mime_type,
@@ -440,18 +488,161 @@ export type RankingEntry = {
   correctCount: number;
 };
 
-export async function getRankingForGroup(groupJid: string): Promise<RankingEntry[]> {
+export type QaStatsParticipant = {
+  userLabel: string;
+  userJid: string;
+  createdCount: number;
+  answeredCount: number;
+};
+
+export type QaStats = {
+  participants: QaStatsParticipant[];
+  botCreatedCount: number;
+  totals: {
+    questionsCreated: number;
+    answersRecorded: number;
+  };
+};
+
+export async function getQaStatsForGroup(groupJid: string): Promise<QaStats> {
   const { data: byTarget, error: errTarget } = await supabase
     .from("questions")
-    .select("id, answer_key")
+    .select("id, short_id, creator_jid, creator_name, target_group_jid, created_at")
     .eq("target_group_jid", groupJid);
 
   if (errTarget) {
     throw new Error(`Erro ao buscar questoes do grupo: ${errTarget.message}`);
   }
 
-  let byLegacy: { id: number; answer_key: string }[] | null = null;
-  const legacyRes = await supabase.from("questions").select("id, answer_key").eq("group_jid", groupJid);
+  let byLegacy: {
+    id: number;
+    short_id: string | null;
+    creator_jid: string;
+    creator_name: string;
+    target_group_jid: string;
+    created_at: string;
+  }[] = [];
+  const legacyRes = await supabase
+    .from("questions")
+    .select("id, short_id, creator_jid, creator_name, target_group_jid, created_at")
+    .eq("group_jid", groupJid);
+  if (!legacyRes.error && legacyRes.data) {
+    byLegacy = legacyRes.data as typeof byLegacy;
+  }
+
+  const questionMap = new Map<number, (typeof byTarget)[0]>();
+  for (const q of [...(byTarget ?? []), ...byLegacy]) {
+    questionMap.set(q.id, q);
+  }
+
+  const questions = [...questionMap.values()].filter((q) => {
+    const target = String(q.target_group_jid || groupJid);
+    if (isPrivateQuizTargetJid(target)) return false;
+    if (isPrivateCadernoShortId(String(q.short_id ?? ""))) return false;
+    return isGroupQuizTargetJid(target);
+  });
+
+  const questionIds = questions.map((q) => q.id);
+  if (questionIds.length === 0) {
+    return {
+      participants: [],
+      botCreatedCount: 0,
+      totals: { questionsCreated: 0, answersRecorded: 0 }
+    };
+  }
+
+  const { data: answers, error: aErr } = await supabase
+    .from("answers")
+    .select("question_id, user_jid, user_name")
+    .in("question_id", questionIds);
+
+  if (aErr) {
+    throw new Error(`Erro ao buscar respostas para Q&A: ${aErr.message}`);
+  }
+
+  let botCreatedCount = 0;
+  const byUser = new Map<string, QaStatsParticipant>();
+
+  function touch(jid: string, label: string): QaStatsParticipant {
+    const key = jid || label;
+    let row = byUser.get(key);
+    if (!row) {
+      row = { userJid: jid || key, userLabel: label, createdCount: 0, answeredCount: 0 };
+      byUser.set(key, row);
+    }
+    return row;
+  }
+
+  for (const q of questions) {
+    if (isBotCreatorJid(String(q.creator_jid ?? ""))) {
+      botCreatedCount += 1;
+      continue;
+    }
+    const label =
+      (q.creator_name && String(q.creator_name).trim()) || String(q.creator_jid ?? "Autor");
+    touch(String(q.creator_jid ?? label), label).createdCount += 1;
+  }
+
+  for (const row of answers ?? []) {
+    const label = (row.user_name && String(row.user_name).trim()) || String(row.user_jid);
+    touch(String(row.user_jid), label).answeredCount += 1;
+  }
+
+  const participants = [...byUser.values()].sort((a, b) => {
+    if (b.answeredCount !== a.answeredCount) return b.answeredCount - a.answeredCount;
+    if (b.createdCount !== a.createdCount) return b.createdCount - a.createdCount;
+    return a.userLabel.localeCompare(b.userLabel, "pt-BR");
+  });
+
+  return {
+    participants,
+    botCreatedCount,
+    totals: {
+      questionsCreated: questions.length,
+      answersRecorded: (answers ?? []).length
+    }
+  };
+}
+
+export function formatQaStatsMessage(stats: QaStats): string {
+  const { participants, botCreatedCount, totals } = stats;
+  const lines: string[] = [
+    "Q&A do grupo",
+    "",
+    `Total de questoes (grupo): ${totals.questionsCreated}`,
+    `Total de respostas registradas: ${totals.answersRecorded}`,
+    `Questoes enviadas pelo bot (cadernos): ${botCreatedCount}`,
+    ""
+  ];
+
+  if (participants.length === 0) {
+    lines.push("Nenhum participante com criacao ou resposta no grupo ainda.");
+    return lines.join("\n");
+  }
+
+  lines.push("Por participante (criadas | respondidas):");
+  for (const p of participants) {
+    lines.push(`- ${p.userLabel}: ${p.createdCount} | ${p.answeredCount}`);
+  }
+  return lines.join("\n");
+}
+
+export async function getRankingForGroup(groupJid: string): Promise<RankingEntry[]> {
+  const { data: byTarget, error: errTarget } = await supabase
+    .from("questions")
+    .select("id, answer_key, short_id, target_group_jid")
+    .eq("target_group_jid", groupJid);
+
+  if (errTarget) {
+    throw new Error(`Erro ao buscar questoes do grupo: ${errTarget.message}`);
+  }
+
+  let byLegacy: { id: number; answer_key: string; short_id: string | null; target_group_jid: string }[] | null =
+    null;
+  const legacyRes = await supabase
+    .from("questions")
+    .select("id, answer_key, short_id, target_group_jid")
+    .eq("group_jid", groupJid);
   if (legacyRes.error) {
     const msg = legacyRes.error.message.toLowerCase();
     if (!msg.includes("column") && !msg.includes("schema cache")) {
@@ -463,6 +654,10 @@ export async function getRankingForGroup(groupJid: string): Promise<RankingEntry
 
   const answerKeyByQuestionId = new Map<number, string>();
   for (const q of [...(byTarget ?? []), ...(byLegacy ?? [])]) {
+    const target = String(q.target_group_jid || groupJid);
+    if (isPrivateQuizTargetJid(target)) continue;
+    if (isPrivateCadernoShortId(String(q.short_id ?? ""))) continue;
+    if (!isGroupQuizTargetJid(target)) continue;
     answerKeyByQuestionId.set(q.id, String(q.answer_key).toUpperCase());
   }
 
@@ -1643,7 +1838,7 @@ export async function createQuestionFromCaderno(
     shortId =
       activeCount > 1 ? `${n}-${caderno.id}-${tag}` : `${n}-${caderno.id}`;
   } else {
-    shortId = String(dbId);
+    shortId = await nextGroupQuestionShortId(caderno.targetGroupJid);
   }
   shortId = shortId.toUpperCase();
 
@@ -1871,8 +2066,10 @@ export async function listUnansweredShortIdsForUser(
   const out: string[] = [];
   for (const q of questions ?? []) {
     if (!q.short_id) continue;
+    const sid = String(q.short_id).toUpperCase();
+    if (isPrivateCadernoShortId(sid)) continue;
     if (answeredIds.has(q.id as number)) continue;
-    out.push(String(q.short_id).toUpperCase());
+    out.push(sid);
     if (out.length >= limit) break;
   }
   return out;

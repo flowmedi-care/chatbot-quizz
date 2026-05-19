@@ -1,7 +1,7 @@
 (function () {
   const API = {
     questions: "/api/questions",
-    ranking: "/api/ranking",
+    qaStats: "/api/qa-stats",
     reportData: "/api/report-data",
     detail: (id) => `/api/question-detail?shortId=${encodeURIComponent(id)}`,
     submit: "/api/question-submit",
@@ -12,10 +12,10 @@
   };
 
   const els = {
-    rankingPodium: document.getElementById("ranking-podium"),
-    rankingTable: document.getElementById("ranking-table-body"),
-    rankingTableWrap: document.getElementById("ranking-table-wrap"),
-    rankingWarning: document.getElementById("ranking-warning"),
+    qaStatsTotals: document.getElementById("qa-stats-totals"),
+    qaStatsTable: document.getElementById("qa-stats-table-body"),
+    qaStatsTableWrap: document.getElementById("qa-stats-table-wrap"),
+    qaStatsWarning: document.getElementById("qa-stats-warning"),
     questionsGrid: document.getElementById("questions-grid"),
     loadErr: document.getElementById("load-error"),
     modal: document.getElementById("modal-overlay"),
@@ -144,52 +144,53 @@
     return `${t.slice(0, max)}…`;
   }
 
-  function renderRanking(data) {
+  function renderQaStats(data) {
     if (data.warning) {
-      els.rankingWarning.textContent = data.warning;
-      els.rankingWarning.classList.remove("hidden");
+      els.qaStatsWarning.textContent = data.warning;
+      els.qaStatsWarning.classList.remove("hidden");
     } else {
-      els.rankingWarning.textContent = "";
-      els.rankingWarning.classList.add("hidden");
+      els.qaStatsWarning.textContent = "";
+      els.qaStatsWarning.classList.add("hidden");
     }
 
-    const entries = data.entries || [];
-    if (!entries.length) {
-      els.rankingPodium.innerHTML =
-        '<p class="loading">Ninguém no ranking ainda ou sem dados de grupo.</p>';
-      els.rankingTable.innerHTML = "";
-      if (els.rankingTableWrap) els.rankingTableWrap.style.display = "none";
+    const totals = data.totals || { questionsCreated: 0, answersRecorded: 0 };
+    const botCount = data.botCreatedCount ?? 0;
+    if (els.qaStatsTotals) {
+      els.qaStatsTotals.innerHTML = `
+        <div class="qa-total-card">
+          <span class="qa-total-num">${totals.questionsCreated}</span>
+          <span class="qa-total-label">questões no grupo</span>
+        </div>
+        <div class="qa-total-card">
+          <span class="qa-total-num">${totals.answersRecorded}</span>
+          <span class="qa-total-label">respostas registradas</span>
+        </div>
+        <div class="qa-total-card qa-total-bot">
+          <span class="qa-total-num">${botCount}</span>
+          <span class="qa-total-label">do bot (cadernos)</span>
+        </div>`;
+    }
+
+    const participants = data.participants || [];
+    if (!participants.length) {
+      if (els.qaStatsTable) {
+        els.qaStatsTable.innerHTML =
+          '<tr><td colspan="3" class="loading">Nenhum participante com criação ou resposta ainda.</td></tr>';
+      }
       return;
     }
 
-    const top = entries.slice(0, 3);
-    els.rankingPodium.innerHTML = top
+    els.qaStatsTable.innerHTML = participants
       .map(
-        (e, i) => `
-      <div class="rank-card rank-${i + 1}">
-        <div class="place">${i + 1}º</div>
-        <div class="name">${esc(e.userLabel)}</div>
-        <div class="score">${e.correctCount} acerto(s)</div>
-      </div>`
+        (p) => `
+        <tr>
+          <td>${esc(p.userLabel)}</td>
+          <td>${p.createdCount}</td>
+          <td>${p.answeredCount}</td>
+        </tr>`
       )
       .join("");
-
-    const rest = entries.slice(3);
-    els.rankingTable.innerHTML = rest.length
-      ? rest
-          .map(
-            (e, i) => `
-        <tr>
-          <td>${i + 4}º</td>
-          <td>${esc(e.userLabel)}</td>
-          <td>${e.correctCount}</td>
-        </tr>`
-          )
-          .join("")
-      : "";
-    if (els.rankingTableWrap) {
-      els.rankingTableWrap.style.display = rest.length ? "" : "none";
-    }
+    if (els.qaStatsTableWrap) els.qaStatsTableWrap.style.display = "";
   }
 
   function renderQuestions(list) {
@@ -1604,13 +1605,13 @@
 
   async function init() {
     try {
-      const [rankRes, qRes, repOrErr] = await Promise.all([
-        fetchJson(API.ranking),
+      const [qaRes, qRes, repOrErr] = await Promise.all([
+        fetchJson(API.qaStats),
         fetchJson(API.questions),
         fetchJson(API.reportData).catch(() => null)
       ]);
 
-      renderRanking(rankRes);
+      renderQaStats(qaRes);
       reportData =
         repOrErr && Array.isArray(repOrErr.questions) && repOrErr.questions.length > 0 ? repOrErr : null;
 

@@ -311,6 +311,42 @@ button.btn-tutorial {
   border-color: rgba(194, 65, 12, 0.28);
 }
 
+.qa-stats-totals {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 1rem;
+  margin-bottom: 1.25rem;
+}
+
+.qa-total-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1rem 1.1rem;
+  text-align: center;
+  box-shadow: 0 4px 14px rgba(61, 48, 36, 0.06);
+}
+
+.qa-total-card.qa-total-bot {
+  border-color: rgba(194, 65, 12, 0.28);
+  background: linear-gradient(180deg, rgba(255, 237, 213, 0.5), var(--bg-card));
+}
+
+.qa-total-num {
+  display: block;
+  font-size: 2rem;
+  font-weight: 800;
+  color: var(--accent);
+  line-height: 1.1;
+}
+
+.qa-total-label {
+  display: block;
+  margin-top: 0.35rem;
+  font-size: 0.88rem;
+  color: var(--muted);
+}
+
 .table-wrap {
   overflow-x: auto;
 }

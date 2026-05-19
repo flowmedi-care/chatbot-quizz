@@ -23,6 +23,7 @@ import {
   parseGabaritoCommand,
   parseOmissasCommand,
   parseProgressoCommand,
+  parseQaCommand,
   parseRepeatQuestionCommand,
   parseRespondentsCommand,
   parseSlashSessionCommand,
@@ -33,11 +34,11 @@ import { buildQuizFullGuide, buildPrivateInvalidFallback } from "./help-text";
 import { config } from "./config";
 import {
   createQuestion,
-  formatRankingMessage,
+  formatQaStatsMessage,
   getCadernoById,
   getCadernoProgress,
   getQuestionResult,
-  getRankingForGroup,
+  getQaStatsForGroup,
   getQuestionForRepeat,
   getEngagedUserJidsForGroup,
   getQuestionCreatorAndGroup,
@@ -356,6 +357,12 @@ async function publishQuestionToGroup(
   });
 }
 
+function truncateForWhatsApp(text: string, max = 700): string {
+  const t = text.trim();
+  if (t.length <= max) return t;
+  return `${t.slice(0, max)}…`;
+}
+
 function buildResultMessage(result: Awaited<ReturnType<typeof getQuestionResult>>): string {
   const keys = buildDistributionKeys(result.questionType);
   const distributionLines = keys.map((key) => `${key} - ${result.distribution[key] ?? 0}`);
@@ -371,9 +378,20 @@ function buildResultMessage(result: Awaited<ReturnType<typeof getQuestionResult>
     explanationBlock = "(veja a midia abaixo)";
   }
 
+  const statementBlock: string[] = [];
+  if (result.statementText) {
+    statementBlock.push("Enunciado:", truncateForWhatsApp(result.statementText), "");
+  } else if (result.statementHasMedia) {
+    statementBlock.push(
+      `Enunciado: (midia — repita com /questao ${result.shortId})`,
+      ""
+    );
+  }
+
   return [
     `Resultado da Questao #${result.shortId}`,
     "",
+    ...statementBlock,
     `Gabarito: ${result.answerKey}`,
     "",
     "Distribuicao:",
@@ -795,7 +813,7 @@ async function startBot(): Promise<void> {
                   "",
                   "/quiz",
                   "",
-                  "Sem modo quiz, só lemos aqui comandos neutros: gabarito, ranking, quem respondeu e /omissas."
+                  "Sem modo quiz, só lemos aqui comandos neutros: gabarito, /q&a, quem respondeu e /omissas."
                 ].join("\n")
               });
               continue;
@@ -811,9 +829,11 @@ async function startBot(): Promise<void> {
             const respondentIdProbe = parseRespondentsCommand(text);
             const passiveReadOnly =
               passiveProbe.kind === "ranking" ||
+              passiveProbe.kind === "qa_stats" ||
               passiveProbe.kind === "answer_key" ||
               Boolean(respondentIdProbe) ||
-              parseOmissasCommand(text);
+              parseOmissasCommand(text) ||
+              parseQaCommand(text);
 
             if (!passiveReadOnly) {
               continue;
@@ -935,10 +955,10 @@ async function startBot(): Promise<void> {
             continue;
           }
 
-          if (groupCommand.kind === "ranking") {
-            const groupJidForRanking = fromGroup ? remoteJid : getQuizTargetGroupJid();
-            const entries = await getRankingForGroup(groupJidForRanking);
-            await sock.sendMessage(remoteJid, { text: formatRankingMessage(entries) });
+          if (groupCommand.kind === "ranking" || groupCommand.kind === "qa_stats" || parseQaCommand(text)) {
+            const groupJidForStats = fromGroup ? remoteJid : getQuizTargetGroupJid();
+            const stats = await getQaStatsForGroup(groupJidForStats);
+            await sock.sendMessage(remoteJid, { text: formatQaStatsMessage(stats) });
             continue;
           }
         }

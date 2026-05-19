@@ -87,6 +87,18 @@ export function parseGabaritoCommand(text: string): string | null {
   return m ? m[1].toUpperCase() : null;
 }
 
+/** Estatísticas do grupo: /q&a (criadas e respondidas por pessoa + bot). */
+export function parseQaCommand(text: string): boolean {
+  const t = text.trim().toLowerCase();
+  const normalized = normalizeInput(t);
+  return (
+    t === "/q&a" ||
+    normalized === "q&a" ||
+    normalized === "/qa" ||
+    normalized === "qa"
+  );
+}
+
 /** Lista questoes em aberto no privado; depois sim/nao para receber enunciados. */
 export function parseOmissasCommand(text: string): boolean {
   const t = normalizeInput(text.trim());
@@ -185,6 +197,7 @@ export function parsePrivateCommand(text: string):
   | { kind: "answer"; answer: string; questionId: string }
   | { kind: "answer_key"; questionId: string }
   | { kind: "ranking" }
+  | { kind: "qa_stats" }
   | { kind: "unknown" } {
   const normalized = normalizeInput(text);
 
@@ -194,6 +207,10 @@ export function parsePrivateCommand(text: string):
 
   if (normalized === "ranking") {
     return { kind: "ranking" };
+  }
+
+  if (parseQaCommand(text)) {
+    return { kind: "qa_stats" };
   }
 
   /* Letra + id (ex: c 9, c9, e 12). Opcional: id + letra (ex: 9 c, 12e). */

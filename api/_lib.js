@@ -32,15 +32,40 @@ function applyCors(res) {
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 }
 
+/** Destino privado (caderno no PV), não o grupo do quiz. */
+function isPrivateQuizTargetJid(jid) {
+  const t = String(jid || "").toLowerCase();
+  return t.endsWith("@s.whatsapp.net") || t.endsWith("@lid");
+}
+
+/** short_id de caderno privado (ex.: 2-16 ou 3-5-ABC). */
+function isPrivateCadernoShortId(shortId) {
+  return /^\d+-\d+(-[A-Z0-9]+)?$/i.test(String(shortId || "").trim());
+}
+
+/** Questão do quiz em grupo (exclui PV / caderno privado). */
+function isGroupQuizQuestion(row) {
+  const target = String(row.target_group_jid || row.group_jid || "");
+  if (isPrivateQuizTargetJid(target)) return false;
+  if (isPrivateCadernoShortId(row.short_id)) return false;
+  if (!target) return false;
+  return target.toLowerCase().endsWith("@g.us");
+}
+
+function isBotCreatorJid(creatorJid) {
+  return String(creatorJid || "").toLowerCase().startsWith("caderno:");
+}
+
 /**
  * Questões do grupo (deduplica por id): target_group_jid + legado group_jid.
  * @param {{ extended?: boolean }} options — extended inclui campos de comentário/resolução
  */
 async function fetchQuestionsForGroup(supabase, groupJid, options = {}) {
   const extended = options.extended === true;
+  const withCreator = options.includeCreatorJid === true;
   const sel = extended
-    ? "id, short_id, creator_name, question_type, statement_text, statement_media_url, statement_media_mime_type, answer_key, explanation_text, explanation_media_url, explanation_media_mime_type, created_at, target_group_jid"
-    : "id, short_id, creator_name, question_type, statement_text, statement_media_url, statement_media_mime_type, answer_key, created_at, target_group_jid";
+    ? `id, short_id, creator_name${withCreator ? ", creator_jid" : ""}, question_type, statement_text, statement_media_url, statement_media_mime_type, answer_key, explanation_text, explanation_media_url, explanation_media_mime_type, created_at, target_group_jid`
+    : `id, short_id, creator_name${withCreator ? ", creator_jid" : ""}, question_type, statement_text, statement_media_url, statement_media_mime_type, answer_key, created_at, target_group_jid`;
 
   const { data: byTarget, error: errTarget } = await supabase
     .from("questions")
@@ -58,7 +83,18 @@ async function fetchQuestionsForGroup(supabase, groupJid, options = {}) {
     map.set(q.id, q);
   }
 
-  return Array.from(map.values()).sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+  return Array.from(map.values())
+    .filter(isGroupQuizQuestion)
+    .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 }
 
-module.exports = { getClient, pickTargetGroupJid, applyCors, fetchQuestionsForGroup };
+module.exports = {
+  getClient,
+  pickTargetGroupJid,
+  applyCors,
+  fetchQuestionsForGroup,
+  isGroupQuizQuestion,
+  isPrivateQuizTargetJid,
+  isPrivateCadernoShortId,
+  isBotCreatorJid
+};

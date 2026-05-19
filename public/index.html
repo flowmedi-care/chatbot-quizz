@@ -25,7 +25,7 @@
         </div>
         <h1>Papa Vagas</h1>
         <p>
-          Quiz do grupo — ranking geral e banco de questões. Responda, veja o gabarito e o comentário do
+          Quiz do grupo — estatísticas Q&amp;A e banco de questões. Responda, veja o gabarito e o comentário do
           autor.
         </p>
       </header>
@@ -33,19 +33,22 @@
       <div id="load-error" class="error-banner hidden" role="alert"></div>
 
       <section class="panel">
-        <h2><span class="badge">Ranking</span> Geral</h2>
-        <p id="ranking-warning" class="empty-state hidden"></p>
-        <div id="ranking-podium" class="ranking-podium"></div>
-        <div id="ranking-table-wrap" class="table-wrap">
-          <table class="ranking-table">
+        <h2><span class="badge">Q&amp;A</span> Grupo</h2>
+        <p class="report-sub" style="margin: 0 0 1rem">
+          Questões do grupo apenas (sem caderno privado). No WhatsApp: <code>/q&amp;a</code>
+        </p>
+        <p id="qa-stats-warning" class="empty-state hidden"></p>
+        <div id="qa-stats-totals" class="qa-stats-totals"></div>
+        <div id="qa-stats-table-wrap" class="table-wrap">
+          <table class="ranking-table qa-stats-table">
             <thead>
               <tr>
-                <th>#</th>
                 <th>Participante</th>
-                <th>Acertos</th>
+                <th>Criadas</th>
+                <th>Respondidas</th>
               </tr>
             </thead>
-            <tbody id="ranking-table-body"></tbody>
+            <tbody id="qa-stats-table-body"></tbody>
           </table>
         </div>
       </section>
