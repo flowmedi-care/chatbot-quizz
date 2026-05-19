@@ -45,6 +45,7 @@ import {
   getQuestionTargetGroupJid,
   getQuizModePrivate,
   insertAnswer,
+  SelfAnswerNotAllowedError,
   getUserAnswer,
   listAnswerUserJidsForQuestion,
   listCadernosForOwner,
@@ -968,14 +969,23 @@ async function startBot(): Promise<void> {
           if (pending) {
             const normalized = normalizeInput(text);
             if (normalized === "sim" || normalized === "s") {
-              await updateUserAnswer({
-                questionShortId: pending.questionId,
-                userJid: sender,
-                userName: getDisplayName(msg, sender),
-                answerLetter: pending.newAnswerLetter,
-                sentAt,
-                sourceMessageId: messageId
-              });
+              try {
+                await updateUserAnswer({
+                  questionShortId: pending.questionId,
+                  userJid: sender,
+                  userName: getDisplayName(msg, sender),
+                  answerLetter: pending.newAnswerLetter,
+                  sentAt,
+                  sourceMessageId: messageId
+                });
+              } catch (ansErr) {
+                pendingAnswerChanges.delete(sender);
+                if (ansErr instanceof SelfAnswerNotAllowedError) {
+                  await sock.sendMessage(remoteJid, { text: ansErr.message });
+                  continue;
+                }
+                throw ansErr;
+              }
               pendingAnswerChanges.delete(sender);
               await sock.sendMessage(remoteJid, { text: "Resposta atualizada ✅" });
               await maybePostAutoGabaritoToGroup(sock, pending.questionId);
@@ -1161,14 +1171,22 @@ async function startBot(): Promise<void> {
               continue;
             }
 
-            await insertAnswer({
-              questionShortId: command.questionId,
-              userJid: sender,
-              userName: getDisplayName(msg, sender),
-              answerLetter: command.answer,
-              sentAt,
-              sourceMessageId: messageId
-            });
+            try {
+              await insertAnswer({
+                questionShortId: command.questionId,
+                userJid: sender,
+                userName: getDisplayName(msg, sender),
+                answerLetter: command.answer,
+                sentAt,
+                sourceMessageId: messageId
+              });
+            } catch (ansErr) {
+              if (ansErr instanceof SelfAnswerNotAllowedError) {
+                await sock.sendMessage(remoteJid, { text: ansErr.message });
+                continue;
+              }
+              throw ansErr;
+            }
 
             await sock.sendMessage(remoteJid, {
               text: "Resposta salva."

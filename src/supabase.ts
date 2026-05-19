@@ -29,6 +29,25 @@ export function isBotCreatorJid(creatorJid: string): boolean {
   return creatorJid.trim().toLowerCase().startsWith("caderno:");
 }
 
+/** Mesmo participante (ignora sufixo :NN do WhatsApp e domínio em minúsculas). */
+export function isSameQuizParticipant(jidA: string, jidB: string): boolean {
+  return jidComparableKeyShared(jidA) === jidComparableKeyShared(jidB);
+}
+
+export class SelfAnswerNotAllowedError extends Error {
+  constructor() {
+    super("Voce nao pode responder uma questao que voce criou.");
+    this.name = "SelfAnswerNotAllowedError";
+  }
+}
+
+function assertUserMayAnswerQuestion(creatorJid: string | null | undefined, userJid: string): void {
+  if (!creatorJid?.trim() || isBotCreatorJid(creatorJid)) return;
+  if (isSameQuizParticipant(creatorJid, userJid)) {
+    throw new SelfAnswerNotAllowedError();
+  }
+}
+
 /** IDs em `questions` que o agendador marcou como enviados (cadernos em grupo). */
 export async function fetchPublishedCadernoQuestionIdsForGroup(
   groupJid: string
@@ -270,7 +289,7 @@ export async function persistEngagementQuizDisplayName(
 export async function insertAnswer(input: AnswerInput): Promise<void> {
   const { data: question, error: findError } = await supabase
     .from("questions")
-    .select("id, question_type, target_group_jid, group_jid")
+    .select("id, question_type, creator_jid, target_group_jid, group_jid")
     .eq("short_id", input.questionShortId.toUpperCase())
     .maybeSingle();
 
@@ -281,6 +300,11 @@ export async function insertAnswer(input: AnswerInput): Promise<void> {
   if (!question) {
     throw new Error("Questao nao encontrada");
   }
+
+  assertUserMayAnswerQuestion(
+    question.creator_jid != null ? String(question.creator_jid) : null,
+    input.userJid
+  );
 
   const { error } = await supabase.from("answers").insert({
     question_id: question.id,
@@ -332,7 +356,7 @@ export async function getUserAnswer(
 export async function updateUserAnswer(input: AnswerInput): Promise<void> {
   const { data: question, error: findError } = await supabase
     .from("questions")
-    .select("id, target_group_jid, group_jid")
+    .select("id, creator_jid, target_group_jid, group_jid")
     .eq("short_id", input.questionShortId.toUpperCase())
     .maybeSingle();
 
@@ -343,6 +367,11 @@ export async function updateUserAnswer(input: AnswerInput): Promise<void> {
   if (!question) {
     throw new Error("Questao nao encontrada");
   }
+
+  assertUserMayAnswerQuestion(
+    question.creator_jid != null ? String(question.creator_jid) : null,
+    input.userJid
+  );
 
   const { data: updatedRows, error } = await supabase
     .from("answers")
