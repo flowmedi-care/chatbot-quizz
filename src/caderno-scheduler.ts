@@ -6,6 +6,10 @@ import {
   countUnpublishedCadernoQuestions,
   countUnsentPrivateQuestionsForRecipient,
   createQuestionFromCaderno,
+  findOrphanCadernoQuestionRow,
+  getPrivateSendPublishedQuestionId,
+  getPublishedQuestionIdForCadernoQuestion,
+  getQuestionShortIdByDbId,
   effectivePrivateRecipientSchedule,
   getEngagedEligibleUserJidsAt,
   isPrivateRecipientDayComplete,
@@ -87,13 +91,46 @@ async function publishCadernoQuestionToChat(
   await sock.sendMessage(destJid, { text: fullText });
 }
 
+async function resolveCadernoQuestionForPublish(
+  caderno: CadernoRow,
+  question: CadernoQuestionRow,
+  recipientJid?: string | null
+): Promise<{ shortId: string; dbId: number }> {
+  const targetJid = (recipientJid && recipientJid.trim()) || caderno.targetGroupJid;
+
+  let alreadyPublishedId: number | null = null;
+  if (recipientJid?.trim()) {
+    alreadyPublishedId = await getPrivateSendPublishedQuestionId(
+      caderno.id,
+      recipientJid.trim(),
+      question.id
+    );
+  } else {
+    alreadyPublishedId = await getPublishedQuestionIdForCadernoQuestion(question.id);
+  }
+  if (alreadyPublishedId != null) {
+    const shortId = await getQuestionShortIdByDbId(alreadyPublishedId);
+    if (shortId) return { shortId, dbId: alreadyPublishedId };
+  }
+
+  const orphan = await findOrphanCadernoQuestionRow(
+    caderno.id,
+    question.id,
+    targetJid,
+    recipientJid
+  );
+  if (orphan) return orphan;
+
+  return createQuestionFromCaderno({ caderno, question, recipientJid });
+}
+
 async function publishGroupCadernoQuestion(
   sock: WASocket,
   caderno: CadernoRow,
   question: CadernoQuestionRow
 ): Promise<{ shortId: string; dbId: number } | null> {
   try {
-    const { shortId, dbId } = await createQuestionFromCaderno({ caderno, question });
+    const { shortId, dbId } = await resolveCadernoQuestionForPublish(caderno, question);
     await publishCadernoQuestionToChat(
       sock,
       caderno.targetGroupJid,
@@ -123,11 +160,11 @@ async function publishPrivateCadernoQuestion(
   question: CadernoQuestionRow
 ): Promise<{ shortId: string; dbId: number } | null> {
   try {
-    const { shortId, dbId } = await createQuestionFromCaderno({
+    const { shortId, dbId } = await resolveCadernoQuestionForPublish(
       caderno,
       question,
-      recipientJid: recipient.userJid
-    });
+      recipient.userJid
+    );
     await publishCadernoQuestionToChat(
       sock,
       recipient.userJid,

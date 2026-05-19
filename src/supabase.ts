@@ -29,6 +29,51 @@ export function isBotCreatorJid(creatorJid: string): boolean {
   return creatorJid.trim().toLowerCase().startsWith("caderno:");
 }
 
+/** IDs em `questions` que o agendador marcou como enviados (cadernos em grupo). */
+export async function fetchPublishedCadernoQuestionIdsForGroup(
+  groupJid: string
+): Promise<Set<number>> {
+  const { data: cadernos, error: cErr } = await supabase
+    .from("cadernos")
+    .select("id")
+    .eq("target_group_jid", groupJid)
+    .eq("delivery_mode", "group");
+
+  if (cErr) {
+    throw new Error(`Erro ao listar cadernos do grupo: ${cErr.message}`);
+  }
+
+  const cadernoIds = (cadernos ?? []).map((c) => Number(c.id)).filter((id) => Number.isFinite(id));
+  if (cadernoIds.length === 0) return new Set();
+
+  const { data: rows, error: qErr } = await supabase
+    .from("caderno_questions")
+    .select("published_question_id")
+    .in("caderno_id", cadernoIds)
+    .not("published_question_id", "is", null);
+
+  if (qErr) {
+    throw new Error(`Erro ao listar questoes publicadas do caderno: ${qErr.message}`);
+  }
+
+  const out = new Set<number>();
+  for (const row of rows ?? []) {
+    const id = Number(row.published_question_id);
+    if (Number.isFinite(id)) out.add(id);
+  }
+  return out;
+}
+
+/** Questão do bot no grupo que nunca foi marcada em caderno_questions.published_question_id. */
+export function isOrphanCadernoGroupQuestion(
+  questionId: number,
+  creatorJid: string,
+  publishedCadernoIds: Set<number>
+): boolean {
+  if (!isBotCreatorJid(creatorJid)) return false;
+  return !publishedCadernoIds.has(questionId);
+}
+
 /** Próximo # sequencial para questões publicadas no grupo (não usa id da linha). */
 export async function nextGroupQuestionShortId(groupJid: string): Promise<string> {
   const { data, error } = await supabase
@@ -535,18 +580,25 @@ export async function getQaStatsForGroup(groupJid: string): Promise<QaStats> {
     questionMap.set(q.id, q);
   }
 
+  const publishedCadernoIds = await fetchPublishedCadernoQuestionIdsForGroup(groupJid);
+
   const questions = [...questionMap.values()].filter((q) => {
     const target = String(q.target_group_jid || groupJid);
     if (isPrivateQuizTargetJid(target)) return false;
     if (isPrivateCadernoShortId(String(q.short_id ?? ""))) return false;
-    return isGroupQuizTargetJid(target);
+    if (!isGroupQuizTargetJid(target)) return false;
+    if (isOrphanCadernoGroupQuestion(q.id, String(q.creator_jid ?? ""), publishedCadernoIds)) {
+      return false;
+    }
+    return true;
   });
 
   const questionIds = questions.map((q) => q.id);
+  const botCreatedCount = publishedCadernoIds.size;
   if (questionIds.length === 0) {
     return {
       participants: [],
-      botCreatedCount: 0,
+      botCreatedCount: publishedCadernoIds.size,
       totals: { questionsCreated: 0, answersRecorded: 0 }
     };
   }
@@ -560,7 +612,6 @@ export async function getQaStatsForGroup(groupJid: string): Promise<QaStats> {
     throw new Error(`Erro ao buscar respostas para Q&A: ${aErr.message}`);
   }
 
-  let botCreatedCount = 0;
   const byUser = new Map<string, QaStatsParticipant>();
 
   function touch(jid: string, label: string): QaStatsParticipant {
@@ -575,7 +626,6 @@ export async function getQaStatsForGroup(groupJid: string): Promise<QaStats> {
 
   for (const q of questions) {
     if (isBotCreatorJid(String(q.creator_jid ?? ""))) {
-      botCreatedCount += 1;
       continue;
     }
     const label =
@@ -1351,6 +1401,26 @@ export async function countUnsentPrivateQuestionsForRecipient(
   return Math.max(0, total - sent);
 }
 
+export async function getPrivateSendPublishedQuestionId(
+  cadernoId: number,
+  recipientJid: string,
+  cadernoQuestionId: number
+): Promise<number | null> {
+  const { data, error } = await supabase
+    .from("caderno_private_send")
+    .select("published_question_id")
+    .eq("caderno_id", cadernoId)
+    .eq("recipient_jid", recipientJid)
+    .eq("caderno_question_id", cadernoQuestionId)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Erro ao ler envio privado do caderno: ${error.message}`);
+  }
+  const id = data?.published_question_id != null ? Number(data.published_question_id) : NaN;
+  return Number.isFinite(id) ? id : null;
+}
+
 export async function recordPrivateSend(
   cadernoId: number,
   recipientJid: string,
@@ -1725,6 +1795,68 @@ export async function setCadernoStatus(
   if (error) throw new Error(`Erro ao mudar status do caderno: ${error.message}`);
 }
 
+/** Linha em `questions` já criada por tentativa anterior (falha no WhatsApp). */
+export async function findOrphanCadernoQuestionRow(
+  cadernoId: number,
+  cadernoQuestionId: number,
+  targetGroupJid: string,
+  recipientJid?: string | null
+): Promise<{ shortId: string; dbId: number } | null> {
+  const creator = `caderno:${cadernoId}@bot`;
+  const suffix = recipientJid?.trim()
+    ? `-${jidComparableKeyShared(recipientJid.trim())}`
+    : "";
+  const waPrefix = `caderno-${cadernoId}-${cadernoQuestionId}${suffix}-`;
+
+  const { data, error } = await supabase
+    .from("questions")
+    .select("id, short_id")
+    .eq("creator_jid", creator)
+    .eq("target_group_jid", targetGroupJid)
+    .like("wa_message_id", `${waPrefix}%`)
+    .order("id", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Erro ao buscar questao orfa do caderno: ${error.message}`);
+  }
+  if (!data?.id || !data.short_id) return null;
+
+  return {
+    dbId: Number(data.id),
+    shortId: String(data.short_id).toUpperCase()
+  };
+}
+
+export async function getPublishedQuestionIdForCadernoQuestion(
+  cadernoQuestionId: number
+): Promise<number | null> {
+  const { data, error } = await supabase
+    .from("caderno_questions")
+    .select("published_question_id")
+    .eq("id", cadernoQuestionId)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Erro ao ler publicacao do caderno: ${error.message}`);
+  }
+  const id = data?.published_question_id != null ? Number(data.published_question_id) : NaN;
+  return Number.isFinite(id) ? id : null;
+}
+
+export async function getQuestionShortIdByDbId(dbId: number): Promise<string | null> {
+  const { data, error } = await supabase
+    .from("questions")
+    .select("short_id")
+    .eq("id", dbId)
+    .maybeSingle();
+
+  if (error) throw new Error(`Erro ao buscar short_id: ${error.message}`);
+  if (!data?.short_id) return null;
+  return String(data.short_id).toUpperCase();
+}
+
 export async function markCadernoQuestionPublished(
   cadernoQuestionId: number,
   publishedQuestionDbId: number
@@ -2042,9 +2174,11 @@ export async function listUnansweredShortIdsForUser(
   groupJid: string,
   limit = 25
 ): Promise<string[]> {
+  const publishedCadernoIds = await fetchPublishedCadernoQuestionIdsForGroup(groupJid);
+
   const { data: questions, error: qErr } = await supabase
     .from("questions")
-    .select("id, short_id")
+    .select("id, short_id, creator_jid")
     .eq("target_group_jid", groupJid)
     .order("created_at", { ascending: false })
     .limit(300);
@@ -2068,7 +2202,11 @@ export async function listUnansweredShortIdsForUser(
     if (!q.short_id) continue;
     const sid = String(q.short_id).toUpperCase();
     if (isPrivateCadernoShortId(sid)) continue;
-    if (answeredIds.has(q.id as number)) continue;
+    const qid = q.id as number;
+    if (isOrphanCadernoGroupQuestion(qid, String(q.creator_jid ?? ""), publishedCadernoIds)) {
+      continue;
+    }
+    if (answeredIds.has(qid)) continue;
     out.push(sid);
     if (out.length >= limit) break;
   }

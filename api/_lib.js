@@ -56,16 +56,49 @@ function isBotCreatorJid(creatorJid) {
   return String(creatorJid || "").toLowerCase().startsWith("caderno:");
 }
 
+/** IDs em questions marcados como enviados pelo agendador (cadernos do grupo). */
+async function fetchPublishedCadernoQuestionIdsForGroup(supabase, groupJid) {
+  const { data: cadernos, error: cErr } = await supabase
+    .from("cadernos")
+    .select("id")
+    .eq("target_group_jid", groupJid)
+    .eq("delivery_mode", "group");
+
+  if (cErr) throw cErr;
+
+  const cadernoIds = (cadernos || []).map((c) => c.id).filter((id) => Number.isFinite(Number(id)));
+  if (!cadernoIds.length) return new Set();
+
+  const { data: rows, error: qErr } = await supabase
+    .from("caderno_questions")
+    .select("published_question_id")
+    .in("caderno_id", cadernoIds)
+    .not("published_question_id", "is", null);
+
+  if (qErr) throw qErr;
+
+  const out = new Set();
+  for (const row of rows || []) {
+    const id = Number(row.published_question_id);
+    if (Number.isFinite(id)) out.add(id);
+  }
+  return out;
+}
+
+function isOrphanCadernoGroupQuestion(questionId, creatorJid, publishedCadernoIds) {
+  if (!isBotCreatorJid(creatorJid)) return false;
+  return !publishedCadernoIds.has(questionId);
+}
+
 /**
  * Questões do grupo (deduplica por id): target_group_jid + legado group_jid.
  * @param {{ extended?: boolean }} options — extended inclui campos de comentário/resolução
  */
 async function fetchQuestionsForGroup(supabase, groupJid, options = {}) {
   const extended = options.extended === true;
-  const withCreator = options.includeCreatorJid === true;
   const sel = extended
-    ? `id, short_id, creator_name${withCreator ? ", creator_jid" : ""}, question_type, statement_text, statement_media_url, statement_media_mime_type, answer_key, explanation_text, explanation_media_url, explanation_media_mime_type, created_at, target_group_jid`
-    : `id, short_id, creator_name${withCreator ? ", creator_jid" : ""}, question_type, statement_text, statement_media_url, statement_media_mime_type, answer_key, created_at, target_group_jid`;
+    ? "id, short_id, creator_name, creator_jid, question_type, statement_text, statement_media_url, statement_media_mime_type, answer_key, explanation_text, explanation_media_url, explanation_media_mime_type, created_at, target_group_jid"
+    : "id, short_id, creator_name, creator_jid, question_type, statement_text, statement_media_url, statement_media_mime_type, answer_key, created_at, target_group_jid";
 
   const { data: byTarget, error: errTarget } = await supabase
     .from("questions")
@@ -83,8 +116,11 @@ async function fetchQuestionsForGroup(supabase, groupJid, options = {}) {
     map.set(q.id, q);
   }
 
+  const publishedCadernoIds = await fetchPublishedCadernoQuestionIdsForGroup(supabase, groupJid);
+
   return Array.from(map.values())
     .filter(isGroupQuizQuestion)
+    .filter((q) => !isOrphanCadernoGroupQuestion(q.id, q.creator_jid, publishedCadernoIds))
     .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 }
 
@@ -93,8 +129,10 @@ module.exports = {
   pickTargetGroupJid,
   applyCors,
   fetchQuestionsForGroup,
+  fetchPublishedCadernoQuestionIdsForGroup,
   isGroupQuizQuestion,
   isPrivateQuizTargetJid,
   isPrivateCadernoShortId,
-  isBotCreatorJid
+  isBotCreatorJid,
+  isOrphanCadernoGroupQuestion
 };

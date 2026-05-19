@@ -3,6 +3,7 @@ const {
   pickTargetGroupJid,
   applyCors,
   fetchQuestionsForGroup,
+  fetchPublishedCadernoQuestionIdsForGroup,
   isBotCreatorJid
 } = require("./_lib.js");
 
@@ -24,11 +25,15 @@ module.exports = async (req, res) => {
     }
 
     const supabase = getClient();
-    const questions = await fetchQuestionsForGroup(supabase, groupJid, {
-      extended: true,
-      includeCreatorJid: true
-    });
+    const [questions, publishedCadernoIds] = await Promise.all([
+      fetchQuestionsForGroup(supabase, groupJid, {
+        extended: true,
+        includeCreatorJid: true
+      }),
+      fetchPublishedCadernoQuestionIdsForGroup(supabase, groupJid)
+    ]);
 
+    const botCreatedCount = publishedCadernoIds.size;
     const questionIds = questions.map((q) => q.id);
     let answersRaw = [];
     if (questionIds.length) {
@@ -40,7 +45,6 @@ module.exports = async (req, res) => {
       answersRaw = ans || [];
     }
 
-    let botCreatedCount = 0;
     const byUser = new Map();
 
     function touch(jid, label) {
@@ -52,10 +56,7 @@ module.exports = async (req, res) => {
     }
 
     for (const q of questions) {
-      if (isBotCreatorJid(q.creator_jid)) {
-        botCreatedCount += 1;
-        continue;
-      }
+      if (isBotCreatorJid(q.creator_jid)) continue;
       const label = (q.creator_name && String(q.creator_name).trim()) || q.creator_jid || "Autor";
       touch(q.creator_jid, label).createdCount += 1;
     }
