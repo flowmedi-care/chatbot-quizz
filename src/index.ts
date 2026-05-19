@@ -186,11 +186,12 @@ async function maybePostAutoGabaritoToGroup(sock: WASocket, rawShortId: string):
 
       autoGabaritoPostedQuestionIds.add(shortUp);
       const result = await getQuestionResult(shortUp);
-      const header = "[Resposta registrada]\nResultado enviado automaticamente (caderno privado).\n";
-      await sock.sendMessage(groupJid, {
-        text: `${header}${buildResultMessage(result)}`
-      });
-      await sendExplanationMedia(sock, groupJid, result);
+      await publishQuestionResult(
+        sock,
+        groupJid,
+        result,
+        "[Resposta registrada]\nResultado enviado automaticamente (caderno privado)."
+      );
       return;
     }
 
@@ -226,11 +227,12 @@ async function maybePostAutoGabaritoToGroup(sock: WASocket, rawShortId: string):
     autoGabaritoPostedQuestionIds.add(shortUp);
 
     const result = await getQuestionResult(shortUp);
-    const header = "[Engajados responderam]\nResultado enviado automaticamente.\n";
-    await sock.sendMessage(groupJid, {
-      text: `${header}${buildResultMessage(result)}`
-    });
-    await sendExplanationMedia(sock, groupJid, result);
+    await publishQuestionResult(
+      sock,
+      groupJid,
+      result,
+      "[Engajados responderam]\nResultado enviado automaticamente."
+    );
   } catch (e) {
     console.warn("[auto-gabarito]", (e as Error).message);
   }
@@ -380,13 +382,12 @@ function buildResultMessage(result: Awaited<ReturnType<typeof getQuestionResult>
   }
 
   const statementBlock: string[] = [];
-  if (result.statementText) {
+  const sendsStatementMedia =
+    Boolean(result.statementMediaUrl && result.statementMediaMimeType);
+  if (result.statementText && !sendsStatementMedia) {
     statementBlock.push("Enunciado:", truncateForWhatsApp(result.statementText), "");
-  } else if (result.statementHasMedia) {
-    statementBlock.push(
-      `Enunciado: (midia — repita com /questao ${result.shortId})`,
-      ""
-    );
+  } else if (sendsStatementMedia) {
+    statementBlock.push("Enunciado: (veja acima)", "");
   }
 
   return [
@@ -409,6 +410,35 @@ function buildResultMessage(result: Awaited<ReturnType<typeof getQuestionResult>
   ].join("\n");
 }
 
+async function sendStatementMedia(
+  sock: WASocket,
+  jid: string,
+  result: Awaited<ReturnType<typeof getQuestionResult>>
+): Promise<void> {
+  if (!result.statementMediaUrl || !result.statementMediaMimeType) return;
+
+  const captionParts = [`Enunciado — Questao #${result.shortId}`];
+  if (result.statementText) {
+    captionParts.push("", truncateForWhatsApp(result.statementText, 900));
+  }
+  const caption = captionParts.join("\n");
+
+  if (result.statementMediaMimeType.startsWith("image/")) {
+    await sock.sendMessage(jid, {
+      image: { url: result.statementMediaUrl },
+      caption
+    });
+    return;
+  }
+
+  await sock.sendMessage(jid, {
+    document: { url: result.statementMediaUrl },
+    mimetype: result.statementMediaMimeType,
+    fileName: `enunciado-${result.shortId}.${mimeToStatementFileExt(result.statementMediaMimeType)}`,
+    caption
+  });
+}
+
 async function sendExplanationMedia(
   sock: WASocket,
   jid: string,
@@ -426,6 +456,20 @@ async function sendExplanationMedia(
     mimetype: result.explanationMediaMimeType,
     fileName: "comentario-questao"
   });
+}
+
+async function publishQuestionResult(
+  sock: WASocket,
+  jid: string,
+  result: Awaited<ReturnType<typeof getQuestionResult>>,
+  headerPrefix?: string
+): Promise<void> {
+  if (result.statementMediaUrl && result.statementMediaMimeType) {
+    await sendStatementMedia(sock, jid, result);
+  }
+  const header = headerPrefix ? `${headerPrefix}\n` : "";
+  await sock.sendMessage(jid, { text: `${header}${buildResultMessage(result)}` });
+  await sendExplanationMedia(sock, jid, result);
 }
 
 function mimeToStatementFileExt(mimeType: string): string {
@@ -951,8 +995,7 @@ async function startBot(): Promise<void> {
           }
           if (groupCommand.kind === "answer_key") {
             const result = await getQuestionResult(groupCommand.questionId);
-            await sock.sendMessage(remoteJid, { text: buildResultMessage(result) });
-            await sendExplanationMedia(sock, remoteJid, result);
+            await publishQuestionResult(sock, remoteJid, result);
             continue;
           }
 

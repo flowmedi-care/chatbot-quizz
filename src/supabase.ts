@@ -421,6 +421,8 @@ export type QuestionResult = {
   questionType: QuestionType;
   statementText: string | null;
   statementHasMedia: boolean;
+  statementMediaUrl: string | null;
+  statementMediaMimeType: string | null;
   explanationText: string | null;
   explanationMediaUrl: string | null;
   explanationMediaMimeType: string | null;
@@ -464,7 +466,7 @@ export async function getQuestionResult(shortId: string): Promise<QuestionResult
   const { data: question, error: questionError } = await supabase
     .from("questions")
     .select(
-      "id, short_id, question_type, answer_key, statement_text, statement_media_url, explanation_text, explanation_media_url, explanation_media_mime_type"
+      "id, short_id, question_type, answer_key, statement_text, statement_media_url, statement_media_mime_type, explanation_text, explanation_media_url, explanation_media_mime_type"
     )
     .eq("short_id", normalizedId)
     .maybeSingle();
@@ -514,6 +516,8 @@ export async function getQuestionResult(shortId: string): Promise<QuestionResult
     questionType: question.question_type as QuestionType,
     statementText,
     statementHasMedia: Boolean(question.statement_media_url),
+    statementMediaUrl: question.statement_media_url ?? null,
+    statementMediaMimeType: question.statement_media_mime_type ?? null,
     explanationText: question.explanation_text,
     explanationMediaUrl: question.explanation_media_url,
     explanationMediaMimeType: question.explanation_media_mime_type,
