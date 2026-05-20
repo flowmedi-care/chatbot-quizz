@@ -982,9 +982,51 @@
     if (els.cadernoEditGroupSchedule) els.cadernoEditGroupSchedule.classList.toggle("hidden", priv);
   }
 
+  /** Mesma fonte de nomes do modal Engajamento (`/api/engagement`). */
+  function resolveDisplayLabelForJid(userJid) {
+    const jid = String(userJid || "").trim();
+    if (!jid) return "";
+    const m = engagementMembersCache.find((x) => x.userJid === jid);
+    if (m) return m.displayLabel || m.userLabel || jid;
+    return jid;
+  }
+
+  async function ensureEngagementMembersLoaded() {
+    if (engagementMembersCache.length > 0) return engagementMembersCache;
+    const data = await fetchJson(API.engagement);
+    engagementMembersCache = data.members || [];
+    return engagementMembersCache;
+  }
+
+  function findPrivateRecipientLi(ul, userJid) {
+    if (!ul) return null;
+    const jid = String(userJid || "").trim();
+    return [...ul.querySelectorAll("li[data-jid]")].find((li) => li.getAttribute("data-jid") === jid) || null;
+  }
+
+  function applyPrivateRecipientDisplayLabel(li, userJid, displayLabel) {
+    if (!li) return;
+    const jid = String(userJid || "").trim();
+    const label = displayLabel || jid;
+    const nameEl = li.querySelector(".caderno-priv-name");
+    if (nameEl) nameEl.textContent = label;
+    const lab = li.querySelector(".caderno-priv-label");
+    if (lab) lab.setAttribute("title", jid);
+    const meta = li.querySelector(".caderno-priv-meta");
+    if (meta) {
+      if (label !== jid) {
+        meta.textContent = jid;
+        meta.classList.remove("hidden");
+      } else {
+        meta.textContent = "";
+        meta.classList.add("hidden");
+      }
+    }
+  }
+
   function renderPrivateRecipientEditRow(r) {
     const jid = r.userJid || "";
-    const label = r.displayLabel || jid;
+    const label = r.displayLabel || r.userLabel || resolveDisplayLabelForJid(jid) || jid;
     const qpd =
       r.questionsPerDay != null && Number.isFinite(Number(r.questionsPerDay))
         ? String(r.questionsPerDay)
@@ -1010,17 +1052,18 @@
       })
       .join("");
     const checked = r.active !== false ? "checked" : "";
+    const metaHidden = label === jid ? " hidden" : "";
     return `<li data-jid="${escAttr(jid)}">
-      <label class="caderno-priv-label"><input type="checkbox" class="caderno-priv-active" ${checked} /> ${esc(
+      <label class="caderno-priv-label" title="${escAttr(jid)}"><input type="checkbox" class="caderno-priv-active" ${checked} /> <span class="caderno-priv-name">${esc(
       label
-    )}</label>
+    )}</span></label>
       <input class="caderno-priv-qpd" type="number" min="1" max="24" value="${escAttr(qpd)}" title="Questões/dia" />
       <input class="caderno-priv-time" type="time" value="${escAttr(timeVal)}" title="Início (preencher uniforme)" />
       <input class="caderno-priv-end-time" type="time" value="${escAttr(
         timeEndVal
       )}" title="Fim (preencher uniforme)" />
       <div class="caderno-priv-send-times" role="group" aria-label="Horários por questão">${slotsHtml}</div>
-      <span class="caderno-priv-meta">${esc(jid)}</span>
+      <span class="caderno-priv-meta${metaHidden}">${esc(jid)}</span>
     </li>`;
   }
 
@@ -1090,6 +1133,7 @@
     try {
       const data = await fetchJson(API.engagement);
       const members = data.members || [];
+      engagementMembersCache = members;
       const existing = new Set(
         [...els.cadernoEditPrivateList.querySelectorAll("li[data-jid]")].map(
           (li) => li.getAttribute("data-jid") || ""
@@ -1097,12 +1141,18 @@
       );
       for (const m of members) {
         const jid = m.userJid;
-        if (!jid || existing.has(jid)) continue;
+        if (!jid) continue;
+        const displayLabel = m.displayLabel || m.userLabel || jid;
+        if (existing.has(jid)) {
+          const li = findPrivateRecipientLi(els.cadernoEditPrivateList, jid);
+          applyPrivateRecipientDisplayLabel(li, jid, displayLabel);
+          continue;
+        }
         existing.add(jid);
         const row = renderPrivateRecipientEditRow({
           userJid: jid,
           active: true,
-          displayLabel: m.displayLabel || m.userLabel || jid
+          displayLabel
         });
         els.cadernoEditPrivateList.insertAdjacentHTML("beforeend", row);
       }
@@ -1132,6 +1182,7 @@
     try {
       const data = await fetchJson(API.engagement);
       const members = data.members || [];
+      engagementMembersCache = members;
       const existing = new Set(
         [...els.cadernoAddPrivateList.querySelectorAll("li[data-jid]")].map(
           (li) => li.getAttribute("data-jid") || ""
@@ -1139,12 +1190,18 @@
       );
       for (const m of members) {
         const jid = m.userJid;
-        if (!jid || existing.has(jid)) continue;
+        if (!jid) continue;
+        const displayLabel = m.displayLabel || m.userLabel || jid;
+        if (existing.has(jid)) {
+          const li = findPrivateRecipientLi(els.cadernoAddPrivateList, jid);
+          applyPrivateRecipientDisplayLabel(li, jid, displayLabel);
+          continue;
+        }
         existing.add(jid);
         const row = renderPrivateRecipientEditRow({
           userJid: jid,
           active: true,
-          displayLabel: m.displayLabel || m.userLabel || jid
+          displayLabel
         });
         els.cadernoAddPrivateList.insertAdjacentHTML("beforeend", row);
       }
@@ -1311,7 +1368,7 @@
 
     try {
       if (action === "edit") {
-        openCadernoEditModal(c);
+        await openCadernoEditModal(c);
         return;
       }
       if (action === "pause") {
@@ -1543,8 +1600,16 @@
     }
   }
 
-  function openCadernoEditModal(caderno) {
+  async function openCadernoEditModal(caderno) {
     if (!els.cadernoEditOverlay) return;
+    const dm = caderno.deliveryMode === "private" ? "private" : "group";
+    if (dm === "private") {
+      try {
+        await ensureEngagementMembersLoaded();
+      } catch {
+        /* lista segue com JID se engajamento falhar */
+      }
+    }
     els.cadernoEditId.value = String(caderno.id);
     els.cadernoEditName.value = caderno.name || "";
     const perDay =
@@ -1569,7 +1634,6 @@
     renderSendTimesList(els.cadernoEditSendTimesList, perDay, editTimes, "Questão");
     els.cadernoEditRandom.checked = Boolean(caderno.randomOrder);
     if (els.cadernoEditWait) els.cadernoEditWait.checked = Boolean(caderno.waitForAnswers);
-    const dm = caderno.deliveryMode === "private" ? "private" : "group";
     if (els.cadernoEditDeliveryGroup) els.cadernoEditDeliveryGroup.checked = dm === "group";
     if (els.cadernoEditDeliveryPrivate) els.cadernoEditDeliveryPrivate.checked = dm === "private";
     syncCadernoEditPrivatePanel();
@@ -1586,7 +1650,7 @@
             endHour: r.endHour,
             endMinute: r.endMinute,
             sendTimes: r.sendTimes,
-            displayLabel: r.userJid
+            displayLabel: resolveDisplayLabelForJid(r.userJid)
           })
         )
         .join("");

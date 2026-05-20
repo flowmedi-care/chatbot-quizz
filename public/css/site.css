@@ -1193,6 +1193,14 @@ table.tutorial-table code {
   font-size: 0.78rem;
 }
 
+.caderno-private-list li .caderno-priv-meta.hidden {
+  display: none;
+}
+
+.caderno-private-list .caderno-priv-name {
+  font-weight: 500;
+}
+
 .caderno-private-list input[type="number"] {
   width: 3.2rem;
 }
