@@ -58,6 +58,11 @@ import {
 } from "./supabase";
 import { computeNextRunAt, formatNextRunPretty } from "./schedule";
 import { forceRunCaderno, startCadernoScheduler, stopCadernoScheduler } from "./caderno-scheduler";
+import {
+  handleFlashcardsPrivateMessage,
+  startFlashcardsBot,
+  stopFlashcardsBot
+} from "./flashcards/bot";
 import { MediaPayload, QuestionDraft, QuestionType } from "./types";
 
 function toIsoTimestamp(value: unknown): string {
@@ -712,6 +717,7 @@ async function startBot(): Promise<void> {
 
     if (connection === "close") {
       stopCadernoScheduler();
+      stopFlashcardsBot();
       const statusCode = (lastDisconnect?.error as { output?: { statusCode?: number } })?.output
         ?.statusCode;
       const reason = (lastDisconnect?.error as Error | undefined)?.message ?? "sem motivo";
@@ -745,6 +751,7 @@ async function startBot(): Promise<void> {
       console.log(`Bot conectado no WhatsApp. (instancia ${instanceId})`);
       isStarting = false;
       startCadernoScheduler(sock);
+      startFlashcardsBot(sock);
     }
   });
 
@@ -825,6 +832,14 @@ async function startBot(): Promise<void> {
 
         let quizModePrivateEnabled = false;
         if (fromPrivate) {
+          const flashcardsHandled = await handleFlashcardsPrivateMessage(
+            sock,
+            remoteJid,
+            sender,
+            text
+          );
+          if (flashcardsHandled) continue;
+
           const omissasWaitingEarly = omissasOfferByUser.get(sender);
           if (omissasWaitingEarly) {
             const normalizedOm = normalizeInput(text);
