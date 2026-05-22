@@ -161,7 +161,7 @@ Depois de alterar env no Vercel → **Redeploy** do projeto Flashcards.
 
 ## Parte B — Site Quiz / Papa Vagas (Vercel)
 
-A rota `api/flashcards-whatsapp-users.js` já está neste repositório. Ela lê membros do grupo igual ao **Engajamento**.
+As rotas Flashcards (`/api/flashcards-whatsapp-users`, `link-request`, `unlink-request`) ficam em **`api/flashcards-inbound.js`** (uma função só), com rewrites no `vercel.json` — o plano Hobby do Vercel permite **no máximo 12** serverless functions por deploy; com 14 arquivos em `api/` o deploy falhava ou omitia rotas novas (404 no link). As URLs públicas **não mudam**.
 
 ### B1. Variáveis no Vercel (projeto Quiz — Papa Vagas)
 
@@ -398,7 +398,7 @@ Não use o mesmo `fc_...` no Vercel Flashcards como “secret do quiz” — sã
 |---------|--------|
 | `src/flashcards/bot.ts` | Scheduler + mensagens privadas |
 | `src/flashcards/client.ts` | Chamadas à API Flashcards |
-| `api/flashcards-whatsapp-users.js` | Lista nomes/JIDs para o app |
+| `api/flashcards-inbound.js` | Lista / vincular / desvincular (rewrites mantêm URLs antigas) |
 | `docs/flashcards-bot.md` | Referência técnica curta |
 
 ---

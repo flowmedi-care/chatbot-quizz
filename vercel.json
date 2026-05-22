@@ -3,5 +3,10 @@
   "buildCommand": "npm run build",
   "outputDirectory": "public",
   "installCommand": "npm install",
-  "rewrites": [{ "source": "/tutorial", "destination": "/tutorial/index.html" }]
+  "rewrites": [
+    { "source": "/api/flashcards-whatsapp-users", "destination": "/api/flashcards-inbound?fc=users" },
+    { "source": "/api/flashcards-link-request", "destination": "/api/flashcards-inbound?fc=link" },
+    { "source": "/api/flashcards-unlink-request", "destination": "/api/flashcards-inbound?fc=unlink" },
+    { "source": "/tutorial", "destination": "/tutorial/index.html" }
+  ]
 }
