@@ -27,6 +27,48 @@ Checklist para ligar o **app Flashcards (Vercel)** ao **bot WhatsApp (VPS)** sem
 
 ---
 
+## Várias pessoas (sem repetir config na VPS)
+
+Cada pessoa usa **só o app Flashcards**. Na VPS ficam **só**:
+
+```env
+FLASHCARDS_API_URL=https://seu-app-flashcards.vercel.app
+FLASHCARDS_POLL_MS=90000
+```
+
+**Não** precisa `FLASHCARDS_API_KEY` por pessoa no `.env` da VPS.
+
+### Fluxo por pessoa
+
+1. No app: escolhe o nome na lista (`/api/flashcards-whatsapp-users`) e salva `whatsapp_jid` + gera `fc_...` na conta dela.  
+2. App chama (logo após vincular):
+
+```http
+POST https://papa-vagas.vercel.app/api/flashcards-link-request
+Authorization: Bearer <FLASHCARDS_BOT_INBOUND_SECRET>
+Content-Type: application/json
+
+{
+  "userJid": "176518911234135@lid",
+  "apiKey": "fc_...",
+  "displayLabel": "Daniel Ranna"
+}
+```
+
+3. Bot manda no **privado** dessa pessoa:
+
+> O app Flashcards quer enviar cards neste WhatsApp (Daniel Ranna).  
+> Responda **SIM** para autorizar ou **NAO** para recusar.
+
+4. **SIM** → vínculo ativo; cards e lembretes usam a `fc_` key dela.  
+5. **NAO** → recusado; nada é enviado.
+
+A pessoa **não digita** a API key no WhatsApp — só confirma identidade.
+
+**Supabase (quiz):** rode `supabase-migration-flashcards-whatsapp-links.sql` no projeto do Papa Vagas.
+
+---
+
 ## Ordem recomendada (faça nesta sequência)
 
 | # | Onde | O quê |
@@ -182,6 +224,8 @@ curl.exe -s "https://papa-vagas.vercel.app/api/engagement"
 ---
 
 ## Parte C — Bot WhatsApp (VPS)
+
+> **Não sabe Linux?** Use o guia linha a linha: [`VPS-ENV-FLASHCARDS-LINUX.md`](./VPS-ENV-FLASHCARDS-LINUX.md) (nano, `cd`, `git pull`, pm2, o que colar no `.env`).
 
 ### C1. Variáveis no `.env` da VPS
 

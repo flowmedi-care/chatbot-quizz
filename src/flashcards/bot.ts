@@ -1,7 +1,7 @@
 import type { WASocket } from "@whiskeysockets/baileys";
 import { dateIsoInTimezone } from "../schedule";
-import type { FlashcardsConfig } from "./config";
-import { getFlashcardsConfig } from "./config";
+import type { FlashcardsBaseConfig, FlashcardsConfig } from "./config";
+import { getFlashcardsBaseConfig, userFlashcardsConfig } from "./config";
 import {
   cancelFlashcardsSession,
   confirmFlashcardsSession,
@@ -13,29 +13,35 @@ import {
   markFlashcardsDispatchSent,
   submitFlashcardsDispatchAnswer
 } from "./client";
+import {
+  FlashcardsWhatsappLink,
+  getFlashcardsLinkByUserJid,
+  listActiveFlashcardsLinks,
+  listFlashcardsLinksPendingConfirmationSend,
+  markFlashcardsLinkConfirmationSent,
+  setFlashcardsLinkStatus
+} from "./links";
 import type { FlashcardCard } from "./types";
 
 const RATING_LINE =
   "Avalie (FSRS):\n1 = Again\n2 = Hard\n3 = Good\n4 = Easy";
 
-/** Sessão aguardando SIM/NÃO após lembrete matinal. */
+/** Sessão de estudo (lembrete matinal SIM/NÃO). */
 const pendingConfirmSessionByJid = new Map<string, string>();
 
-/** Após enviar a frente: qualquer mensagem revela o verso. */
 const awaitingRevealByJid = new Map<
   string,
-  { dispatchId: string; card: FlashcardCard }
+  { dispatchId: string; card: FlashcardCard; userCfg: FlashcardsConfig }
 >();
 
-/** Aguardando nota 1–4. */
 const awaitingRatingByJid = new Map<
   string,
-  { dispatchId: string; card: FlashcardCard }
+  { dispatchId: string; card: FlashcardCard; userCfg: FlashcardsConfig }
 >();
 
 let pollTimer: NodeJS.Timeout | null = null;
-let cfg: FlashcardsConfig | null = null;
-let lastMorningIsoDate: string | null = null;
+let baseCfg: FlashcardsBaseConfig | null = null;
+const lastMorningIsoDateByJid = new Map<string, string>();
 
 function normalizeInboundText(text: string): string {
   return text.trim().toLowerCase().normalize("NFD").replace(/\p{M}/gu, "");
@@ -46,7 +52,10 @@ function isPrivateJid(jid: string): boolean {
   return t.endsWith("@s.whatsapp.net") || t.endsWith("@lid");
 }
 
-function resolveTargetJid(settings: { whatsapp_jid?: string | null; user_whatsapp_jid?: string | null }): string | null {
+function resolveTargetJid(settings: {
+  whatsapp_jid?: string | null;
+  user_whatsapp_jid?: string | null;
+}): string | null {
   const j =
     (settings.whatsapp_jid && String(settings.whatsapp_jid).trim()) ||
     (settings.user_whatsapp_jid && String(settings.user_whatsapp_jid).trim()) ||
@@ -135,13 +144,70 @@ function withinSendWindow(
   return h >= start || h <= end;
 }
 
-async function runMorningReminder(sock: WASocket): Promise<void> {
-  if (!cfg) return;
+async function listLinkedAccounts(): Promise<
+  { link: FlashcardsWhatsappLink | null; userCfg: FlashcardsConfig }[]
+> {
+  if (!baseCfg) return [];
+  const out: { link: FlashcardsWhatsappLink | null; userCfg: FlashcardsConfig }[] = [];
+
+  if (baseCfg.legacyApiKey) {
+    out.push({
+      link: null,
+      userCfg: userFlashcardsConfig(baseCfg, baseCfg.legacyApiKey)
+    });
+  }
+
+  try {
+    const active = await listActiveFlashcardsLinks();
+    for (const link of active) {
+      out.push({ link, userCfg: userFlashcardsConfig(baseCfg, link.apiKey) });
+    }
+  } catch (e) {
+    console.warn("[flashcards] listar vinculos ativos:", (e as Error).message);
+  }
+
+  return out;
+}
+
+async function sendLinkConfirmationRequests(sock: WASocket): Promise<void> {
+  let pending;
+  try {
+    pending = await listFlashcardsLinksPendingConfirmationSend();
+  } catch (e) {
+    console.warn("[flashcards] vinculos pendentes:", (e as Error).message);
+    return;
+  }
+
+  for (const link of pending) {
+    if (!isPrivateJid(link.userJid)) continue;
+    const who = link.displayLabel?.trim() || "sua conta Flashcards";
+    const text = [
+      `O app Flashcards quer enviar cards neste WhatsApp (${who}).`,
+      "",
+      "Responda SIM para autorizar ou NAO para recusar.",
+      "",
+      "(A API key fica só no servidor; voce nao precisa digitar nada aqui.)"
+    ].join("\n");
+    try {
+      await sock.sendMessage(link.userJid, { text });
+      await markFlashcardsLinkConfirmationSent(link.id);
+      console.log(`[flashcards] pedido de vinculo enviado para ${link.userJid}`);
+    } catch (e) {
+      console.error(`[flashcards] falha pedido vinculo ${link.userJid}:`, (e as Error).message);
+    }
+  }
+}
+
+async function runMorningReminderForUser(
+  sock: WASocket,
+  userCfg: FlashcardsConfig,
+  targetJid: string
+): Promise<void> {
   let settings;
   try {
-    settings = await getFlashcardsBotSettings(cfg);
+    settings = await getFlashcardsBotSettings(userCfg);
   } catch (e) {
-    console.warn("[flashcards] settings:", (e as Error).message);
+    console.warn(`[flashcards] settings ${targetJid}:`, (e as Error).message);
     return;
   }
 
@@ -151,24 +217,21 @@ async function runMorningReminder(sock: WASocket): Promise<void> {
   const today = dateIsoInTimezone(new Date(), tz);
   const startHour = settings.start_hour != null ? Number(settings.start_hour) : 7;
   if (hourInTimezone(tz) !== startHour) return;
-  if (lastMorningIsoDate === today) return;
+  if (lastMorningIsoDateByJid.get(targetJid) === today) return;
 
-  const targetJid = resolveTargetJid(settings);
-  if (!targetJid || !isPrivateJid(targetJid)) {
-    console.warn("[flashcards] whatsapp_jid nao configurado no app Flashcards (settings).");
-    return;
-  }
+  const resolved = resolveTargetJid(settings);
+  if (resolved && resolved !== targetJid) return;
 
   let pending;
   try {
-    pending = await getFlashcardsPending(cfg);
+    pending = await getFlashcardsPending(userCfg);
   } catch (e) {
-    console.warn("[flashcards] pending:", (e as Error).message);
+    console.warn(`[flashcards] pending ${targetJid}:`, (e as Error).message);
     return;
   }
 
   if (!pending.should_remind) {
-    lastMorningIsoDate = today;
+    lastMorningIsoDateByJid.set(targetJid, today);
     return;
   }
 
@@ -180,25 +243,27 @@ async function runMorningReminder(sock: WASocket): Promise<void> {
     await sock.sendMessage(targetJid, { text: template });
     const cardIds = pending.card_ids ?? [];
     if (cardIds.length > 0) {
-      const session = await createFlashcardsSession(cfg, cardIds);
+      const session = await createFlashcardsSession(userCfg, cardIds);
       if (session?.id) {
         pendingConfirmSessionByJid.set(targetJid, session.id);
       }
     }
-    lastMorningIsoDate = today;
-    console.log(`[flashcards] lembrete matinal enviado para ${targetJid}`);
+    lastMorningIsoDateByJid.set(targetJid, today);
+    console.log(`[flashcards] lembrete matinal -> ${targetJid}`);
   } catch (e) {
-    console.error("[flashcards] lembrete matinal:", (e as Error).message);
+    console.error(`[flashcards] lembrete ${targetJid}:`, (e as Error).message);
   }
 }
 
-async function runDispatchPoller(sock: WASocket): Promise<void> {
-  if (!cfg) return;
+async function runDispatchPollerForUser(
+  sock: WASocket,
+  userCfg: FlashcardsConfig,
+  targetJid: string
+): Promise<void> {
   let settings;
   try {
-    settings = await getFlashcardsBotSettings(cfg);
-  } catch (e) {
-    console.warn("[flashcards] settings (poll):", (e as Error).message);
+    settings = await getFlashcardsBotSettings(userCfg);
+  } catch {
     return;
   }
 
@@ -207,70 +272,118 @@ async function runDispatchPoller(sock: WASocket): Promise<void> {
   const tz = settings.timezone || "America/Sao_Paulo";
   if (!withinSendWindow(settings, tz)) return;
 
-  const targetJid = resolveTargetJid(settings);
-  if (!targetJid || !isPrivateJid(targetJid)) return;
+  const resolved = resolveTargetJid(settings);
+  const jid = resolved && isPrivateJid(resolved) ? resolved : targetJid;
+  if (!isPrivateJid(jid)) return;
 
-  if (awaitingRevealByJid.has(targetJid) || awaitingRatingByJid.has(targetJid)) {
-    return;
-  }
+  if (awaitingRevealByJid.has(jid) || awaitingRatingByJid.has(jid)) return;
 
   let items;
   try {
-    items = await listFlashcardsDispatchDue(cfg);
+    items = await listFlashcardsDispatchDue(userCfg);
   } catch (e) {
-    console.warn("[flashcards] dispatch/due:", (e as Error).message);
+    console.warn(`[flashcards] dispatch ${jid}:`, (e as Error).message);
     return;
   }
 
-  const list = Array.isArray(items) ? items : [];
-
-  for (const item of list) {
+  for (const item of items) {
     if (!item.card) continue;
     try {
-      await sendQuestion(sock, targetJid, item.card);
-      await markFlashcardsDispatchSent(cfg, item.dispatch_id);
-      awaitingRevealByJid.set(targetJid, {
+      await sendQuestion(sock, jid, item.card);
+      await markFlashcardsDispatchSent(userCfg, item.dispatch_id);
+      awaitingRevealByJid.set(jid, {
         dispatchId: item.dispatch_id,
-        card: item.card
+        card: item.card,
+        userCfg
       });
-      console.log(
-        `[flashcards] card enviado dispatch=${item.dispatch_id} deck=${item.card.deck_name ?? "?"}`
-      );
+      console.log(`[flashcards] card -> ${jid} dispatch=${item.dispatch_id}`);
       return;
     } catch (e) {
-      console.error(`[flashcards] falha dispatch ${item.dispatch_id}:`, (e as Error).message);
+      console.error(`[flashcards] dispatch ${item.dispatch_id}:`, (e as Error).message);
     }
   }
 }
 
 async function tick(sock: WASocket): Promise<void> {
   try {
-    await runMorningReminder(sock);
-    await runDispatchPoller(sock);
+    await sendLinkConfirmationRequests(sock);
+    const accounts = await listLinkedAccounts();
+    for (const { link, userCfg } of accounts) {
+      const jid =
+        link?.userJid ??
+        (await getFlashcardsBotSettings(userCfg).then((s) => resolveTargetJid(s)).catch(() => null));
+      if (!jid || !isPrivateJid(jid)) continue;
+      await runMorningReminderForUser(sock, userCfg, jid);
+      await runDispatchPollerForUser(sock, userCfg, jid);
+    }
   } catch (e) {
     console.error("[flashcards] tick:", (e as Error).message);
   }
 }
 
-async function restoreActiveSession(): Promise<void> {
-  if (!cfg) return;
-  try {
-    const session = await getFlashcardsActiveSession(cfg);
-    if (!session?.id) return;
-    const settings = await getFlashcardsBotSettings(cfg);
-    const jid = resolveTargetJid(settings);
-    if (jid) {
-      pendingConfirmSessionByJid.set(jid, session.id);
-      console.log(`[flashcards] sessao ativa restaurada: ${session.id}`);
+async function restoreActiveSessions(): Promise<void> {
+  const accounts = await listLinkedAccounts();
+  for (const { userCfg } of accounts) {
+    try {
+      const session = await getFlashcardsActiveSession(userCfg);
+      if (!session?.id) continue;
+      const settings = await getFlashcardsBotSettings(userCfg);
+      const jid = resolveTargetJid(settings);
+      if (jid) {
+        pendingConfirmSessionByJid.set(jid, session.id);
+        console.log(`[flashcards] sessao restaurada ${jid}: ${session.id}`);
+      }
+    } catch {
+      /* ignore per user */
     }
-  } catch (e) {
-    console.warn("[flashcards] restore session:", (e as Error).message);
   }
+}
+
+async function handleLinkConfirmationReply(
+  sock: WASocket,
+  remoteJid: string,
+  jid: string,
+  text: string
+): Promise<boolean> {
+  let link;
+  try {
+    link = await getFlashcardsLinkByUserJid(jid);
+  } catch {
+    return false;
+  }
+
+  if (!link || link.status !== "pending_confirm" || !link.confirmationSentAt) {
+    return false;
+  }
+
+  if (isYes(text)) {
+    await setFlashcardsLinkStatus(jid, "active");
+    await sock.sendMessage(remoteJid, {
+      text: [
+        "Vinculo autorizado.",
+        "Voce recebera os flashcards neste WhatsApp nos horarios do app.",
+        "Quando chegar o lembrete do dia, responda SIM para comecar a revisao."
+      ].join("\n")
+    });
+    return true;
+  }
+
+  if (isNo(text)) {
+    await setFlashcardsLinkStatus(jid, "rejected");
+    await sock.sendMessage(remoteJid, {
+      text: "Vinculo recusado. No app Flashcards voce pode escolher outro contato ou tentar de novo."
+    });
+    return true;
+  }
+
+  await sock.sendMessage(remoteJid, {
+    text: 'Responda SIM para autorizar o Flashcards neste numero ou NAO para recusar.'
+  });
+  return true;
 }
 
 /**
  * Trata mensagens no privado para o fluxo Flashcards (separado do quiz).
- * @returns true se consumiu a mensagem
  */
 export async function handleFlashcardsPrivateMessage(
   sock: WASocket,
@@ -278,17 +391,23 @@ export async function handleFlashcardsPrivateMessage(
   actorJid: string,
   text: string
 ): Promise<boolean> {
-  if (!cfg || !isPrivateJid(remoteJid)) return false;
+  if (!baseCfg || !isPrivateJid(remoteJid)) return false;
 
   const jid = actorJid.trim() || remoteJid;
 
+  const ratingState = awaitingRatingByJid.get(jid);
   const rating = parseRating(text);
-  if (rating != null && awaitingRatingByJid.has(jid)) {
-    const state = awaitingRatingByJid.get(jid)!;
+  if (rating != null && ratingState) {
     try {
-      await submitFlashcardsDispatchAnswer(cfg, state.dispatchId, rating);
+      await submitFlashcardsDispatchAnswer(
+        ratingState.userCfg,
+        ratingState.dispatchId,
+        rating
+      );
       awaitingRatingByJid.delete(jid);
-      await sock.sendMessage(remoteJid, { text: `Avaliacao registrada (${rating}).` });
+      await sock.sendMessage(remoteJid, {
+        text: `Avaliacao registrada (${rating}).`
+      });
     } catch (e) {
       await sock.sendMessage(remoteJid, {
         text: `Erro ao salvar avaliacao: ${(e as Error).message}`
@@ -297,11 +416,33 @@ export async function handleFlashcardsPrivateMessage(
     return true;
   }
 
+  if (await handleLinkConfirmationReply(sock, remoteJid, jid, text)) {
+    return true;
+  }
+
   const sessionId = pendingConfirmSessionByJid.get(jid);
   if (sessionId) {
+    let userCfg: FlashcardsConfig | null = null;
+    const accounts = await listLinkedAccounts();
+    for (const acc of accounts) {
+      try {
+        const settings = await getFlashcardsBotSettings(acc.userCfg);
+        if (resolveTargetJid(settings) === jid) {
+          userCfg = acc.userCfg;
+          break;
+        }
+      } catch {
+        continue;
+      }
+    }
+    if (!userCfg && baseCfg.legacyApiKey) {
+      userCfg = userFlashcardsConfig(baseCfg, baseCfg.legacyApiKey);
+    }
+    if (!userCfg) return false;
+
     if (isYes(text)) {
       try {
-        await confirmFlashcardsSession(cfg, sessionId);
+        await confirmFlashcardsSession(userCfg, sessionId);
         pendingConfirmSessionByJid.delete(jid);
         await sock.sendMessage(remoteJid, {
           text: "Ok! Vou enviar os cards nos horarios agendados."
@@ -315,7 +456,7 @@ export async function handleFlashcardsPrivateMessage(
     }
     if (isNo(text)) {
       try {
-        await cancelFlashcardsSession(cfg, sessionId);
+        await cancelFlashcardsSession(userCfg, sessionId);
         pendingConfirmSessionByJid.delete(jid);
         await sock.sendMessage(remoteJid, { text: "Sessao cancelada. Ate amanha." });
       } catch (e) {
@@ -353,24 +494,26 @@ export async function handleFlashcardsPrivateMessage(
 }
 
 export function startFlashcardsBot(sock: WASocket): void {
-  cfg = getFlashcardsConfig();
-  if (!cfg) {
-    console.log(
-      "[flashcards] desligado (defina FLASHCARDS_API_URL e FLASHCARDS_API_KEY no .env)."
-    );
+  baseCfg = getFlashcardsBaseConfig();
+  if (!baseCfg) {
+    console.log("[flashcards] desligado (defina FLASHCARDS_API_URL no .env).");
     return;
   }
 
+  const mode =
+    baseCfg.legacyApiKey != null
+      ? "URL + legado FLASHCARDS_API_KEY + vinculos SIM"
+      : "URL + vinculos por usuario (fc_ no Supabase apos SIM)";
   console.log(
-    `[flashcards] ativo — API ${cfg.apiUrl}, poll a cada ${cfg.pollIntervalMs / 1000}s`
+    `[flashcards] ativo — ${mode}, API ${baseCfg.apiUrl}, poll ${baseCfg.pollIntervalMs / 1000}s`
   );
 
-  void restoreActiveSession();
+  void restoreActiveSessions();
 
   if (pollTimer) clearInterval(pollTimer);
   pollTimer = setInterval(() => {
     void tick(sock);
-  }, cfg.pollIntervalMs);
+  }, baseCfg.pollIntervalMs);
 
   void tick(sock);
 }
@@ -380,5 +523,6 @@ export function stopFlashcardsBot(): void {
     clearInterval(pollTimer);
     pollTimer = null;
   }
-  cfg = null;
+  baseCfg = null;
+  lastMorningIsoDateByJid.clear();
 }
