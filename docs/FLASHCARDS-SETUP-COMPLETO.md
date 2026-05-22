@@ -135,16 +135,49 @@ Você **não** precisa de `FLASHCARDS_API_URL` nem `FLASHCARDS_API_KEY` no Verce
 
 ### B2. Redeploy do site Quiz
 
-1. Commit/push deste repo (se ainda não subiu `api/flashcards-whatsapp-users.js`).
-2. Redeploy no Vercel.
-3. Teste no navegador ou curl:
+1. **Push obrigatório:** a rota só existe no Vercel depois que o GitHub receber o commit com `api/flashcards-whatsapp-users.js`. No PC:
 
-```bash
-curl -s -H "Authorization: Bearer SEU_FLASHCARDS_BOT_INBOUND_SECRET" \
-  "https://SEU-DOMINIO-QUIZ.vercel.app/api/flashcards-whatsapp-users"
+```powershell
+cd "C:\Users\Daniel Ranna\Desktop\Concurso\chatbot quizz"
+git push origin main
 ```
 
-Esperado: JSON com `users: [...]` (pode vir vazio + `hint` se ainda não rodou `/sync-membros`).
+2. Aguarde o deploy automático no Vercel (ou **Deployments → Redeploy**).
+3. Confirme que `FLASHCARDS_BOT_INBOUND_SECRET` está em **Environment Variables** do projeto Papa Vagas (Production).
+
+### B3. Testar a rota (PowerShell no Windows)
+
+**Não cole** as linhas com ` ``` ` do Markdown no terminal — isso gera erro `The term '``' is not recognized`.
+
+Use **uma** destas opções (troque `SEU_SECRET` pelo valor real do Vercel):
+
+**Opção A — `curl.exe`** (recomendado; no PowerShell `curl` sozinho é outro comando):
+
+```powershell
+curl.exe -s -H "Authorization: Bearer SEU_SECRET" "https://papa-vagas.vercel.app/api/flashcards-whatsapp-users"
+```
+
+**Opção B — `Invoke-RestMethod`:**
+
+```powershell
+$headers = @{ Authorization = "Bearer SEU_SECRET" }
+Invoke-RestMethod -Uri "https://papa-vagas.vercel.app/api/flashcards-whatsapp-users" -Headers $headers
+```
+
+**Respostas possíveis:**
+
+| Resposta | Significado |
+|----------|-------------|
+| `{"users":[...],"groupJid":"..."}` | OK |
+| `{"error":"Unauthorized"}` | Secret errado ou header sem `Bearer ` |
+| `{"error":"FLASHCARDS_BOT_INBOUND_SECRET nao configurado..."}` | Falta a env no Vercel + redeploy |
+| `The page could not be found` / **NOT_FOUND** | Deploy antigo — faça `git push` e espere o Vercel terminar |
+
+**Sanidade:** `/api/engagement` no mesmo domínio deve dar 200 (não pede Bearer). Se engagement funciona e flashcards dá NOT_FOUND, falta push/deploy do commit novo.
+
+```powershell
+curl.exe -s "https://papa-vagas.vercel.app/api/engagement"
+```
 
 ---
 
@@ -262,9 +295,8 @@ Deve retornar JSON com `whatsapp_jid` preenchido.
 
 ### F2. Lista de usuários (Vercel quiz)
 
-```bash
-curl -s -H "Authorization: Bearer SEU_SECRET" \
-  "https://seu-quiz.vercel.app/api/flashcards-whatsapp-users"
+```powershell
+curl.exe -s -H "Authorization: Bearer SEU_SECRET" "https://papa-vagas.vercel.app/api/flashcards-whatsapp-users"
 ```
 
 ### F3. Fluxo real
@@ -292,6 +324,8 @@ curl -s -H "Authorization: Bearer SEU_SECRET" \
 | `[flashcards] desligado` | Env na VPS | `FLASHCARDS_API_URL` + `FLASHCARDS_API_KEY` + restart |
 | Lista WhatsApp vazia | Sem membros sync | `/sync-membros` no grupo |
 | 401 na lista de usuários | Secrets diferentes | `FLASHCARDS_BOT_INBOUND_SECRET` = `QUIZ_BOT_USERS_SECRET` |
+| NOT_FOUND na URL flashcards | Código não deployado | `git push origin main` + redeploy Vercel |
+| Erro `` ` `` no PowerShell | Colou markdown | Use só o comando dentro do bloco, sem backticks |
 | Bot não manda no privado | JID errado / vazio | Salvar `whatsapp_jid` no app Flashcards |
 | Cards não saem | Fora da janela ou sem `due` | `end_hour`, cards agendados, sessão confirmada com SIM |
 | SIM não funciona | Outro fluxo (omissas) | Responda só quando for mensagem do lembrete flashcards |
