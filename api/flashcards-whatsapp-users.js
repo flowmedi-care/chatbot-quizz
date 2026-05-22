@@ -8,22 +8,15 @@
 
 const { getClient, pickTargetGroupJid, applyCors } = require("./_lib.js");
 const { getMembersForGroup } = require("./_group-members.js");
-
-function checkInboundAuth(req) {
-  const secret = String(process.env.FLASHCARDS_BOT_INBOUND_SECRET || "").trim();
-  if (!secret) return { ok: false, error: "FLASHCARDS_BOT_INBOUND_SECRET nao configurado no bot." };
-  const auth = String(req.headers.authorization || "").trim();
-  if (auth !== `Bearer ${secret}`) return { ok: false, error: "Unauthorized" };
-  return { ok: true };
-}
+const { checkFlashcardsInboundAuth } = require("./_flashcards-inbound-auth.js");
 
 module.exports = async (req, res) => {
   applyCors(res);
   if (req.method === "OPTIONS") return res.status(204).end();
 
-  const auth = checkInboundAuth(req);
+  const auth = checkFlashcardsInboundAuth(req);
   if (!auth.ok) {
-    return res.status(auth.error === "Unauthorized" ? 401 : 503).json({ error: auth.error });
+    return res.status(auth.status).json({ error: auth.error });
   }
 
   if (req.method !== "GET") {

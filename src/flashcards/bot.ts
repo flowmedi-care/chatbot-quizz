@@ -22,6 +22,7 @@ import {
   setFlashcardsLinkStatus
 } from "./links";
 import type { FlashcardCard } from "./types";
+import { notifyFlashcardsAppAuthorized } from "./callback";
 
 const RATING_LINE =
   "Avalie (FSRS):\n1 = Again\n2 = Hard\n3 = Good\n4 = Easy";
@@ -357,7 +358,8 @@ async function handleLinkConfirmationReply(
   }
 
   if (isYes(text)) {
-    await setFlashcardsLinkStatus(jid, "active");
+    const updated = await setFlashcardsLinkStatus(jid, "active");
+    if (updated) void notifyFlashcardsAppAuthorized(updated);
     await sock.sendMessage(remoteJid, {
       text: [
         "Vinculo autorizado.",

@@ -7,27 +7,15 @@
  */
 
 const { getClient, applyCors } = require("./_lib.js");
-
-function checkInboundAuth(req) {
-  const secret = String(process.env.FLASHCARDS_BOT_INBOUND_SECRET || "").trim();
-  if (!secret) return { ok: false, error: "FLASHCARDS_BOT_INBOUND_SECRET nao configurado." };
-  const auth = String(req.headers.authorization || "").trim();
-  if (auth !== `Bearer ${secret}`) return { ok: false, error: "Unauthorized" };
-  return { ok: true };
-}
-
-function isPrivateJid(jid) {
-  const t = String(jid || "").toLowerCase();
-  return t.endsWith("@s.whatsapp.net") || t.endsWith("@lid");
-}
+const { checkFlashcardsInboundAuth, isPrivateJid } = require("./_flashcards-inbound-auth.js");
 
 module.exports = async (req, res) => {
   applyCors(res);
   if (req.method === "OPTIONS") return res.status(204).end();
 
-  const auth = checkInboundAuth(req);
+  const auth = checkFlashcardsInboundAuth(req);
   if (!auth.ok) {
-    return res.status(auth.error === "Unauthorized" ? 401 : 503).json({ error: auth.error });
+    return res.status(auth.status).json({ error: auth.error });
   }
 
   if (req.method !== "POST") {
