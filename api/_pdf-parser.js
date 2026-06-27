@@ -21,6 +21,8 @@
  *     PDF (`apagar`, `Ordenação:...`, URL do caderno em `/s/...`).
  */
 
+const { sanitizePostgresText } = require("./_text-sanitize.js");
+
 const QUESTION_URL_RE = /^www\.tecconcursos\.com\.br\/questoes\/(\d+)\s*$/i;
 const BARE_NUMBER_MARKER_RE = /^\d+\)\s*$/;
 const PAGE_FOOTER_RE = /^--\s+\d+\s+of\s+\d+\s+--$/i;
@@ -225,11 +227,14 @@ function parseTecConcursosPdf(rawText) {
       position,
       tecQuestionId: block.tecQuestionId,
       tecUrl: block.tecUrl,
-      banca,
-      subject,
+      banca: sanitizePostgresText(banca),
+      subject: sanitizePostgresText(subject),
       questionType,
-      statementText: finalStatement,
-      alternatives,
+      statementText: sanitizePostgresText(finalStatement),
+      alternatives: alternatives.map((a) => ({
+        letter: a.letter,
+        text: sanitizePostgresText(a.text)
+      })),
       answerKey
     };
   });

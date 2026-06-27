@@ -3,6 +3,7 @@ const { getClient, applyCors, pickTargetGroupJid } = require("./_lib.js");
 const { parseTecConcursosPdf } = require("./_pdf-parser.js");
 const { firstSlotFromSchedule } = require("./_schedule.js");
 const { normalizeSendTimesForDay } = require("./_send-times.js");
+const { sanitizePostgresText } = require("./_text-sanitize.js");
 
 const MAX_PDF_BYTES = 8 * 1024 * 1024;
 
@@ -228,12 +229,12 @@ module.exports = async (req, res) => {
   const rows = validForInsert.map((q) => ({
     caderno_id: cadernoId,
     position: q.position,
-    tec_question_id: q.tecQuestionId,
-    tec_url: q.tecUrl,
-    banca: q.banca,
-    subject: q.subject,
+    tec_question_id: sanitizePostgresText(q.tecQuestionId),
+    tec_url: sanitizePostgresText(q.tecUrl),
+    banca: sanitizePostgresText(q.banca),
+    subject: sanitizePostgresText(q.subject),
     question_type: q.questionType,
-    statement_text: q.statementText,
+    statement_text: sanitizePostgresText(q.statementText),
     answer_key: q.answerKey
   }));
 
