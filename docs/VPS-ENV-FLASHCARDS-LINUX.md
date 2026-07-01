@@ -150,12 +150,13 @@ Estas ficam no **Vercel**, não no servidor Linux:
 - `FLASHCARDS_BOT_INBOUND_SECRET` → só no projeto **Papa Vagas** (Vercel)  
 - `QUIZ_BOT_USERS_URL` / `QUIZ_BOT_USERS_SECRET` → só no projeto **Flashcards** (Vercel)
 
-Na VPS você **só** precisa de `FLASHCARDS_API_URL` + `FLASHCARDS_API_KEY`.
+Na VPS: `FLASHCARDS_API_URL` + `FLASHCARDS_POLL_MS`. Para o app Flashcards sair de **pendente** após o SIM no WhatsApp, adicione também `FLASHCARDS_BOT_INBOUND_SECRET` (mesmo token do Vercel Papa Vagas / `QUIZ_BOT_USERS_SECRET` no app Flashcards).
 
 ### Exemplo preenchido (fictício)
 
 ```env
-FLASHCARDS_API_URL=https://flashcards-daniel.vercel.app
+FLASHCARDS_API_URL=https://app-concurso.vercel.app
+FLASHCARDS_BOT_INBOUND_SECRET=mesmo_token_do_VERCEL_PAPA_VAGAS_e_do_app_Flashcards
 FLASHCARDS_API_KEY=fc_a1b2c3d4e5f6789012345678901234567890
 FLASHCARDS_POLL_MS=90000
 ```
