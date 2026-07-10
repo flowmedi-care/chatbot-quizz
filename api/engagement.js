@@ -1,21 +1,44 @@
 const { getClient, pickTargetGroupJid, applyCors } = require("./_lib.js");
 const { getMembersForGroup, getNameHintsForGroup, pickDisplayLabel } = require("./_group-members.js");
+const {
+  handleCadernoEngagementGet,
+  handleCadernoEngagementPatch
+} = require("./_caderno-engagement.js");
+
+function parseCadernoId(req) {
+  const raw = req.query?.cadernoId ?? (req.body && req.body.cadernoId);
+  const id = Number(raw);
+  return Number.isFinite(id) && id > 0 ? id : null;
+}
 
 module.exports = async (req, res) => {
   applyCors(res);
   if (req.method === "OPTIONS") return res.status(204).end();
 
   const groupJid = pickTargetGroupJid();
+  const cadernoId = parseCadernoId(req);
+
   if (!groupJid) {
     return res.status(200).json({
       members: [],
       groupJid: null,
+      cadernoId: cadernoId || undefined,
       warning: "TARGET_GROUP_JIDS nao configurado no Vercel."
     });
   }
 
   try {
     const supabase = getClient();
+
+    if (cadernoId != null) {
+      if (req.method === "GET") {
+        return handleCadernoEngagementGet(req, res, supabase, groupJid, cadernoId);
+      }
+      if (req.method === "PATCH") {
+        return handleCadernoEngagementPatch(req, res, supabase, groupJid, cadernoId);
+      }
+      return res.status(405).json({ error: "Method not allowed" });
+    }
 
     if (req.method === "GET") {
       const { members, warning } = await getMembersForGroup(supabase, groupJid);
@@ -60,7 +83,6 @@ module.exports = async (req, res) => {
         upd.error &&
         String(upd.error.message || "").toLowerCase().includes("engaged_since")
       ) {
-        // Coluna ainda não existe (migração pendente) — tenta sem ela.
         const fallback = { engaged, updated_at: nowIso };
         upd = await supabase
           .from("group_member_engagement")

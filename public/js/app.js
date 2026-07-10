@@ -7,7 +7,7 @@
     submit: "/api/question-submit",
     engagement: "/api/engagement",
     cadernoEngagement: (cadernoId) =>
-      `/api/caderno-engagement?cadernoId=${encodeURIComponent(cadernoId)}`,
+      `/api/engagement?cadernoId=${encodeURIComponent(cadernoId)}`,
     cadernos: "/api/cadernos",
     cadernoUpload: "/api/caderno-upload",
     cadernoDelete: "/api/caderno-delete"
