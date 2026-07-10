@@ -41,6 +41,8 @@ import {
   getQaStatsForGroup,
   getQuestionForRepeat,
   getEngagedUserJidsForGroup,
+  getEngagedUserJidsForCaderno,
+  getCadernoIdForQuestion,
   getQuestionCreatorAndGroup,
   getQuestionTargetGroupJid,
   getQuizModePrivate,
@@ -122,6 +124,7 @@ let activeSocketInstance = 0;
 type PendingChange = {
   questionId: string;
   newAnswerLetter: string;
+  newAnswerComment?: string | null;
 };
 const pendingAnswerChanges = new Map<string, PendingChange>();
 
@@ -200,10 +203,15 @@ async function maybePostAutoGabaritoToGroup(sock: WASocket, rawShortId: string):
       return;
     }
 
-    const engaged = await getEngagedUserJidsForGroup(groupJid);
+    const cadernoId = await getCadernoIdForQuestion(shortUp);
+    const engaged = cadernoId != null
+      ? await getEngagedUserJidsForCaderno(cadernoId)
+      : await getEngagedUserJidsForGroup(groupJid);
     if (engaged.length === 0) {
       console.log(
-        "[auto-gabarito] Nenhum membro engajado no grupo. Rode /sync-membros no grupo e marque engajados no site."
+        cadernoId != null
+          ? "[auto-gabarito] Nenhum membro engajado neste caderno. Marque engajados na edição do caderno no site."
+          : "[auto-gabarito] Nenhum membro engajado no grupo. Rode /sync-membros no grupo e marque engajados no site."
       );
       return;
     }
@@ -371,11 +379,21 @@ function truncateForWhatsApp(text: string, max = 700): string {
   return `${t.slice(0, max)}…`;
 }
 
+function formatRespondentLines(respondents: { name: string; letter: string; comment: string | null }[]): string {
+  if (!respondents.length) return "Ninguem";
+  return respondents
+    .map((r) => {
+      const base = `- ${r.name} (${r.letter})`;
+      return r.comment ? `${base}: ${r.comment}` : base;
+    })
+    .join("\n");
+}
+
 function buildResultMessage(result: Awaited<ReturnType<typeof getQuestionResult>>): string {
   const keys = buildDistributionKeys(result.questionType);
   const distributionLines = keys.map((key) => `${key} - ${result.distribution[key] ?? 0}`);
-  const correct = result.correctUsers.length ? result.correctUsers.join(", ") : "Ninguem";
-  const wrong = result.wrongUsers.length ? result.wrongUsers.join(", ") : "Ninguem";
+  const correct = formatRespondentLines(result.correctRespondents);
+  const wrong = formatRespondentLines(result.wrongRespondents);
 
   const hasExplanation = Boolean(result.explanationText && result.explanationText.trim().length > 0);
   const hasExplanationMedia = Boolean(result.explanationMediaUrl && result.explanationMediaMimeType);
@@ -492,7 +510,20 @@ async function repeatQuestionStatement(sock: WASocket, jid: string, shortId: str
     return;
   }
 
-  const header = `Questao #${row.shortId} (repeticao)\nPor: ${row.creatorName}`;
+  const headerParts = [`Questao #${row.shortId} (repeticao)`];
+  if (row.cadernoName) {
+    headerParts.push(`Caderno: ${row.cadernoName}`);
+  } else {
+    headerParts.push(`Por: ${row.creatorName}`);
+  }
+  if (row.engagedNames.length > 0) {
+    headerParts.push(
+      row.engagedNames.length === 1
+        ? `Engajado: ${row.engagedNames[0]}`
+        : `Engajados: ${row.engagedNames.join(", ")}`
+    );
+  }
+  const header = headerParts.join("\n");
   const body = row.statementText?.trim() ?? "";
 
   if (row.statementMediaUrl && row.statementMediaMimeType) {
@@ -536,7 +567,7 @@ async function buildCadernoProgressMessage(cadernoId: number): Promise<string> {
   const pctLine =
     engagedCount > 0
       ? `Resolvidas pelos engajados: ${resolvedByEngaged}/${publishedCount} (${pct}%)`
-      : `Resolvidas pelos engajados: — (nenhum engajado cadastrado, rode /sync-membros e marque no site)`;
+      : `Resolvidas pelos engajados: — (nenhum engajado neste caderno; marque na edição do caderno no site)`;
 
   const scheduleLine =
     caderno.sendTimes && caderno.sendTimes.length >= caderno.questionsPerDay
@@ -557,7 +588,7 @@ async function buildCadernoProgressMessage(cadernoId: number): Promise<string> {
     `Enviadas: ${publishedCount}/${totalQuestions}`,
     pctLine,
     `Com pelo menos 1 resposta: ${withAnyAnswer}/${publishedCount}`,
-    `Engajados no grupo: ${engagedCount}`,
+    `Engajados no caderno: ${engagedCount}`,
     "",
     `Próximo envio: ${formatNextRunPretty(caderno.nextRunAt, caderno.timezone)}`,
     `Último envio: ${formatNextRunPretty(caderno.lastRunAt, caderno.timezone)}`
@@ -1042,6 +1073,7 @@ async function startBot(): Promise<void> {
                   userJid: sender,
                   userName: getDisplayName(msg, sender),
                   answerLetter: pending.newAnswerLetter,
+                  answerComment: pending.newAnswerComment ?? null,
                   sentAt,
                   sourceMessageId: messageId
                 });
@@ -1229,11 +1261,13 @@ async function startBot(): Promise<void> {
             if (existing) {
               pendingAnswerChanges.set(sender, {
                 questionId: command.questionId,
-                newAnswerLetter: command.answer
+                newAnswerLetter: command.answer,
+                newAnswerComment: command.comment ?? null
               });
 
+              const commentNote = command.comment ? "\n(com comentario)" : "";
               await sock.sendMessage(remoteJid, {
-                text: `Voce ja respondeu essa questao.\nDeseja alterar sua ultima resposta para ${command.answer.toUpperCase()}?\nResponda "sim" ou "nao".`
+                text: `Voce ja respondeu essa questao.\nDeseja alterar sua ultima resposta para ${command.answer.toUpperCase()}?${commentNote}\nResponda "sim" ou "nao".`
               });
               continue;
             }
@@ -1244,6 +1278,7 @@ async function startBot(): Promise<void> {
                 userJid: sender,
                 userName: getDisplayName(msg, sender),
                 answerLetter: command.answer,
+                answerComment: command.comment ?? null,
                 sentAt,
                 sourceMessageId: messageId
               });

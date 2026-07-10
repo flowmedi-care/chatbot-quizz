@@ -314,6 +314,7 @@ export async function insertAnswer(input: AnswerInput): Promise<void> {
     user_jid: input.userJid,
     user_name: input.userName,
     answer_letter: input.answerLetter.toLowerCase(),
+    answer_comment: input.answerComment?.trim() || null,
     source_message_id: input.sourceMessageId,
     sent_at: input.sentAt
   });
@@ -381,6 +382,7 @@ export async function updateUserAnswer(input: AnswerInput): Promise<void> {
       question_short_id: input.questionShortId.toUpperCase(),
       user_name: input.userName,
       answer_letter: input.answerLetter.toLowerCase(),
+      answer_comment: input.answerComment?.trim() || null,
       source_message_id: input.sourceMessageId,
       sent_at: input.sentAt
     })
@@ -399,6 +401,7 @@ export async function updateUserAnswer(input: AnswerInput): Promise<void> {
       user_jid: input.userJid,
       user_name: input.userName,
       answer_letter: input.answerLetter.toLowerCase(),
+      answer_comment: input.answerComment?.trim() || null,
       source_message_id: input.sourceMessageId,
       sent_at: input.sentAt
     });
@@ -417,6 +420,12 @@ export async function updateUserAnswer(input: AnswerInput): Promise<void> {
   }
 }
 
+export type QuestionRespondent = {
+  name: string;
+  letter: string;
+  comment: string | null;
+};
+
 export type QuestionResult = {
   shortId: string;
   answerKey: string;
@@ -431,6 +440,8 @@ export type QuestionResult = {
   distribution: Record<string, number>;
   correctUsers: string[];
   wrongUsers: string[];
+  correctRespondents: QuestionRespondent[];
+  wrongRespondents: QuestionRespondent[];
 };
 
 export async function getQuestionTargetGroupJid(shortId: string): Promise<string | null> {
@@ -483,7 +494,7 @@ export async function getQuestionResult(shortId: string): Promise<QuestionResult
 
   const { data: answers, error } = await supabase
     .from("answers")
-    .select("answer_letter, user_name, user_jid")
+    .select("answer_letter, user_name, user_jid, answer_comment")
     .eq("question_short_id", normalizedId);
 
   if (error) {
@@ -494,6 +505,8 @@ export async function getQuestionResult(shortId: string): Promise<QuestionResult
     question.question_type === "true_false" ? { C: 0, E: 0 } : { A: 0, B: 0, C: 0, D: 0, E: 0 };
   const correctUsers: string[] = [];
   const wrongUsers: string[] = [];
+  const correctRespondents: QuestionRespondent[] = [];
+  const wrongRespondents: QuestionRespondent[] = [];
 
   for (const row of answers) {
     const letter = String(row.answer_letter).toUpperCase();
@@ -502,10 +515,16 @@ export async function getQuestionResult(shortId: string): Promise<QuestionResult
     }
 
     const label = (row.user_name && row.user_name.trim()) || row.user_jid;
+    const commentRaw = row.answer_comment != null ? String(row.answer_comment).trim() : "";
+    const comment = commentRaw.length > 0 ? commentRaw : null;
+    const respondent: QuestionRespondent = { name: label, letter, comment };
+
     if (letter === String(question.answer_key).toUpperCase()) {
       correctUsers.push(label);
+      correctRespondents.push(respondent);
     } else {
       wrongUsers.push(label);
+      wrongRespondents.push(respondent);
     }
   }
 
@@ -525,7 +544,9 @@ export async function getQuestionResult(shortId: string): Promise<QuestionResult
     explanationMediaMimeType: question.explanation_media_mime_type,
     distribution,
     correctUsers,
-    wrongUsers
+    wrongUsers,
+    correctRespondents,
+    wrongRespondents
   };
 }
 
@@ -535,6 +556,8 @@ export type QuestionRepeatPayload = {
   statementText: string | null;
   statementMediaUrl: string | null;
   statementMediaMimeType: string | null;
+  cadernoName: string | null;
+  engagedNames: string[];
 };
 
 export async function getQuestionForRepeat(shortId: string): Promise<QuestionRepeatPayload | null> {
@@ -553,12 +576,23 @@ export async function getQuestionForRepeat(shortId: string): Promise<QuestionRep
 
   const statementText = data.statement_text && String(data.statement_text).trim() ? String(data.statement_text).trim() : null;
 
+  let cadernoName: string | null = null;
+  let engagedNames: string[] = [];
+  const cadernoId = await getCadernoIdForQuestion(normalizedId);
+  if (cadernoId != null) {
+    const caderno = await getCadernoById(cadernoId);
+    if (caderno) cadernoName = caderno.name;
+    engagedNames = await getEngagedDisplayNamesForCaderno(cadernoId);
+  }
+
   return {
     shortId: String(data.short_id ?? normalizedId).toUpperCase(),
     creatorName: data.creator_name ? String(data.creator_name) : "Autor",
     statementText,
     statementMediaUrl: data.statement_media_url ?? null,
-    statementMediaMimeType: data.statement_media_mime_type ?? null
+    statementMediaMimeType: data.statement_media_mime_type ?? null,
+    cadernoName,
+    engagedNames
   };
 }
 
@@ -980,6 +1014,284 @@ export async function setGroupMemberEngaged(
     }
     throw new Error(`Erro ao atualizar engajamento: ${error.message}`);
   }
+}
+
+export type CadernoEngagementRow = GroupMemberEngagementRow;
+
+function engagementDisplayLabel(row: {
+  userJid: string;
+  userLabel: string | null;
+  quizDisplayName: string | null;
+}): string {
+  if (row.quizDisplayName && row.quizDisplayName.trim()) return row.quizDisplayName.trim();
+  if (row.userLabel && row.userLabel.trim()) return row.userLabel.trim();
+  const at = row.userJid.indexOf("@");
+  return at > 0 ? row.userJid.slice(0, at) : row.userJid;
+}
+
+export async function getCadernoIdForQuestion(shortId: string): Promise<number | null> {
+  const normalizedId = shortId.toUpperCase();
+  const { data: question, error } = await supabase
+    .from("questions")
+    .select("id, creator_jid")
+    .eq("short_id", normalizedId)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Erro ao buscar questao para caderno: ${error.message}`);
+  }
+  if (!question) return null;
+
+  const creatorJid = question.creator_jid ? String(question.creator_jid) : "";
+  const m = creatorJid.match(/^caderno:(\d+)@bot$/i);
+  if (m) {
+    const id = Number(m[1]);
+    if (Number.isFinite(id) && id > 0) return id;
+  }
+
+  const qid = Number(question.id);
+  if (!Number.isFinite(qid)) return null;
+
+  const { data: cq, error: cqErr } = await supabase
+    .from("caderno_questions")
+    .select("caderno_id")
+    .eq("published_question_id", qid)
+    .maybeSingle();
+
+  if (cqErr) {
+    const msg = cqErr.message.toLowerCase();
+    if (!msg.includes("relation") || !msg.includes("does not exist")) {
+      throw new Error(`Erro ao buscar caderno da questao: ${cqErr.message}`);
+    }
+    return null;
+  }
+
+  if (!cq?.caderno_id) return null;
+  const cadernoId = Number(cq.caderno_id);
+  return Number.isFinite(cadernoId) && cadernoId > 0 ? cadernoId : null;
+}
+
+export async function getEngagedUserJidsForCaderno(cadernoId: number): Promise<string[]> {
+  const { data, error } = await supabase
+    .from("caderno_engagement")
+    .select("user_jid")
+    .eq("caderno_id", cadernoId)
+    .eq("engaged", true);
+
+  if (error) {
+    const msg = error.message.toLowerCase();
+    if (msg.includes("relation") && msg.includes("does not exist")) return [];
+    throw new Error(`Erro ao ler engajamento do caderno: ${error.message}`);
+  }
+
+  return [...new Set((data ?? []).map((r) => String(r.user_jid)).filter(Boolean))];
+}
+
+export async function getEngagedEligibleUserJidsForCadernoAt(
+  cadernoId: number,
+  publishedAtIso: string
+): Promise<string[]> {
+  const { data, error } = await supabase
+    .from("caderno_engagement")
+    .select("user_jid, engaged_since")
+    .eq("caderno_id", cadernoId)
+    .eq("engaged", true);
+
+  if (error) {
+    const msg = error.message.toLowerCase();
+    if (msg.includes("relation") && msg.includes("does not exist")) return [];
+    if (msg.includes("column") && msg.includes("does not exist")) {
+      return getEngagedUserJidsForCaderno(cadernoId);
+    }
+    throw new Error(`Erro ao ler engajamento elegivel do caderno: ${error.message}`);
+  }
+
+  const pubTs = new Date(publishedAtIso).getTime();
+  const out = new Set<string>();
+  for (const row of data ?? []) {
+    const jid = row.user_jid ? String(row.user_jid) : "";
+    if (!jid) continue;
+    const since = row.engaged_since ? new Date(String(row.engaged_since)).getTime() : 0;
+    if (!Number.isFinite(since) || since <= pubTs) {
+      out.add(jid);
+    }
+  }
+  return [...out];
+}
+
+export async function getEngagedDisplayNamesForCaderno(cadernoId: number): Promise<string[]> {
+  const { data, error } = await supabase
+    .from("caderno_engagement")
+    .select("user_jid, user_label, quiz_display_name")
+    .eq("caderno_id", cadernoId)
+    .eq("engaged", true);
+
+  if (error) {
+    const msg = error.message.toLowerCase();
+    if (msg.includes("relation") && msg.includes("does not exist")) return [];
+    throw new Error(`Erro ao ler nomes engajados do caderno: ${error.message}`);
+  }
+
+  return (data ?? []).map((r) =>
+    engagementDisplayLabel({
+      userJid: String(r.user_jid),
+      userLabel: r.user_label ? String(r.user_label) : null,
+      quizDisplayName: r.quiz_display_name != null ? String(r.quiz_display_name) : null
+    })
+  );
+}
+
+export async function getEngagedDisplayNameForUser(
+  cadernoId: number,
+  userJid: string
+): Promise<string | null> {
+  const { data, error } = await supabase
+    .from("caderno_engagement")
+    .select("user_jid, user_label, quiz_display_name")
+    .eq("caderno_id", cadernoId)
+    .eq("user_jid", userJid)
+    .maybeSingle();
+
+  if (error) {
+    const msg = error.message.toLowerCase();
+    if (msg.includes("relation") && msg.includes("does not exist")) return null;
+    throw new Error(`Erro ao buscar nome engajado: ${error.message}`);
+  }
+  if (!data) return null;
+
+  return engagementDisplayLabel({
+    userJid: String(data.user_jid),
+    userLabel: data.user_label ? String(data.user_label) : null,
+    quizDisplayName: data.quiz_display_name != null ? String(data.quiz_display_name) : null
+  });
+}
+
+export async function listCadernoEngagementMembers(
+  cadernoId: number,
+  groupJid: string
+): Promise<CadernoEngagementRow[]> {
+  const groupMembers = await listGroupMembersEngagementRows(groupJid);
+  const { data: cadernoRows, error } = await supabase
+    .from("caderno_engagement")
+    .select("user_jid, user_label, quiz_display_name, engaged, engaged_since, updated_at")
+    .eq("caderno_id", cadernoId);
+
+  if (error) {
+    const msg = error.message.toLowerCase();
+    if (msg.includes("relation") && msg.includes("does not exist")) {
+      return groupMembers.map((m) => ({ ...m, engaged: false }));
+    }
+    throw new Error(`Erro ao listar engajamento do caderno: ${error.message}`);
+  }
+
+  const byJid = new Map(
+    (cadernoRows ?? []).map((r) => [
+      String(r.user_jid),
+      {
+        userJid: String(r.user_jid),
+        userLabel: r.user_label ? String(r.user_label) : null,
+        quizDisplayName: r.quiz_display_name != null ? String(r.quiz_display_name) : null,
+        engaged: Boolean(r.engaged),
+        updatedAt: r.updated_at ? String(r.updated_at) : null
+      }
+    ])
+  );
+
+  const out: CadernoEngagementRow[] = [];
+  const seen = new Set<string>();
+
+  for (const m of groupMembers) {
+    seen.add(m.userJid);
+    const ce = byJid.get(m.userJid);
+    out.push(
+      ce ?? {
+        userJid: m.userJid,
+        userLabel: m.userLabel,
+        quizDisplayName: m.quizDisplayName,
+        engaged: false,
+        updatedAt: null
+      }
+    );
+  }
+
+  for (const [jid, ce] of byJid) {
+    if (!seen.has(jid)) out.push(ce);
+  }
+
+  return out.sort((a, b) =>
+    engagementDisplayLabel(a).localeCompare(engagementDisplayLabel(b), "pt-BR")
+  );
+}
+
+export async function setCadernoEngagement(
+  cadernoId: number,
+  groupJid: string,
+  userJid: string,
+  engaged: boolean
+): Promise<void> {
+  const nowIso = new Date().toISOString();
+
+  const { data: groupRow } = await supabase
+    .from("group_member_engagement")
+    .select("user_label, quiz_display_name")
+    .eq("group_jid", groupJid)
+    .eq("user_jid", userJid)
+    .maybeSingle();
+
+  const userLabel = groupRow?.user_label ? String(groupRow.user_label) : null;
+  const quizDisplayName =
+    groupRow?.quiz_display_name != null ? String(groupRow.quiz_display_name) : null;
+
+  const { data: existing } = await supabase
+    .from("caderno_engagement")
+    .select("engaged, engaged_since")
+    .eq("caderno_id", cadernoId)
+    .eq("user_jid", userJid)
+    .maybeSingle();
+
+  const patch: Record<string, unknown> = {
+    caderno_id: cadernoId,
+    user_jid: userJid,
+    user_label: userLabel,
+    quiz_display_name: quizDisplayName,
+    engaged,
+    updated_at: nowIso
+  };
+
+  if (engaged) {
+    const wasEngaged = Boolean(existing && existing.engaged);
+    const hadSince = Boolean(existing && existing.engaged_since);
+    if (!wasEngaged || !hadSince) {
+      patch.engaged_since = nowIso;
+    } else if (existing?.engaged_since) {
+      patch.engaged_since = existing.engaged_since;
+    }
+  } else {
+    patch.engaged_since = null;
+  }
+
+  const { error } = await supabase.from("caderno_engagement").upsert(patch, {
+    onConflict: "caderno_id,user_jid"
+  });
+
+  if (error) {
+    const msg = error.message.toLowerCase();
+    if (msg.includes("column") && msg.includes("engaged_since")) {
+      const fallback = { ...patch };
+      delete fallback.engaged_since;
+      const { error: e2 } = await supabase.from("caderno_engagement").upsert(fallback, {
+        onConflict: "caderno_id,user_jid"
+      });
+      if (e2) throw new Error(`Erro ao atualizar engajamento do caderno: ${e2.message}`);
+      return;
+    }
+    throw new Error(`Erro ao atualizar engajamento do caderno: ${error.message}`);
+  }
+}
+
+export async function countEngagedForCaderno(cadernoId: number): Promise<number> {
+  const jids = await getEngagedUserJidsForCaderno(cadernoId);
+  return jids.length;
 }
 
 export async function upsertGroupMembersFromSync(
@@ -2046,10 +2358,10 @@ export type CadernoProgress = {
  * Calcula o progresso do caderno:
  *  - `publishedCount`: quantas questões do caderno já foram enviadas ao grupo.
  *  - `resolvedByEngaged`: das publicadas, quantas tiveram resposta de
- *    **todos** os engajados do grupo (mesmo critério do auto-gabarito).
+ *    **todos** os engajados **deste caderno** (mesmo critério do auto-gabarito).
  *  - `withAnyAnswer`: das publicadas, quantas tiveram **pelo menos uma**
  *    resposta. Útil quando não há engajados configurados.
- *  - `engagedCount`: total de engajados no grupo (referência para o cálculo).
+ *  - `engagedCount`: total de engajados neste caderno (referência para o cálculo).
  */
 export async function getCadernoProgress(cadernoId: number): Promise<CadernoProgress | null> {
   const caderno = await getCadernoById(cadernoId);
@@ -2154,7 +2466,7 @@ export async function getCadernoProgress(cadernoId: number): Promise<CadernoProg
     };
   }
 
-  const engagedJids = await getEngagedUserJidsForGroup(caderno.targetGroupJid);
+  const engagedJids = await getEngagedUserJidsForCaderno(cadernoId);
   const engagedCount = engagedJids.length;
   const engagedComparable = new Set(engagedJids.map((j) => jidComparableKeyShared(j)));
 

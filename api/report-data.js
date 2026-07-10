@@ -38,7 +38,7 @@ module.exports = async (req, res) => {
     if (questionIds.length) {
       const { data: ans, error: aErr } = await supabase
         .from("answers")
-        .select("question_id, question_short_id, user_jid, user_name, answer_letter")
+        .select("question_id, question_short_id, user_jid, user_name, answer_letter, answer_comment")
         .in("question_id", questionIds);
 
       if (aErr) throw aErr;
@@ -58,6 +58,10 @@ module.exports = async (req, res) => {
         userName: (row.user_name && String(row.user_name).trim()) || row.user_jid,
         answerLetter: String(row.answer_letter || "").toLowerCase(),
         answerLetterDisplay: normalizeLetter(row.answer_letter),
+        answerComment:
+          row.answer_comment != null && String(row.answer_comment).trim()
+            ? String(row.answer_comment).trim()
+            : null,
         correct
       };
     });

@@ -79,6 +79,22 @@ async function handleGet(req, res, supabase) {
     const privateIds = cadernos.filter((c) => c.delivery_mode === "private").map((c) => c.id);
     const privateSendCount = new Map();
     const privateRecipientsByCaderno = new Map();
+    const engagedCountByCaderno = new Map();
+
+    const groupIds = cadernos.filter((c) => c.delivery_mode !== "private").map((c) => c.id);
+    if (groupIds.length > 0) {
+      const { data: engRows, error: engErr } = await supabase
+        .from("caderno_engagement")
+        .select("caderno_id")
+        .in("caderno_id", groupIds)
+        .eq("engaged", true);
+      if (!engErr && engRows) {
+        for (const row of engRows) {
+          const cid = row.caderno_id;
+          engagedCountByCaderno.set(cid, (engagedCountByCaderno.get(cid) || 0) + 1);
+        }
+      }
+    }
 
     if (privateIds.length > 0) {
       const { data: sends, error: sErr } = await supabase
@@ -155,6 +171,7 @@ async function handleGet(req, res, supabase) {
         randomOrder: Boolean(c.random_order),
         totalQuestions: totalByCaderno.get(c.id) || 0,
         publishedCount,
+        engagedCount: engagedCountByCaderno.get(c.id) || 0,
         lastRunAt: c.last_run_at,
         nextRunAt: dm === "private" ? null : c.next_run_at,
         createdAt: c.created_at,

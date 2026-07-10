@@ -106,9 +106,9 @@
           <div>
             <h3 id="engagement-title">Engajamento</h3>
             <p class="report-sub">
-              Marque quem entra no fechamento automático do gabarito no grupo: quando todos os engajados
-              (exceto quem criou a questão) responderem, o bot publica o resultado. Quem não está marcado
-              pode responder à vontade; não bloqueia o envio.
+              Marque quem entra no fechamento automático do gabarito para <strong>questões manuais</strong>
+              (criadas com <code>nova questao</code> no privado). Para cadernos, configure os engajados em
+              <strong>Cadernos → Editar</strong>.
             </p>
             <p class="report-sub engagement-hint">
               A lista vem do WhatsApp: no grupo, envie <code>/sync-membros</code> para atualizar participantes.
@@ -330,7 +330,7 @@
             <span>
               <strong>Esperar resposta entre dias</strong>
               <small>
-                Só começa o dia seguinte quando todos os engajados responderem as questões do dia anterior.
+                Só começa o dia seguinte quando todos os engajados <strong>deste caderno</strong> responderem as questões do dia anterior.
                 Novos engajados não travam — seguem a partir do ponto do grupo.
               </small>
             </span>
@@ -357,6 +357,18 @@
               Carregar membros do grupo
             </button>
             <ul id="caderno-edit-private-list" class="caderno-private-list"></ul>
+          </div>
+
+          <div id="caderno-edit-engagement-panel" class="caderno-engagement-panel">
+            <p class="report-sub">
+              <strong>Engajados deste caderno</strong> — quando todos responderem, o bot publica o gabarito no grupo.
+              Quem não está marcado pode responder, mas não bloqueia o fechamento.
+            </p>
+            <button type="button" id="btn-caderno-edit-load-engagement" class="btn-tutorial">
+              Carregar membros do grupo
+            </button>
+            <p id="caderno-edit-engagement-status" class="report-status" role="status" aria-live="polite"></p>
+            <ul id="caderno-edit-engagement-list" class="engagement-list"></ul>
           </div>
 
           <div class="caderno-actions">

@@ -192,9 +192,56 @@ export function hasSupportedMedia(msg: WAMessage): boolean {
   return Boolean(msg.message?.imageMessage) || Boolean(msg.message?.documentMessage);
 }
 
+function parseAnswerWithOptionalComment(text: string):
+  | { answer: string; questionId: string; comment?: string }
+  | null {
+  const raw = text.trim();
+  const normalized = normalizeInput(raw);
+
+  const bracketMatch = raw.match(/^\[\s*([a-z0-9-]+)\s+([abcde])(?:\s*,\s*(.+))?\s*\]$/i);
+  if (bracketMatch) {
+    const comment = bracketMatch[3]?.trim();
+    return {
+      questionId: bracketMatch[1].toUpperCase().trim(),
+      answer: bracketMatch[2].toLowerCase(),
+      comment: comment || undefined
+    };
+  }
+
+  const bracketAlt = raw.match(/^\[\s*([abcde])\s+([a-z0-9-]+)(?:\s*,\s*(.+))?\s*\]$/i);
+  if (bracketAlt) {
+    const comment = bracketAlt[3]?.trim();
+    return {
+      answer: bracketAlt[1].toLowerCase(),
+      questionId: bracketAlt[2].toUpperCase().trim(),
+      comment: comment || undefined
+    };
+  }
+
+  const commaLetterFirst = normalized.match(/^([abcde])\s*([a-z0-9-]+)\s*,\s*(.+)$/i);
+  if (commaLetterFirst) {
+    return {
+      answer: commaLetterFirst[1].toLowerCase(),
+      questionId: commaLetterFirst[2].toUpperCase().trim(),
+      comment: commaLetterFirst[3].trim()
+    };
+  }
+
+  const commaIdFirst = normalized.match(/^([a-z0-9-]+)\s*([abcde])\s*,\s*(.+)$/i);
+  if (commaIdFirst) {
+    return {
+      answer: commaIdFirst[2].toLowerCase(),
+      questionId: commaIdFirst[1].toUpperCase().trim(),
+      comment: commaIdFirst[3].trim()
+    };
+  }
+
+  return null;
+}
+
 export function parsePrivateCommand(text: string):
   | { kind: "new_question" }
-  | { kind: "answer"; answer: string; questionId: string }
+  | { kind: "answer"; answer: string; questionId: string; comment?: string }
   | { kind: "answer_key"; questionId: string }
   | { kind: "ranking" }
   | { kind: "qa_stats" }
@@ -211,6 +258,16 @@ export function parsePrivateCommand(text: string):
 
   if (parseQaCommand(text)) {
     return { kind: "qa_stats" };
+  }
+
+  const withComment = parseAnswerWithOptionalComment(text);
+  if (withComment) {
+    return {
+      kind: "answer",
+      answer: withComment.answer,
+      questionId: withComment.questionId,
+      comment: withComment.comment
+    };
   }
 
   /* Letra + id (ex: c 9, c9, e 12). Opcional: id + letra (ex: 9 c, 12e). */

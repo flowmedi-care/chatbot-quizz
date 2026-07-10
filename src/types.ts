@@ -34,6 +34,7 @@ export type AnswerInput = {
   userJid: string;
   userName: string;
   answerLetter: string;
+  answerComment?: string | null;
   sentAt: string;
   sourceMessageId: string;
 };

@@ -6,6 +6,8 @@
     detail: (id) => `/api/question-detail?shortId=${encodeURIComponent(id)}`,
     submit: "/api/question-submit",
     engagement: "/api/engagement",
+    cadernoEngagement: (cadernoId) =>
+      `/api/caderno-engagement?cadernoId=${encodeURIComponent(cadernoId)}`,
     cadernos: "/api/cadernos",
     cadernoUpload: "/api/caderno-upload",
     cadernoDelete: "/api/caderno-delete"
@@ -90,6 +92,10 @@
     cadernoEditPrivatePanel: document.getElementById("caderno-edit-private-panel"),
     cadernoEditPrivateList: document.getElementById("caderno-edit-private-list"),
     btnCadernoEditLoadMembers: document.getElementById("btn-caderno-edit-load-members"),
+    cadernoEditEngagementPanel: document.getElementById("caderno-edit-engagement-panel"),
+    cadernoEditEngagementList: document.getElementById("caderno-edit-engagement-list"),
+    cadernoEditEngagementStatus: document.getElementById("caderno-edit-engagement-status"),
+    btnCadernoEditLoadEngagement: document.getElementById("btn-caderno-edit-load-engagement"),
     cadernoEditStatus: document.getElementById("caderno-edit-status"),
     btnCadernoEditSave: document.getElementById("btn-caderno-edit-save"),
     btnCadernoEditCancel: document.getElementById("btn-caderno-edit-cancel")
@@ -106,6 +112,9 @@
   let submitPayload = null;
   /** @type {{ userJid: string, userLabel: string | null, displayLabel?: string | null, engaged: boolean }[]} */
   let engagementMembersCache = [];
+  /** @type {{ userJid: string, userLabel: string | null, displayLabel?: string | null, engaged: boolean }[]} */
+  let cadernoEngagementCache = [];
+  let cadernoEngagementEditId = null;
 
   async function fetchJson(url, options = {}) {
     const headers = { ...(options.headers || {}) };
@@ -643,16 +652,17 @@
       if (scopeJid === "__all__") {
         lines.push("### Respostas (WhatsApp)");
         lines.push("");
-        lines.push("| Participante | Marcou | Gabarito | Resultado |");
-        lines.push("| --- | --- | --- | --- |");
+        lines.push("| Participante | Marcou | Gabarito | Resultado | Comentário |");
+        lines.push("| --- | --- | --- | --- | --- |");
         if (!answersHere.length) {
-          lines.push("| — | — | — | Nenhuma resposta registrada |");
+          lines.push("| — | — | — | Nenhuma resposta registrada | — |");
         } else {
           for (const row of answersHere.sort((a, b) =>
             a.userName.localeCompare(b.userName, "pt-BR")
           )) {
+            const commentCell = row.answerComment ? mdCell(row.answerComment) : "—";
             lines.push(
-              `| ${mdCell(row.userName)} | ${formatMarcada(row.answerLetterDisplay, q)} | ${formatGabarito(q)} | ${row.correct ? "Certo" : "Errado"} |`
+              `| ${mdCell(row.userName)} | ${formatMarcada(row.answerLetterDisplay, q)} | ${formatGabarito(q)} | ${row.correct ? "Certo" : "Errado"} | ${commentCell} |`
             );
           }
         }
@@ -665,6 +675,9 @@
           lines.push("*Sem resposta registrada para esta questão.*");
         } else {
           lines.push(`- **Marcou:** ${formatMarcada(row.answerLetterDisplay, q)}`);
+          if (row.answerComment) {
+            lines.push(`- **Comentário:** ${row.answerComment}`);
+          }
           lines.push(`- **Gabarito:** ${formatGabarito(q)}`);
           lines.push(`- **Resultado:** ${row.correct ? "Certo" : "Errado"}`);
         }
@@ -980,6 +993,111 @@
     const priv = getCadernoEditDeliveryMode() === "private";
     if (els.cadernoEditPrivatePanel) els.cadernoEditPrivatePanel.classList.toggle("hidden", !priv);
     if (els.cadernoEditGroupSchedule) els.cadernoEditGroupSchedule.classList.toggle("hidden", priv);
+    if (els.cadernoEditEngagementPanel) els.cadernoEditEngagementPanel.classList.toggle("hidden", priv);
+  }
+
+  function renderCadernoEngagementList() {
+    if (!els.cadernoEditEngagementList) return;
+    const members = cadernoEngagementCache;
+    if (!members.length) {
+      els.cadernoEditEngagementList.innerHTML =
+        '<li class="engagement-empty">Nenhum membro na lista. Clique em "Carregar membros do grupo".</li>';
+      return;
+    }
+    els.cadernoEditEngagementList.innerHTML = members
+      .map(
+        (m) => `
+      <li class="engagement-row" data-jid="${escAttr(m.userJid)}">
+        <label class="engagement-label">
+          <input type="checkbox" class="caderno-engagement-cb" ${m.engaged ? "checked" : ""} aria-label="Engajado neste caderno" />
+          <span class="engagement-name" title="${escAttr(m.userJid)}">${esc(
+          m.displayLabel || m.userLabel || m.userJid
+        )}</span>
+        </label>
+      </li>`
+      )
+      .join("");
+  }
+
+  async function loadCadernoEngagementForEdit(cadernoId) {
+    if (!els.cadernoEditEngagementStatus) return;
+    cadernoEngagementEditId = cadernoId;
+    els.cadernoEditEngagementStatus.textContent = "Carregando engajados…";
+    cadernoEngagementCache = [];
+    renderCadernoEngagementList();
+    try {
+      const data = await fetchJson(API.cadernoEngagement(cadernoId));
+      cadernoEngagementCache = data.members || [];
+      if (data.warning) {
+        els.cadernoEditEngagementStatus.textContent = data.warning;
+      } else if (!cadernoEngagementCache.length) {
+        els.cadernoEditEngagementStatus.textContent =
+          "Lista vazia. Carregue os membros do grupo (rode /sync-membros no WhatsApp).";
+      } else {
+        const n = cadernoEngagementCache.filter((x) => x.engaged).length;
+        els.cadernoEditEngagementStatus.textContent = `${cadernoEngagementCache.length} participante(s), ${n} engajado(s).`;
+      }
+      renderCadernoEngagementList();
+    } catch (e) {
+      els.cadernoEditEngagementStatus.textContent = e.message || "Não foi possível carregar.";
+      cadernoEngagementCache = [];
+      renderCadernoEngagementList();
+    }
+  }
+
+  async function onCadernoEditLoadEngagement() {
+    const id = Number(els.cadernoEditId && els.cadernoEditId.value);
+    if (!Number.isFinite(id) || id <= 0) return;
+    try {
+      await ensureEngagementMembersLoaded();
+    } catch {
+      /* segue com API do caderno */
+    }
+    await loadCadernoEngagementForEdit(id);
+  }
+
+  async function onCadernoEngagementToggle(ev) {
+    const cb = ev.target;
+    if (!cb.classList || !cb.classList.contains("caderno-engagement-cb")) return;
+    const cadernoId = cadernoEngagementEditId;
+    if (!cadernoId) return;
+    const row = cb.closest(".engagement-row");
+    const jid = row && row.dataset.jid;
+    if (!jid) return;
+    const want = cb.checked;
+    cb.disabled = true;
+    try {
+      const patchRes = await fetchJson(API.cadernoEngagement(cadernoId), {
+        method: "PATCH",
+        body: JSON.stringify({ cadernoId, userJid: jid, engaged: want })
+      });
+      const m = cadernoEngagementCache.find((x) => x.userJid === jid);
+      if (m) {
+        m.engaged = want;
+        if (patchRes.member && patchRes.member.displayLabel) {
+          m.displayLabel = patchRes.member.displayLabel;
+        }
+      }
+      if (
+        els.cadernoEditEngagementStatus &&
+        !els.cadernoEditEngagementStatus.textContent.startsWith("Carregando")
+      ) {
+        const engagedN = cadernoEngagementCache.filter((x) => x.engaged).length;
+        els.cadernoEditEngagementStatus.textContent = `${cadernoEngagementCache.length} participante(s), ${engagedN} engajado(s).`;
+      }
+      const card = cadernosCache.find((x) => x.id === cadernoId);
+      if (card) {
+        card.engagedCount = cadernoEngagementCache.filter((x) => x.engaged).length;
+        renderCadernos();
+      }
+    } catch (err) {
+      cb.checked = !want;
+      if (els.cadernoEditEngagementStatus) {
+        els.cadernoEditEngagementStatus.textContent = err.message || "Erro ao salvar.";
+      }
+    } finally {
+      cb.disabled = false;
+    }
   }
 
   /** Mesma fonte de nomes do modal Engajamento (`/api/engagement`). */
@@ -1171,9 +1289,16 @@
 
   async function onCadernoEditDeliveryChange() {
     syncCadernoEditPrivatePanel();
-    if (getCadernoEditDeliveryMode() !== "private" || !els.cadernoEditPrivateList) return;
-    const has = els.cadernoEditPrivateList.querySelector("li[data-jid]");
-    if (!has) await onCadernoEditLoadMembers();
+    if (getCadernoEditDeliveryMode() === "private") {
+      if (!els.cadernoEditPrivateList) return;
+      const has = els.cadernoEditPrivateList.querySelector("li[data-jid]");
+      if (!has) await onCadernoEditLoadMembers();
+      return;
+    }
+    const id = Number(els.cadernoEditId && els.cadernoEditId.value);
+    if (Number.isFinite(id) && id > 0) {
+      await loadCadernoEngagementForEdit(id);
+    }
   }
 
   async function onCadernoAddLoadMembers() {
@@ -1268,6 +1393,10 @@
         const waitBadge = c.waitForAnswers
           ? '<span class="badge-mini" title="Só inicia o próximo dia quando engajados responderem">Esperar resposta</span>'
           : "";
+        const engagedBadge =
+          c.deliveryMode !== "private" && typeof c.engagedCount === "number" && c.engagedCount > 0
+            ? `<span class="badge-mini" title="Engajados neste caderno">${c.engagedCount} engajado(s)</span>`
+            : "";
         const todaySent = Number(c.currentDaySent || 0);
         const dayLine =
           c.currentDayDate && isActive
@@ -1276,7 +1405,7 @@
         return `
         <li class="caderno-card" data-id="${c.id}">
           <div class="caderno-card-head">
-            <h4 class="caderno-card-name">${esc(c.name)} <small style="color:var(--muted);font-weight:500;">#${c.id}</small>${randomBadge}${waitBadge}${privBadge}</h4>
+            <h4 class="caderno-card-name">${esc(c.name)} <small style="color:var(--muted);font-weight:500;">#${c.id}</small>${randomBadge}${waitBadge}${engagedBadge}${privBadge}</h4>
             <span class="caderno-card-status status-${esc(c.status)}">${esc(formatStatusLabel(c.status))}</span>
           </div>
           <div class="caderno-card-meta">
@@ -1655,6 +1784,14 @@
         )
         .join("");
     }
+    if (dm === "group") {
+      await loadCadernoEngagementForEdit(caderno.id);
+    } else {
+      cadernoEngagementCache = [];
+      cadernoEngagementEditId = null;
+      renderCadernoEngagementList();
+      if (els.cadernoEditEngagementStatus) els.cadernoEditEngagementStatus.textContent = "";
+    }
     els.cadernoEditStatus.textContent = "";
     els.cadernoEditOverlay.classList.add("open");
     els.cadernoEditOverlay.setAttribute("aria-hidden", "false");
@@ -1955,6 +2092,12 @@
   if (els.cadernoEditDeliveryPrivate) els.cadernoEditDeliveryPrivate.addEventListener("change", onCadernoEditDeliveryChange);
   if (els.btnCadernoEditLoadMembers) {
     els.btnCadernoEditLoadMembers.addEventListener("click", () => onCadernoEditLoadMembers());
+  }
+  if (els.btnCadernoEditLoadEngagement) {
+    els.btnCadernoEditLoadEngagement.addEventListener("click", () => onCadernoEditLoadEngagement());
+  }
+  if (els.cadernoEditEngagementList) {
+    els.cadernoEditEngagementList.addEventListener("change", onCadernoEngagementToggle);
   }
   if (els.cadernoEditPrivateList) {
     els.cadernoEditPrivateList.addEventListener("change", (ev) => {

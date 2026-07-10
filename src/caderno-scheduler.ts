@@ -11,7 +11,9 @@ import {
   getPublishedQuestionIdForCadernoQuestion,
   getQuestionShortIdByDbId,
   effectivePrivateRecipientSchedule,
-  getEngagedEligibleUserJidsAt,
+  getEngagedEligibleUserJidsForCadernoAt,
+  getEngagedDisplayNamesForCaderno,
+  getEngagedDisplayNameForUser,
   isPrivateRecipientDayComplete,
   listAnswersForQuestionIds,
   listCadernoQuestionsPublishedOnDate,
@@ -79,7 +81,8 @@ async function publishCadernoQuestionToChat(
   shortId: string,
   cadernoName: string,
   question: CadernoQuestionRow,
-  mode: "group" | "private"
+  mode: "group" | "private",
+  engagedLine?: string | null
 ): Promise<void> {
   const intro =
     mode === "private"
@@ -89,7 +92,12 @@ async function publishCadernoQuestionToChat(
     question.questionType === "true_false"
       ? `Responda no privado do bot:\nc ${shortId}\ne ${shortId}`
       : `Responda no privado do bot:\na ${shortId}\nb ${shortId}\nc ${shortId}\nd ${shortId}\ne ${shortId}`;
-  const fullText = [intro, "", question.statementText, "", options].join("\n");
+  const parts = [intro];
+  if (engagedLine && engagedLine.trim()) {
+    parts.push(engagedLine.trim());
+  }
+  parts.push("", question.statementText, "", options);
+  const fullText = parts.join("\n");
   await sock.sendMessage(destJid, { text: fullText });
 }
 
@@ -133,13 +141,21 @@ async function publishGroupCadernoQuestion(
 ): Promise<{ shortId: string; dbId: number } | null> {
   try {
     const { shortId, dbId } = await resolveCadernoQuestionForPublish(caderno, question);
+    const engagedNames = await getEngagedDisplayNamesForCaderno(caderno.id);
+    const engagedLine =
+      engagedNames.length === 0
+        ? null
+        : engagedNames.length === 1
+          ? `Engajado: ${engagedNames[0]}`
+          : `Engajados: ${engagedNames.join(", ")}`;
     await publishCadernoQuestionToChat(
       sock,
       caderno.targetGroupJid,
       shortId,
       caderno.name,
       question,
-      "group"
+      "group",
+      engagedLine
     );
     await markCadernoQuestionPublished(question.id, dbId);
     console.log(
@@ -167,13 +183,23 @@ async function publishPrivateCadernoQuestion(
       question,
       recipient.userJid
     );
+    let engagedLine: string | null = null;
+    const displayName = await getEngagedDisplayNameForUser(caderno.id, recipient.userJid);
+    if (displayName) {
+      engagedLine = `Engajado: ${displayName}`;
+    } else {
+      const at = recipient.userJid.indexOf("@");
+      const fallback = at > 0 ? recipient.userJid.slice(0, at) : recipient.userJid;
+      engagedLine = `Engajado: ${fallback}`;
+    }
     await publishCadernoQuestionToChat(
       sock,
       recipient.userJid,
       shortId,
       caderno.name,
       question,
-      "private"
+      "private",
+      engagedLine
     );
     await recordPrivateSend(caderno.id, recipient.userJid, question.id, dbId);
     console.log(
@@ -238,7 +264,7 @@ async function isDayAnsweredByEngaged(caderno: CadernoRow, dayIso: string): Prom
   const answersByQ = await listAnswersForQuestionIds(questionIds);
 
   for (const pub of publishedToday) {
-    const eligible = await getEngagedEligibleUserJidsAt(caderno.targetGroupJid, pub.publishedAt);
+    const eligible = await getEngagedEligibleUserJidsForCadernoAt(caderno.id, pub.publishedAt);
     if (eligible.length === 0) continue;
     const eligibleSet = new Set(eligible.map((j) => jidComparableKey(j)));
     const answeredSet = answersByQ.get(pub.publishedQuestionId) ?? new Set<string>();
