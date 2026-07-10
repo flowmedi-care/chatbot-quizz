@@ -31,6 +31,13 @@ export function isBotCreatorJid(creatorJid: string): boolean {
   return creatorJid.trim().toLowerCase().startsWith("caderno:");
 }
 
+export function parseCadernoIdFromCreatorJid(creatorJid: string): number | null {
+  const m = String(creatorJid || "").match(/^caderno:(\d+)@bot$/i);
+  if (!m) return null;
+  const id = Number(m[1]);
+  return Number.isFinite(id) && id > 0 ? id : null;
+}
+
 /** Mesmo participante (ignora sufixo :NN do WhatsApp e domínio em minúsculas). */
 export function isSameQuizParticipant(jidA: string, jidB: string): boolean {
   return jidComparableKeyShared(jidA) === jidComparableKeyShared(jidB);
@@ -2528,12 +2535,61 @@ function jidComparableKeyShared(jid: string): string {
   return `${userNoDevice}@${domain}`;
 }
 
+export async function getEngagedCadernoIdsForUser(
+  userJid: string,
+  groupJid: string
+): Promise<Set<number>> {
+  const { data: cadernos, error: cErr } = await supabase
+    .from("cadernos")
+    .select("id")
+    .eq("target_group_jid", groupJid);
+
+  if (cErr) {
+    throw new Error(`Erro ao listar cadernos do grupo: ${cErr.message}`);
+  }
+
+  const cadernoIds = (cadernos ?? []).map((c) => Number(c.id)).filter((id) => Number.isFinite(id));
+  if (cadernoIds.length === 0) return new Set();
+
+  const { data: rows, error } = await supabase
+    .from("caderno_engagement")
+    .select("caderno_id, user_jid")
+    .in("caderno_id", cadernoIds)
+    .eq("engaged", true);
+
+  if (error) {
+    const msg = error.message.toLowerCase();
+    if (msg.includes("relation") && msg.includes("does not exist")) return new Set();
+    throw new Error(`Erro ao ler cadernos engajados do usuario: ${error.message}`);
+  }
+
+  const userKey = jidComparableKeyShared(userJid);
+  const out = new Set<number>();
+  for (const row of rows ?? []) {
+    const cid = Number(row.caderno_id);
+    if (!Number.isFinite(cid)) continue;
+    const rowJid = row.user_jid ? String(row.user_jid) : "";
+    if (rowJid && jidComparableKeyShared(rowJid) === userKey) {
+      out.add(cid);
+    }
+  }
+  return out;
+}
+
+export async function isUserGloballyEngaged(userJid: string, groupJid: string): Promise<boolean> {
+  const engaged = await getEngagedUserJidsForGroup(groupJid);
+  const userKey = jidComparableKeyShared(userJid);
+  return engaged.some((jid) => jidComparableKeyShared(jid) === userKey);
+}
+
 export async function listUnansweredShortIdsForUser(
   userJid: string,
   groupJid: string,
   limit = 25
 ): Promise<string[]> {
   const publishedCadernoIds = await fetchPublishedCadernoQuestionIdsForGroup(groupJid);
+  const engagedCadernoIds = await getEngagedCadernoIdsForUser(userJid, groupJid);
+  const globallyEngaged = await isUserGloballyEngaged(userJid, groupJid);
 
   const { data: questions, error: qErr } = await supabase
     .from("questions")
@@ -2556,7 +2612,6 @@ export async function listUnansweredShortIdsForUser(
   }
 
   const answeredIds = new Set((answered ?? []).map((r) => r.question_id as number));
-  const userKey = jidComparableKeyShared(userJid);
   const out: string[] = [];
   for (const q of questions ?? []) {
     if (!q.short_id) continue;
@@ -2564,7 +2619,15 @@ export async function listUnansweredShortIdsForUser(
     if (isPrivateCadernoShortId(sid)) continue;
     const qid = q.id as number;
     const creatorJid = String(q.creator_jid ?? "");
-    if (creatorJid && jidComparableKeyShared(creatorJid) === userKey) {
+    if (creatorJid && isSameQuizParticipant(creatorJid, userJid)) {
+      continue;
+    }
+    if (isBotCreatorJid(creatorJid)) {
+      const cadernoId = parseCadernoIdFromCreatorJid(creatorJid);
+      if (cadernoId == null || !engagedCadernoIds.has(cadernoId)) {
+        continue;
+      }
+    } else if (!globallyEngaged) {
       continue;
     }
     if (isOrphanCadernoGroupQuestion(qid, creatorJid, publishedCadernoIds)) {
