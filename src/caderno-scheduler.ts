@@ -11,11 +11,11 @@ import {
   getPublishedQuestionIdForCadernoQuestion,
   getQuestionShortIdByDbId,
   effectivePrivateRecipientSchedule,
-  getEngagedEligibleUserJidsForCadernoAt,
   getEngagedDisplayNamesForCaderno,
   getEngagedDisplayNameForUser,
+  getCadernoById,
+  isCadernoDayCompleteForEngaged,
   isPrivateRecipientDayComplete,
-  listAnswersForQuestionIds,
   listCadernoQuestionsPublishedOnDate,
   listCadernosDueForRun,
   listNextCadernoQuestionsToSend,
@@ -252,29 +252,26 @@ async function notifyRecipientPrivateExhausted(
   }
 }
 
-async function isDayAnsweredByEngaged(caderno: CadernoRow, dayIso: string): Promise<boolean> {
-  const publishedToday = await listCadernoQuestionsPublishedOnDate(
+async function isDayAnsweredByEngaged(
+  caderno: CadernoRow,
+  dayIso: string,
+  excludeComparableKeys?: Set<string>
+): Promise<boolean> {
+  return isCadernoDayCompleteForEngaged(
     caderno.id,
     dayIso,
-    caderno.timezone
+    caderno.timezone,
+    excludeComparableKeys
   );
-  if (publishedToday.length === 0) return true;
+}
 
-  const questionIds = publishedToday.map((p) => p.publishedQuestionId);
-  const answersByQ = await listAnswersForQuestionIds(questionIds);
-
-  for (const pub of publishedToday) {
-    const eligible = await getEngagedEligibleUserJidsForCadernoAt(caderno.id, pub.publishedAt);
-    if (eligible.length === 0) continue;
-    const eligibleSet = new Set(eligible.map((j) => jidComparableKey(j)));
-    const answeredSet = answersByQ.get(pub.publishedQuestionId) ?? new Set<string>();
-    for (const jc of eligibleSet) {
-      if (!answeredSet.has(jc)) {
-        return false;
-      }
-    }
-  }
-  return true;
+function botComparableFromSock(sock: WASocket): string | null {
+  const ext = sock as WASocket & {
+    user?: { id?: string };
+    authState?: { creds?: { me?: { id?: string } } };
+  };
+  const rawId = ext.user?.id ?? ext.authState?.creds?.me?.id ?? "";
+  return rawId ? jidComparableKey(String(rawId)) : null;
 }
 
 type DayDecision =
@@ -352,7 +349,10 @@ async function runCaderno(sock: WASocket, caderno: CadernoRow): Promise<void> {
   }
 
   if (decision.kind === "wait_for_answers") {
-    const ok = await isDayAnsweredByEngaged(caderno, decision.previousDayIso);
+    const exclude = new Set<string>();
+    const botComp = botComparableFromSock(sock);
+    if (botComp) exclude.add(botComp);
+    const ok = await isDayAnsweredByEngaged(caderno, decision.previousDayIso, exclude);
     if (!ok) {
       const retryIso = new Date(Date.now() + WAIT_RETRY_MS).toISOString();
       await updateCadernoDayState(caderno.id, { nextRunAtIso: retryIso });
@@ -620,6 +620,37 @@ export function stopCadernoScheduler(): void {
   if (timer) {
     clearInterval(timer);
     timer = null;
+  }
+}
+
+/**
+ * Quando o último engajado responde, tenta avançar o caderno sem esperar o retry de 15 min.
+ */
+export async function tryAdvanceCadernoAfterAnswer(
+  sock: WASocket,
+  cadernoId: number,
+  botComparable: string | null
+): Promise<void> {
+  const caderno = await getCadernoById(cadernoId);
+  if (!caderno || caderno.status !== "active" || caderno.deliveryMode === "private") return;
+  if (!caderno.waitForAnswers || !caderno.currentDayDate) return;
+
+  const nPerDay = Math.max(1, caderno.questionsPerDay);
+  if (caderno.currentDaySent < nPerDay) return;
+
+  const exclude = new Set<string>();
+  if (botComparable) exclude.add(botComparable);
+
+  const ok = await isDayAnsweredByEngaged(caderno, caderno.currentDayDate, exclude);
+  if (!ok) return;
+
+  await updateCadernoDayState(caderno.id, { nextRunAtIso: new Date().toISOString() });
+  const fresh = await getCadernoById(cadernoId);
+  if (fresh) {
+    console.log(
+      `[caderno-scheduler] caderno ${cadernoId}: engajados responderam — avançando agenda imediatamente.`
+    );
+    await runCaderno(sock, fresh);
   }
 }
 

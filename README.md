@@ -162,8 +162,7 @@ automático das questões no grupo.
    `supabase-migration-cadernos-daily-spread.sql`. Ele adiciona
    `questions_per_day`, `start_hour`, `start_minute`, `wait_for_answers`,
    `current_day_date`, `current_day_sent` em `cadernos`, e `engaged_since`
-   em `group_member_engagement` (usado para destravar engajados novos —
-   ver "Esperar resposta" abaixo).
+   em `caderno_engagement` (engajados **por caderno** — ver "Esperar resposta" abaixo).
 
 ### Como criar um caderno
 
@@ -225,22 +224,26 @@ truncadas. Use o preview para identificar e descartar antes de ativar.
   - Responda no privado com `a 182`, `c 182` etc.
   - O auto-gabarito por engajamento fecha igual ao fluxo manual.
 
-### "Esperar resposta" e engajados novos
+### "Esperar resposta" e engajados por caderno
 
-Quando o toggle **Esperar resposta entre dias** está ligado, o bot só inicia
-um novo dia se **todos os engajados elegíveis responderam todas as questões
-do dia anterior**.
+Quando o toggle **Esperar resposta entre dias** está ligado em um caderno, o bot
+só inicia um **novo dia desse caderno** se **todos os engajados elegíveis
+desse caderno** responderam **todas** as questões do dia anterior. Cadernos
+diferentes avançam de forma **independente** (um pode mandar questões no dia
+seguinte enquanto outro continua aguardando).
 
+- **Quem configura engajados?** No site: **Cadernos → Editar → Engajados deste
+  caderno** (não use o modal global **Engajamento**, que é só para questões
+  manuais).
 - Quem é "elegível"? Cada questão lembra seu instante de publicação
-  (`published_at`). São elegíveis para essa questão os engajados que estavam
-  com `engaged = true` antes desse instante (campo `engaged_since`).
+  (`published_at`). São elegíveis os engajados do caderno com `engaged = true`
+  em `caderno_engagement` e (`engaged_since` nulo ou `engaged_since <= published_at`).
 - Quem virou engajado **depois** que a questão foi publicada **não trava**.
   Ele segue de onde o grupo está e responde só dali pra frente.
 - Se ainda falta resposta, o bot reagenda a checagem para ~15 minutos depois
-  e tenta de novo. Quando todos responderem, ele abre o próximo dia
-  automaticamente no slot de início.
-- Sem engajados (`engaged = true` para zero pessoas) o modo não trava nada —
-  envia normal.
+  e tenta de novo. Quando o **último** engajado responder, o próximo dia abre
+  **na hora** (sem esperar os 15 min).
+- Sem engajados marcados **neste caderno** o modo não trava — envia normal.
 
 ### Fim do caderno
 
@@ -254,7 +257,7 @@ dono recebe DM perguntando o que fazer. Responda no privado do bot:
 
 | Comando | Onde | Efeito |
 |---------|------|--------|
-| `/progresso #1` | Grupo ou privado | Mostra progresso do caderno 1: quantas foram enviadas, quantas foram **resolvidas pelos engajados** (todos responderam), engajados no grupo e próximo envio. Aceita `progresso 1`, `progresso #1`. |
+| `/progresso #1` | Grupo ou privado | Mostra progresso do caderno 1: quantas foram enviadas, quantas foram **resolvidas pelos engajados do caderno** (todos responderam), engajados no caderno e próximo envio. Aceita `progresso 1`, `progresso #1`. |
 | `/cadernos` | Privado (dono) | Lista seus cadernos com status, agenda e progresso. |
 | `/caderno pause <id>` | Privado (dono) | Pausa envios (status = inactive). |
 | `/caderno resume <id>` | Privado (dono) | Retoma envios (recalcula `next_run_at`). |

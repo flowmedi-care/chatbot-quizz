@@ -28,7 +28,8 @@ import {
   parseRespondentsCommand,
   parseSlashSessionCommand,
   parseSyncMembrosCommand,
-  parseTypeSelection
+  parseTypeSelection,
+  splitWhatsAppText
 } from "./message-utils";
 import { buildQuizFullGuide, buildPrivateInvalidFallback } from "./help-text";
 import { config } from "./config";
@@ -59,7 +60,7 @@ import {
   upsertGroupMembersFromSync
 } from "./supabase";
 import { computeNextRunAt, formatNextRunPretty } from "./schedule";
-import { forceRunCaderno, startCadernoScheduler, stopCadernoScheduler } from "./caderno-scheduler";
+import { forceRunCaderno, startCadernoScheduler, stopCadernoScheduler, tryAdvanceCadernoAfterAnswer } from "./caderno-scheduler";
 import {
   handleFlashcardsPrivateMessage,
   startFlashcardsBot,
@@ -389,7 +390,20 @@ function formatRespondentLines(respondents: { name: string; letter: string; comm
     .join("\n");
 }
 
-function buildResultMessage(result: Awaited<ReturnType<typeof getQuestionResult>>): string {
+async function maybeWakeCadernoAfterAnswer(sock: WASocket, rawShortId: string): Promise<void> {
+  try {
+    const cadernoId = await getCadernoIdForQuestion(rawShortId);
+    if (cadernoId == null) return;
+    await tryAdvanceCadernoAfterAnswer(sock, cadernoId, getBotJidComparable(sock));
+  } catch (e) {
+    console.warn("[caderno-wake]", (e as Error).message);
+  }
+}
+
+function buildResultMessage(
+  result: Awaited<ReturnType<typeof getQuestionResult>>,
+  opts?: { statementSentSeparately?: boolean }
+): string {
   const keys = buildDistributionKeys(result.questionType);
   const distributionLines = keys.map((key) => `${key} - ${result.distribution[key] ?? 0}`);
   const correct = formatRespondentLines(result.correctRespondents);
@@ -408,9 +422,16 @@ function buildResultMessage(result: Awaited<ReturnType<typeof getQuestionResult>
   const sendsStatementMedia =
     Boolean(result.statementMediaUrl && result.statementMediaMimeType);
   if (result.statementText && !sendsStatementMedia) {
-    statementBlock.push("Enunciado:", truncateForWhatsApp(result.statementText), "");
+    if (opts?.statementSentSeparately) {
+      statementBlock.push("Enunciado: (mensagem(ns) acima)", "");
+    } else {
+      statementBlock.push("Enunciado:", truncateForWhatsApp(result.statementText), "");
+    }
   } else if (sendsStatementMedia) {
-    statementBlock.push("Enunciado: (veja acima)", "");
+    statementBlock.push(
+      opts?.statementSentSeparately ? "Enunciado: (midia e texto acima)" : "Enunciado: (veja acima)",
+      ""
+    );
   }
 
   return [
@@ -433,6 +454,23 @@ function buildResultMessage(result: Awaited<ReturnType<typeof getQuestionResult>
   ].join("\n");
 }
 
+async function sendFullStatementBeforeResult(
+  sock: WASocket,
+  jid: string,
+  shortId: string,
+  statementText: string
+): Promise<void> {
+  const chunks = splitWhatsAppText(statementText);
+  const total = chunks.length;
+  for (let i = 0; i < total; i++) {
+    const label =
+      total === 1
+        ? `Enunciado — Questao #${shortId}`
+        : `Enunciado — Questao #${shortId} (${i + 1}/${total})`;
+    await sock.sendMessage(jid, { text: `${label}\n\n${chunks[i]}` });
+  }
+}
+
 async function sendStatementMedia(
   sock: WASocket,
   jid: string,
@@ -441,8 +479,9 @@ async function sendStatementMedia(
   if (!result.statementMediaUrl || !result.statementMediaMimeType) return;
 
   const captionParts = [`Enunciado — Questao #${result.shortId}`];
-  if (result.statementText) {
-    captionParts.push("", truncateForWhatsApp(result.statementText, 900));
+  const statementText = result.statementText?.trim() ?? "";
+  if (statementText && statementText.length <= 900) {
+    captionParts.push("", statementText);
   }
   const caption = captionParts.join("\n");
 
@@ -487,11 +526,25 @@ async function publishQuestionResult(
   result: Awaited<ReturnType<typeof getQuestionResult>>,
   headerPrefix?: string
 ): Promise<void> {
-  if (result.statementMediaUrl && result.statementMediaMimeType) {
+  const hasStatementMedia = Boolean(result.statementMediaUrl && result.statementMediaMimeType);
+  const statementText = result.statementText?.trim() ?? "";
+  let statementSentSeparately = false;
+
+  if (hasStatementMedia) {
     await sendStatementMedia(sock, jid, result);
+    if (statementText.length > 900) {
+      await sendFullStatementBeforeResult(sock, jid, result.shortId, statementText);
+      statementSentSeparately = true;
+    }
+  } else if (statementText) {
+    await sendFullStatementBeforeResult(sock, jid, result.shortId, statementText);
+    statementSentSeparately = true;
   }
+
   const header = headerPrefix ? `${headerPrefix}\n` : "";
-  await sock.sendMessage(jid, { text: `${header}${buildResultMessage(result)}` });
+  await sock.sendMessage(jid, {
+    text: `${header}${buildResultMessage(result, { statementSentSeparately })}`
+  });
   await sendExplanationMedia(sock, jid, result);
 }
 
@@ -1088,6 +1141,7 @@ async function startBot(): Promise<void> {
               pendingAnswerChanges.delete(sender);
               await sock.sendMessage(remoteJid, { text: "Resposta atualizada ✅" });
               await maybePostAutoGabaritoToGroup(sock, pending.questionId);
+              await maybeWakeCadernoAfterAnswer(sock, pending.questionId);
               continue;
             }
 
@@ -1294,6 +1348,7 @@ async function startBot(): Promise<void> {
               text: "Resposta salva."
             });
             await maybePostAutoGabaritoToGroup(sock, command.questionId);
+            await maybeWakeCadernoAfterAnswer(sock, command.questionId);
             continue;
           }
 

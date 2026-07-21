@@ -361,3 +361,27 @@ export function buildDistributionKeys(type: QuestionType): string[] {
   }
   return ["A", "B", "C", "D", "E"];
 }
+
+/** Divide texto longo em partes para envio no WhatsApp (limite ~4096 chars). */
+export function splitWhatsAppText(text: string, maxLen = 3800): string[] {
+  const t = text.trim();
+  if (!t) return [];
+  if (t.length <= maxLen) return [t];
+
+  const chunks: string[] = [];
+  let rest = t;
+  while (rest.length > maxLen) {
+    const slice = rest.slice(0, maxLen);
+    const paraBreak = slice.lastIndexOf("\n\n");
+    const lineBreak = slice.lastIndexOf("\n");
+    let cut = maxLen;
+    if (paraBreak > maxLen * 0.4) cut = paraBreak;
+    else if (lineBreak > maxLen * 0.4) cut = lineBreak;
+
+    const part = rest.slice(0, cut).trim();
+    if (part) chunks.push(part);
+    rest = rest.slice(cut).trim();
+  }
+  if (rest) chunks.push(rest);
+  return chunks;
+}

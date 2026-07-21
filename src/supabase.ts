@@ -2144,6 +2144,46 @@ export async function listAnswersForQuestionIds(
   return out;
 }
 
+/**
+ * True se todos os engajados elegíveis do caderno responderam todas as questões
+ * publicadas em `dayIso`. `excludeComparableKeys` remove JIDs (ex.: bot).
+ */
+export async function isCadernoDayCompleteForEngaged(
+  cadernoId: number,
+  dayIso: string,
+  timeZone: string,
+  excludeComparableKeys?: Set<string>
+): Promise<boolean> {
+  const publishedToday = await listCadernoQuestionsPublishedOnDate(cadernoId, dayIso, timeZone);
+  if (publishedToday.length === 0) return true;
+
+  const questionIds = publishedToday.map((p) => p.publishedQuestionId);
+  const answersByQ = await listAnswersForQuestionIds(questionIds);
+  const creatorKey = jidComparableKeyShared(`caderno:${cadernoId}@bot`);
+
+  for (const pub of publishedToday) {
+    const eligible = await getEngagedEligibleUserJidsForCadernoAt(cadernoId, pub.publishedAt);
+    if (eligible.length === 0) continue;
+
+    const eligibleSet = new Set<string>();
+    for (const jid of eligible) {
+      const jc = jidComparableKeyShared(jid);
+      if (excludeComparableKeys?.has(jc)) continue;
+      if (jc === creatorKey) continue;
+      eligibleSet.add(jc);
+    }
+    if (eligibleSet.size === 0) continue;
+
+    const answeredSet = answersByQ.get(pub.publishedQuestionId) ?? new Set<string>();
+    for (const jc of eligibleSet) {
+      if (!answeredSet.has(jc)) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
 export async function setCadernoStatus(
   cadernoId: number,
   status: CadernoRow["status"],
