@@ -105,6 +105,16 @@ export function parseOmissasCommand(text: string): boolean {
   return t === "/omissas" || t === "omissas";
 }
 
+/** Adiantar questões dos próximos N dias: adiantar 2, /adiantar 2 */
+export function parseAdiantarCommand(text: string): { days: number } | null {
+  const t = normalizeInput(text.trim());
+  const m = t.match(/^\/?adiantar\s+(\d+)$/);
+  if (!m) return null;
+  const days = Number(m[1]);
+  if (!Number.isFinite(days) || days < 1 || days > 7) return null;
+  return { days };
+}
+
 /** No grupo: sincroniza participantes no Supabase para marcar engajamento no site. */
 export function parseSyncMembrosCommand(text: string): boolean {
   const t = normalizeInput(text.trim());

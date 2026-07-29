@@ -40,6 +40,11 @@
     reportClose: document.getElementById("report-close"),
     reportPerson: document.getElementById("report-person"),
     reportStatus: document.getElementById("report-status"),
+    reportCaderno: document.getElementById("report-caderno"),
+    reportDateFrom: document.getElementById("report-date-from"),
+    reportDateTo: document.getElementById("report-date-to"),
+    reportQidFrom: document.getElementById("report-qid-from"),
+    reportQidTo: document.getElementById("report-qid-to"),
     reportGenerate: document.getElementById("report-generate"),
     btnReportOpen: document.getElementById("btn-report-open"),
     engagementOverlay: document.getElementById("engagement-overlay"),
@@ -110,9 +115,9 @@
 
   let currentShortId = null;
   let submitPayload = null;
-  /** @type {{ userJid: string, userLabel: string | null, displayLabel?: string | null, engaged: boolean }[]} */
+  /** @type {{ userJid: string, userLabel: string | null, displayLabel?: string | null, engaged: boolean, passive?: boolean }[]} */
   let engagementMembersCache = [];
-  /** @type {{ userJid: string, userLabel: string | null, displayLabel?: string | null, engaged: boolean }[]} */
+  /** @type {{ userJid: string, userLabel: string | null, displayLabel?: string | null, engaged: boolean, passive?: boolean }[]} */
   let cadernoEngagementCache = [];
   let cadernoEngagementEditId = null;
 
@@ -318,6 +323,9 @@
     if (!els.reportPerson) return;
     if (!reportData || !(reportData.questions && reportData.questions.length)) {
       els.reportPerson.innerHTML = '<option value="">— Sem dados —</option>';
+      if (els.reportCaderno) {
+        els.reportCaderno.innerHTML = '<option value="__all__">Todos</option>';
+      }
       return;
     }
     const parts = reportData.participants && reportData.participants.length
@@ -332,6 +340,64 @@
             `<option value="${escAttr(p.userJid)}">${esc(p.userName)}</option>`
         )
         .join("");
+
+    if (els.reportCaderno) {
+      const byCaderno = new Map();
+      for (const q of reportData.questions) {
+        if (q.cadernoId != null) {
+          const id = Number(q.cadernoId);
+          if (!byCaderno.has(id)) {
+            byCaderno.set(id, q.cadernoName || `Caderno #${id}`);
+          }
+        }
+      }
+      const opts = ['<option value="__all__">Todos</option>', '<option value="__manual__">Manuais / sem caderno</option>'];
+      for (const [id, name] of [...byCaderno.entries()].sort((a, b) => a[0] - b[0])) {
+        opts.push(`<option value="${id}">${esc(name)} (#${id})</option>`);
+      }
+      els.reportCaderno.innerHTML = opts.join("");
+    }
+  }
+
+  function questionPassesReportFilters(q) {
+    if (els.reportCaderno) {
+      const cVal = els.reportCaderno.value;
+      if (cVal === "__manual__") {
+        if (q.cadernoId != null) return false;
+      } else if (cVal && cVal !== "__all__") {
+        if (Number(q.cadernoId) !== Number(cVal)) return false;
+      }
+    }
+
+    if (els.reportDateFrom && els.reportDateFrom.value && q.createdAt) {
+      const from = els.reportDateFrom.value;
+      const day = String(q.createdAt).slice(0, 10);
+      if (day < from) return false;
+    }
+    if (els.reportDateTo && els.reportDateTo.value && q.createdAt) {
+      const to = els.reportDateTo.value;
+      const day = String(q.createdAt).slice(0, 10);
+      if (day > to) return false;
+    }
+
+    const sidNum = /^\d+$/.test(String(q.shortId || "")) ? Number(q.shortId) : null;
+    if (els.reportQidFrom && els.reportQidFrom.value.trim()) {
+      const fromRaw = els.reportQidFrom.value.trim().toUpperCase();
+      if (/^\d+$/.test(fromRaw) && sidNum != null) {
+        if (sidNum < Number(fromRaw)) return false;
+      } else if (String(q.shortId || "").toUpperCase() < fromRaw) {
+        return false;
+      }
+    }
+    if (els.reportQidTo && els.reportQidTo.value.trim()) {
+      const toRaw = els.reportQidTo.value.trim().toUpperCase();
+      if (/^\d+$/.test(toRaw) && sidNum != null) {
+        if (sidNum > Number(toRaw)) return false;
+      } else if (String(q.shortId || "").toUpperCase() > toRaw) {
+        return false;
+      }
+    }
+    return true;
   }
 
   function resetModal() {
@@ -534,9 +600,11 @@
   async function buildReportZip(scopeJid) {
     if (typeof JSZip === "undefined") throw new Error("JSZip não carregou. Recarregue a página.");
 
-    const qs = reportData.questions || [];
-    const ans = reportData.answers || [];
-    if (!qs.length) throw new Error("Não há questões para exportar.");
+    const qsAll = reportData.questions || [];
+    const qs = qsAll.filter(questionPassesReportFilters);
+    const qIds = new Set(qs.map((q) => q.shortId));
+    const ans = (reportData.answers || []).filter((a) => qIds.has(a.questionShortId));
+    if (!qs.length) throw new Error("Nenhuma questão combina com os filtros atuais.");
 
     const zip = new JSZip();
     const midiasFolder = "midias";
@@ -548,6 +616,7 @@
     lines.push("");
     lines.push(`> Gerado em: ${stamp}`);
     lines.push(`> Escopo: ${scopeJid === "__all__" ? "Todos os participantes (consolidado)" : nomeParticipante(scopeJid)}`);
+    lines.push(`> Filtros: ${qs.length} de ${qsAll.length} questão(ões)`);
     lines.push("");
     lines.push(
       "Este relatório usa **respostas registradas pelo WhatsApp** (tabela `answers`). Respostas feitas só no navegador não entram aqui."
@@ -557,7 +626,7 @@
     if (scopeJid === "__all__") {
       lines.push("## Sumário");
       lines.push("");
-      lines.push(`- Questões no grupo: **${qs.length}**`);
+      lines.push(`- Questões no relatório: **${qs.length}**`);
       lines.push(`- Registros de resposta: **${ans.length}**`);
       lines.push(`- Participantes distintos: **${new Set(ans.map((a) => a.userJid)).size}**`);
       lines.push("");
@@ -582,6 +651,7 @@
         `- **Tipo:** ${q.questionType === "true_false" ? "Certo / errado" : "Múltipla escolha"}`
       );
       lines.push(`- **Autor:** ${mdCell(q.creatorName)}`);
+      if (q.cadernoName) lines.push(`- **Caderno:** ${mdCell(q.cadernoName)} (#${q.cadernoId})`);
       lines.push("");
 
       let stmtMediaName = null;
@@ -1008,12 +1078,17 @@
       .map(
         (m) => `
       <li class="engagement-row" data-jid="${escAttr(m.userJid)}">
-        <label class="engagement-label">
+        <label class="engagement-label engagement-role">
           <input type="checkbox" class="caderno-engagement-cb" ${m.engaged ? "checked" : ""} aria-label="Engajado neste caderno" />
-          <span class="engagement-name" title="${escAttr(m.userJid)}">${esc(
+          <span class="engagement-role-tag">Engajado</span>
+        </label>
+        <label class="engagement-label engagement-role">
+          <input type="checkbox" class="caderno-passive-cb" ${m.passive ? "checked" : ""} aria-label="Passivo neste caderno" />
+          <span class="engagement-role-tag">Passivo</span>
+        </label>
+        <span class="engagement-name" title="${escAttr(m.userJid)}">${esc(
           m.displayLabel || m.userLabel || m.userJid
         )}</span>
-        </label>
       </li>`
       )
       .join("");
@@ -1035,7 +1110,8 @@
           "Lista vazia. Carregue os membros do grupo (rode /sync-membros no WhatsApp).";
       } else {
         const n = cadernoEngagementCache.filter((x) => x.engaged).length;
-        els.cadernoEditEngagementStatus.textContent = `${cadernoEngagementCache.length} participante(s), ${n} engajado(s).`;
+        const p = cadernoEngagementCache.filter((x) => x.passive).length;
+        els.cadernoEditEngagementStatus.textContent = `${cadernoEngagementCache.length} participante(s), ${n} engajado(s), ${p} passivo(s).`;
       }
       renderCadernoEngagementList();
     } catch (e) {
@@ -1058,32 +1134,47 @@
 
   async function onCadernoEngagementToggle(ev) {
     const cb = ev.target;
-    if (!cb.classList || !cb.classList.contains("caderno-engagement-cb")) return;
+    if (!cb.classList) return;
+    const isEngagedCb = cb.classList.contains("caderno-engagement-cb");
+    const isPassiveCb = cb.classList.contains("caderno-passive-cb");
+    if (!isEngagedCb && !isPassiveCb) return;
     const cadernoId = cadernoEngagementEditId;
     if (!cadernoId) return;
     const row = cb.closest(".engagement-row");
     const jid = row && row.dataset.jid;
     if (!jid) return;
     const want = cb.checked;
+    const body = isEngagedCb
+      ? { cadernoId, userJid: jid, engaged: want, passive: want ? false : undefined }
+      : { cadernoId, userJid: jid, passive: want, engaged: want ? false : undefined };
     cb.disabled = true;
     try {
       const patchRes = await fetchJson(API.cadernoEngagement(cadernoId), {
         method: "PATCH",
-        body: JSON.stringify({ cadernoId, userJid: jid, engaged: want })
+        body: JSON.stringify(body)
       });
       const m = cadernoEngagementCache.find((x) => x.userJid === jid);
       if (m) {
-        m.engaged = want;
-        if (patchRes.member && patchRes.member.displayLabel) {
-          m.displayLabel = patchRes.member.displayLabel;
+        if (patchRes.member) {
+          m.engaged = Boolean(patchRes.member.engaged);
+          m.passive = Boolean(patchRes.member.passive);
+          if (patchRes.member.displayLabel) m.displayLabel = patchRes.member.displayLabel;
+        } else if (isEngagedCb) {
+          m.engaged = want;
+          if (want) m.passive = false;
+        } else {
+          m.passive = want;
+          if (want) m.engaged = false;
         }
       }
+      renderCadernoEngagementList();
       if (
         els.cadernoEditEngagementStatus &&
         !els.cadernoEditEngagementStatus.textContent.startsWith("Carregando")
       ) {
         const engagedN = cadernoEngagementCache.filter((x) => x.engaged).length;
-        els.cadernoEditEngagementStatus.textContent = `${cadernoEngagementCache.length} participante(s), ${engagedN} engajado(s).`;
+        const passiveN = cadernoEngagementCache.filter((x) => x.passive).length;
+        els.cadernoEditEngagementStatus.textContent = `${cadernoEngagementCache.length} participante(s), ${engagedN} engajado(s), ${passiveN} passivo(s).`;
       }
       const card = cadernosCache.find((x) => x.id === cadernoId);
       if (card) {

@@ -4,6 +4,7 @@ import {
   CadernoQuestionRow,
   CadernoRow,
   countUnpublishedCadernoQuestions,
+  countUnreleasedQueueItems,
   countUnsentPrivateQuestionsForRecipient,
   createQuestionFromCaderno,
   findOrphanCadernoQuestionRow,
@@ -11,11 +12,14 @@ import {
   getPublishedQuestionIdForCadernoQuestion,
   getQuestionShortIdByDbId,
   effectivePrivateRecipientSchedule,
-  getEngagedDisplayNamesForCaderno,
   getEngagedDisplayNameForUser,
   getCadernoById,
+  getCadernoProgress,
+  getCadernoQuestionById,
+  getCadernoSendQueueItem,
   isCadernoDayCompleteForEngaged,
   isPrivateRecipientDayComplete,
+  listActiveGroupCadernos,
   listCadernoQuestionsPublishedOnDate,
   listCadernosDueForRun,
   listNextCadernoQuestionsToSend,
@@ -23,11 +27,14 @@ import {
   listPrivateRecipientsDueForRun,
   listPrivateRecipientsByCaderno,
   markCadernoQuestionPublished,
+  markCadernoSendQueueReleased,
   maybePausePrivateCadernoWhenExhausted,
+  recordGroupDailyDigest,
   recordPrivateSend,
   setCadernoStatus,
   updateCadernoDayState,
-  updatePrivateRecipientDayState
+  updatePrivateRecipientDayState,
+  wasGroupDailyDigestSent
 } from "./supabase";
 import {
   addDaysIso,
@@ -36,9 +43,13 @@ import {
   formatNextRunPretty,
   resolveDailySlotUtc
 } from "./schedule";
+import { config } from "./config";
 
 const TICK_INTERVAL_MS = 60 * 1000;
 const WAIT_RETRY_MS = 15 * 60 * 1000;
+const DIGEST_FALLBACK_HOUR = 7;
+const DIGEST_FALLBACK_MINUTE = 0;
+const DEFAULT_TZ = "America/Sao_Paulo";
 
 let timer: NodeJS.Timeout | null = null;
 let running = false;
@@ -137,29 +148,18 @@ async function resolveCadernoQuestionForPublish(
 async function publishGroupCadernoQuestion(
   sock: WASocket,
   caderno: CadernoRow,
-  question: CadernoQuestionRow
+  question: CadernoQuestionRow,
+  preResolved?: { shortId: string; dbId: number } | null
 ): Promise<{ shortId: string; dbId: number } | null> {
   try {
-    const { shortId, dbId } = await resolveCadernoQuestionForPublish(caderno, question);
-    const engagedNames = await getEngagedDisplayNamesForCaderno(caderno.id);
-    const engagedLine =
-      engagedNames.length === 0
-        ? null
-        : engagedNames.length === 1
-          ? `Engajado: ${engagedNames[0]}`
-          : `Engajados: ${engagedNames.join(", ")}`;
-    await publishCadernoQuestionToChat(
-      sock,
-      caderno.targetGroupJid,
-      shortId,
-      caderno.name,
-      question,
-      "group",
-      engagedLine
-    );
+    const { shortId, dbId } =
+      preResolved ?? (await resolveCadernoQuestionForPublish(caderno, question));
+    // Enunciado de caderno não vai mais ao grupo — só materializa no DB.
+    // Engajados/passivos usam /omissas; digest diário avisa o grupo.
+    void sock;
     await markCadernoQuestionPublished(question.id, dbId);
     console.log(
-      `[caderno-scheduler] publicada questao #${shortId} (caderno ${caderno.id}, pos ${question.position})`
+      `[caderno-scheduler] publicada (silencioso) #${shortId} (caderno ${caderno.id}, pos ${question.position})`
     );
     return { shortId, dbId };
   } catch (e) {
@@ -394,23 +394,57 @@ async function sendOneGroupAndAdvance(
   dayIso: string,
   sentBefore: number
 ): Promise<void> {
-  const pending = await listNextCadernoQuestionsToSend(caderno.id, 1, caderno.randomOrder);
-  if (pending.length === 0) {
-    await updateCadernoDayState(caderno.id, { nextRunAtIso: null, updateLastRun: true });
-    await setCadernoStatus(caderno.id, "paused_waiting_decision", { nextRunAt: null });
-    await notifyOwnerEndOfCaderno(sock, caderno);
-    console.log(
-      `[caderno-scheduler] caderno ${caderno.id} sem pendentes — aguardando decisao do dono.`
-    );
-    return;
+  let question: CadernoQuestionRow | null = null;
+  let preResolved: { shortId: string; dbId: number } | null = null;
+  let queueId: number | null = null;
+
+  const queued = await getCadernoSendQueueItem(caderno.id, dayIso, sentBefore);
+  if (queued) {
+    queueId = queued.id;
+    const cq = await getCadernoQuestionById(queued.cadernoQuestionId);
+    if (cq) {
+      question = cq;
+      if (queued.publishedQuestionId != null) {
+        const shortId = await getQuestionShortIdByDbId(queued.publishedQuestionId);
+        if (shortId) {
+          preResolved = { shortId, dbId: queued.publishedQuestionId };
+        }
+      }
+    }
   }
 
-  const question = pending[0];
-  const result = await publishGroupCadernoQuestion(sock, caderno, question);
+  if (!question) {
+    const pending = await listNextCadernoQuestionsToSend(caderno.id, 1, caderno.randomOrder);
+    if (pending.length === 0) {
+      const queuedLeft = await countUnreleasedQueueItems(caderno.id);
+      if (queuedLeft > 0) {
+        const retryIso = new Date(Date.now() + WAIT_RETRY_MS).toISOString();
+        await updateCadernoDayState(caderno.id, { nextRunAtIso: retryIso });
+        console.log(
+          `[caderno-scheduler] caderno ${caderno.id}: sem pendentes livres, mas há ${queuedLeft} na fila — aguardando.`
+        );
+        return;
+      }
+      await updateCadernoDayState(caderno.id, { nextRunAtIso: null, updateLastRun: true });
+      await setCadernoStatus(caderno.id, "paused_waiting_decision", { nextRunAt: null });
+      await notifyOwnerEndOfCaderno(sock, caderno);
+      console.log(
+        `[caderno-scheduler] caderno ${caderno.id} sem pendentes — aguardando decisao do dono.`
+      );
+      return;
+    }
+    question = pending[0];
+  }
+
+  const result = await publishGroupCadernoQuestion(sock, caderno, question, preResolved);
+  if (result && queueId != null) {
+    await markCadernoSendQueueReleased(queueId, result.dbId);
+  }
   const sentAfter = result ? sentBefore + 1 : sentBefore;
 
   const remaining = await countUnpublishedCadernoQuestions(caderno.id);
-  if (remaining <= 0) {
+  const queuedLeft = await countUnreleasedQueueItems(caderno.id);
+  if (remaining <= 0 && queuedLeft <= 0) {
     await updateCadernoDayState(caderno.id, {
       currentDayDate: dayIso,
       currentDaySent: sentAfter,
@@ -600,10 +634,159 @@ async function tick(sock: WASocket): Promise<void> {
         );
       }
     }
+
+    // Depois dos envios do tick, para o bom dia já listar IDs liberados nesta manhã.
+    await maybeSendGroupDailyDigest(sock);
   } catch (e) {
     console.error("[caderno-scheduler] tick:", (e as Error).message);
   } finally {
     running = false;
+  }
+}
+
+function pad2(n: number): string {
+  return n < 10 ? `0${n}` : String(n);
+}
+
+function quizGroupJidForDigest(): string | null {
+  if (config.targetGroupJids.length === 0) return null;
+  if (config.targetGroupJids.length >= 2) return config.targetGroupJids[1];
+  return config.targetGroupJids[0];
+}
+
+function earliestDigestGateUtc(cadernos: CadernoRow[], dayIso: string, tz: string): Date {
+  let earliest: Date | null = null;
+  for (const c of cadernos) {
+    const slots: DailyScheduleSlots = {
+      sendTimes: c.sendTimes,
+      startHour: c.startHour,
+      startMinute: c.startMinute,
+      endHour: c.endHour,
+      endMinute: c.endMinute,
+      questionsPerDay: Math.max(1, c.questionsPerDay)
+    };
+    const slot = resolveDailySlotUtc(dayIso, 0, c.timezone || tz, slots);
+    if (!earliest || slot.getTime() < earliest.getTime()) earliest = slot;
+  }
+  if (earliest) return earliest;
+  const fallbackSlots: DailyScheduleSlots = {
+    sendTimes: [{ hour: DIGEST_FALLBACK_HOUR, minute: DIGEST_FALLBACK_MINUTE }],
+    startHour: DIGEST_FALLBACK_HOUR,
+    startMinute: DIGEST_FALLBACK_MINUTE,
+    endHour: DIGEST_FALLBACK_HOUR,
+    endMinute: DIGEST_FALLBACK_MINUTE,
+    questionsPerDay: 1
+  };
+  return resolveDailySlotUtc(dayIso, 0, tz, fallbackSlots);
+}
+
+async function buildGroupDailyDigestText(
+  groupJid: string,
+  dayIso: string,
+  cadernos: CadernoRow[]
+): Promise<string> {
+  const lines: string[] = [
+    `Bom dia! — ${dayIso}`,
+    "",
+    "Resumo dos cadernos ativos (enunciados no privado via /omissas):",
+    ""
+  ];
+
+  let totalToday = 0;
+  let totalPlanned = 0;
+
+  for (const c of cadernos) {
+    const progress = await getCadernoProgress(c.id);
+    const publishedToday = await listCadernoQuestionsPublishedOnDate(
+      c.id,
+      dayIso,
+      c.timezone || DEFAULT_TZ
+    );
+    const shortIds: string[] = [];
+    for (const p of publishedToday) {
+      const sid = await getQuestionShortIdByDbId(p.publishedQuestionId);
+      if (sid) shortIds.push(`#${sid}`);
+    }
+    totalToday += publishedToday.length;
+    totalPlanned += Math.max(1, c.questionsPerDay);
+
+    const pct =
+      progress && progress.publishedCount > 0 && progress.engagedCount > 0
+        ? Math.round((progress.resolvedByEngaged / progress.publishedCount) * 100)
+        : null;
+
+    const scheduleLine =
+      c.sendTimes && c.sendTimes.length >= c.questionsPerDay
+        ? c.sendTimes
+            .slice(0, c.questionsPerDay)
+            .map((t) => `${pad2(t.hour)}:${pad2(t.minute)}`)
+            .join(", ")
+        : `${pad2(c.startHour)}:${pad2(c.startMinute)}–${pad2(c.endHour)}:${pad2(c.endMinute)}`;
+
+    lines.push(`• ${c.name} (#${c.id}) — ${c.questionsPerDay}/dia · ${scheduleLine}`);
+    if (progress) {
+      lines.push(
+        `  Enviadas: ${progress.publishedCount}/${progress.totalQuestions}` +
+          (pct != null ? ` · Engajados: ${progress.resolvedByEngaged}/${progress.publishedCount} (${pct}%)` : "")
+      );
+    }
+    if (shortIds.length > 0) {
+      lines.push(`  Hoje: ${shortIds.join(", ")}`);
+    } else {
+      lines.push(`  Hoje: até ${c.questionsPerDay} questão(ões) (ainda não liberadas ou aguardando)`);
+    }
+    if (c.waitForAnswers && c.currentDayDate && c.currentDaySent >= c.questionsPerDay) {
+      lines.push(`  Aguardando engajados responderem o dia ${c.currentDayDate}`);
+    }
+    lines.push(`  Próximo: ${formatNextRunPretty(c.nextRunAt, c.timezone)}`);
+    lines.push("");
+  }
+
+  lines.push(
+    `Total liberado hoje: ${totalToday} (planejado ~${totalPlanned} se todos os cadernos enviarem).`
+  );
+  lines.push("");
+  lines.push("Enunciados: /omissas no privado · Repetir: /questao N · Gabarito: /gabarito N");
+  void groupJid;
+  return lines.join("\n");
+}
+
+async function maybeSendGroupDailyDigest(sock: WASocket): Promise<void> {
+  const groupJid = quizGroupJidForDigest();
+  if (!groupJid) return;
+
+  let cadernos: CadernoRow[] = [];
+  try {
+    cadernos = await listActiveGroupCadernos(groupJid);
+  } catch (e) {
+    console.warn("[caderno-scheduler] digest listActiveGroupCadernos:", (e as Error).message);
+    return;
+  }
+  if (cadernos.length === 0) return;
+
+  const tz = cadernos[0]?.timezone || DEFAULT_TZ;
+  const now = new Date();
+  const dayIso = dateIsoInTimezone(now, tz);
+
+  try {
+    if (await wasGroupDailyDigestSent(groupJid, dayIso)) return;
+  } catch (e) {
+    console.warn("[caderno-scheduler] digest check:", (e as Error).message);
+    return;
+  }
+
+  const gate = earliestDigestGateUtc(cadernos, dayIso, tz);
+  if (now.getTime() < gate.getTime()) return;
+
+  const recorded = await recordGroupDailyDigest(groupJid, dayIso);
+  if (!recorded) return;
+
+  try {
+    const text = await buildGroupDailyDigestText(groupJid, dayIso, cadernos);
+    await sock.sendMessage(groupJid, { text });
+    console.log(`[caderno-scheduler] digest diario enviado para ${groupJid} (${dayIso})`);
+  } catch (e) {
+    console.error("[caderno-scheduler] falha enviando digest:", (e as Error).message);
   }
 }
 

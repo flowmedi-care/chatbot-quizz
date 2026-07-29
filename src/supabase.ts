@@ -2,7 +2,7 @@ import { createClient } from "@supabase/supabase-js";
 import crypto from "node:crypto";
 import { config } from "./config";
 import type { SendTimeSlot } from "./schedule";
-import { parseSendTimesJson } from "./schedule";
+import { addDaysIso, dateIsoInTimezone, parseSendTimesJson } from "./schedule";
 import { AnswerInput, CreateQuestionInput, QuestionType } from "./types";
 
 const supabase = createClient(config.supabaseUrl, config.supabaseServiceRoleKey);
@@ -1023,7 +1023,9 @@ export async function setGroupMemberEngaged(
   }
 }
 
-export type CadernoEngagementRow = GroupMemberEngagementRow;
+export type CadernoEngagementRow = GroupMemberEngagementRow & {
+  passive: boolean;
+};
 
 function engagementDisplayLabel(row: {
   userJid: string;
@@ -1180,27 +1182,44 @@ export async function listCadernoEngagementMembers(
   const groupMembers = await listGroupMembersEngagementRows(groupJid);
   const { data: cadernoRows, error } = await supabase
     .from("caderno_engagement")
-    .select("user_jid, user_label, quiz_display_name, engaged, engaged_since, updated_at")
+    .select("user_jid, user_label, quiz_display_name, engaged, passive, engaged_since, updated_at")
     .eq("caderno_id", cadernoId);
 
   if (error) {
     const msg = error.message.toLowerCase();
     if (msg.includes("relation") && msg.includes("does not exist")) {
-      return groupMembers.map((m) => ({ ...m, engaged: false }));
+      return groupMembers.map((m) => ({ ...m, engaged: false, passive: false }));
+    }
+    if (msg.includes("column") && msg.includes("passive")) {
+      const { data: fallbackRows, error: e2 } = await supabase
+        .from("caderno_engagement")
+        .select("user_jid, user_label, quiz_display_name, engaged, engaged_since, updated_at")
+        .eq("caderno_id", cadernoId);
+      if (e2) throw new Error(`Erro ao listar engajamento do caderno: ${e2.message}`);
+      return mergeCadernoEngagementMembers(groupMembers, fallbackRows ?? [], false);
     }
     throw new Error(`Erro ao listar engajamento do caderno: ${error.message}`);
   }
 
+  return mergeCadernoEngagementMembers(groupMembers, cadernoRows ?? [], true);
+}
+
+function mergeCadernoEngagementMembers(
+  groupMembers: GroupMemberEngagementRow[],
+  cadernoRows: Record<string, unknown>[],
+  hasPassiveCol: boolean
+): CadernoEngagementRow[] {
   const byJid = new Map(
-    (cadernoRows ?? []).map((r) => [
+    cadernoRows.map((r) => [
       String(r.user_jid),
       {
         userJid: String(r.user_jid),
         userLabel: r.user_label ? String(r.user_label) : null,
         quizDisplayName: r.quiz_display_name != null ? String(r.quiz_display_name) : null,
         engaged: Boolean(r.engaged),
+        passive: hasPassiveCol ? Boolean(r.passive) : false,
         updatedAt: r.updated_at ? String(r.updated_at) : null
-      }
+      } satisfies CadernoEngagementRow
     ])
   );
 
@@ -1216,6 +1235,7 @@ export async function listCadernoEngagementMembers(
         userLabel: m.userLabel,
         quizDisplayName: m.quizDisplayName,
         engaged: false,
+        passive: false,
         updatedAt: null
       }
     );
@@ -1234,9 +1254,15 @@ export async function setCadernoEngagement(
   cadernoId: number,
   groupJid: string,
   userJid: string,
-  engaged: boolean
+  engaged: boolean,
+  passive = false
 ): Promise<void> {
   const nowIso = new Date().toISOString();
+  let nextEngaged = engaged;
+  let nextPassive = passive;
+  if (nextEngaged && nextPassive) {
+    nextPassive = false;
+  }
 
   const { data: groupRow } = await supabase
     .from("group_member_engagement")
@@ -1251,7 +1277,7 @@ export async function setCadernoEngagement(
 
   const { data: existing } = await supabase
     .from("caderno_engagement")
-    .select("engaged, engaged_since")
+    .select("engaged, engaged_since, passive")
     .eq("caderno_id", cadernoId)
     .eq("user_jid", userJid)
     .maybeSingle();
@@ -1261,11 +1287,12 @@ export async function setCadernoEngagement(
     user_jid: userJid,
     user_label: userLabel,
     quiz_display_name: quizDisplayName,
-    engaged,
+    engaged: nextEngaged,
+    passive: nextPassive,
     updated_at: nowIso
   };
 
-  if (engaged) {
+  if (nextEngaged) {
     const wasEngaged = Boolean(existing && existing.engaged);
     const hadSince = Boolean(existing && existing.engaged_since);
     if (!wasEngaged || !hadSince) {
@@ -1283,6 +1310,15 @@ export async function setCadernoEngagement(
 
   if (error) {
     const msg = error.message.toLowerCase();
+    if (msg.includes("column") && msg.includes("passive")) {
+      const fallback = { ...patch };
+      delete fallback.passive;
+      const { error: e2 } = await supabase.from("caderno_engagement").upsert(fallback, {
+        onConflict: "caderno_id,user_jid"
+      });
+      if (e2) throw new Error(`Erro ao atualizar engajamento do caderno: ${e2.message}`);
+      return;
+    }
     if (msg.includes("column") && msg.includes("engaged_since")) {
       const fallback = { ...patch };
       delete fallback.engaged_since;
@@ -1928,6 +1964,9 @@ export async function listNextCadernoQuestionsToSend(
   const selectCols =
     "id, caderno_id, position, tec_question_id, tec_url, banca, subject, question_type, statement_text, answer_key";
 
+  const queuedIds = await listQueuedCadernoQuestionIds(cadernoId);
+  const excludeSet = new Set(queuedIds);
+
   if (!randomOrder) {
     const { data, error } = await supabase
       .from("caderno_questions")
@@ -1935,14 +1974,17 @@ export async function listNextCadernoQuestionsToSend(
       .eq("caderno_id", cadernoId)
       .is("published_question_id", null)
       .order("position", { ascending: true })
-      .limit(limit);
+      .limit(Math.max(limit + excludeSet.size, limit));
 
     if (error) throw new Error(`Erro ao listar questoes do caderno: ${error.message}`);
-    return (data ?? []).map(mapCadernoQuestionRow);
+    const filtered = (data ?? [])
+      .map(mapCadernoQuestionRow)
+      .filter((q) => !excludeSet.has(q.id));
+    return filtered.slice(0, limit);
   }
 
   const pendingCount = await countUnpublishedCadernoQuestions(cadernoId);
-  const bufferSize = Math.min(500, Math.max(pendingCount, limit));
+  const bufferSize = Math.min(500, Math.max(pendingCount, limit + excludeSet.size));
   const { data, error } = await supabase
     .from("caderno_questions")
     .select(selectCols)
@@ -1953,7 +1995,9 @@ export async function listNextCadernoQuestionsToSend(
 
   if (error) throw new Error(`Erro ao listar questoes do caderno: ${error.message}`);
 
-  const rows = shuffleCadernoQuestionRows((data ?? []).map(mapCadernoQuestionRow));
+  const rows = shuffleCadernoQuestionRows(
+    (data ?? []).map(mapCadernoQuestionRow).filter((q) => !excludeSet.has(q.id))
+  );
   return rows.slice(0, limit);
 }
 
@@ -1997,6 +2041,13 @@ export async function resetCadernoPublishedQuestions(cadernoId: number): Promise
     .eq("caderno_id", cadernoId);
 
   if (error) throw new Error(`Erro ao reciclar caderno: ${error.message}`);
+
+  try {
+    await deleteCadernoSendQueue(cadernoId);
+  } catch (e) {
+    const msg = (e as Error).message.toLowerCase();
+    if (!msg.includes("relation") && !msg.includes("does not exist")) throw e;
+  }
 
   try {
     await deletePrivateSendsForCaderno(cadernoId);
@@ -2278,6 +2329,353 @@ export async function markCadernoQuestionPublished(
   if (error) {
     console.warn("[caderno] markCadernoQuestionPublished:", error.message);
   }
+}
+
+export type CadernoSendQueueRow = {
+  id: number;
+  cadernoId: number;
+  cadernoQuestionId: number;
+  plannedDayIso: string;
+  slotIndex: number;
+  publishedQuestionId: number | null;
+  releasedAt: string | null;
+};
+
+function mapCadernoSendQueueRow(row: Record<string, unknown>): CadernoSendQueueRow {
+  return {
+    id: Number(row.id),
+    cadernoId: Number(row.caderno_id),
+    cadernoQuestionId: Number(row.caderno_question_id),
+    plannedDayIso: String(row.planned_day_iso),
+    slotIndex: Number(row.slot_index) || 0,
+    publishedQuestionId:
+      row.published_question_id != null ? Number(row.published_question_id) : null,
+    releasedAt: row.released_at ? String(row.released_at) : null
+  };
+}
+
+export async function listQueuedCadernoQuestionIds(cadernoId: number): Promise<number[]> {
+  const { data, error } = await supabase
+    .from("caderno_send_queue")
+    .select("caderno_question_id")
+    .eq("caderno_id", cadernoId)
+    .is("released_at", null);
+
+  if (error) {
+    const msg = error.message.toLowerCase();
+    if (msg.includes("relation") && msg.includes("does not exist")) return [];
+    throw new Error(`Erro ao listar fila do caderno: ${error.message}`);
+  }
+  return (data ?? [])
+    .map((r) => Number(r.caderno_question_id))
+    .filter((id) => Number.isFinite(id));
+}
+
+export async function getCadernoSendQueueItem(
+  cadernoId: number,
+  plannedDayIso: string,
+  slotIndex: number
+): Promise<CadernoSendQueueRow | null> {
+  const { data, error } = await supabase
+    .from("caderno_send_queue")
+    .select(
+      "id, caderno_id, caderno_question_id, planned_day_iso, slot_index, published_question_id, released_at"
+    )
+    .eq("caderno_id", cadernoId)
+    .eq("planned_day_iso", plannedDayIso)
+    .eq("slot_index", slotIndex)
+    .maybeSingle();
+
+  if (error) {
+    const msg = error.message.toLowerCase();
+    if (msg.includes("relation") && msg.includes("does not exist")) return null;
+    throw new Error(`Erro ao buscar item da fila: ${error.message}`);
+  }
+  if (!data) return null;
+  return mapCadernoSendQueueRow(data as Record<string, unknown>);
+}
+
+export async function getCadernoQuestionById(
+  cadernoQuestionId: number
+): Promise<CadernoQuestionRow | null> {
+  const { data, error } = await supabase
+    .from("caderno_questions")
+    .select(
+      "id, caderno_id, position, tec_question_id, tec_url, banca, subject, question_type, statement_text, answer_key"
+    )
+    .eq("id", cadernoQuestionId)
+    .maybeSingle();
+
+  if (error) throw new Error(`Erro ao buscar questao do caderno: ${error.message}`);
+  if (!data) return null;
+  return mapCadernoQuestionRow(data as Record<string, unknown>);
+}
+
+export async function markCadernoSendQueueReleased(
+  queueId: number,
+  publishedQuestionId: number
+): Promise<void> {
+  const { error } = await supabase
+    .from("caderno_send_queue")
+    .update({
+      released_at: new Date().toISOString(),
+      published_question_id: publishedQuestionId
+    })
+    .eq("id", queueId);
+
+  if (error) {
+    const msg = error.message.toLowerCase();
+    if (msg.includes("relation") && msg.includes("does not exist")) return;
+    console.warn("[caderno] markCadernoSendQueueReleased:", error.message);
+  }
+}
+
+export async function deleteCadernoSendQueue(cadernoId: number): Promise<void> {
+  const { error } = await supabase.from("caderno_send_queue").delete().eq("caderno_id", cadernoId);
+  if (error) {
+    const msg = error.message.toLowerCase();
+    if (msg.includes("relation") && msg.includes("does not exist")) return;
+    throw new Error(`Erro ao limpar fila do caderno: ${error.message}`);
+  }
+}
+
+export async function listFutureQueueDays(cadernoId: number): Promise<string[]> {
+  const { data, error } = await supabase
+    .from("caderno_send_queue")
+    .select("planned_day_iso")
+    .eq("caderno_id", cadernoId)
+    .is("released_at", null)
+    .order("planned_day_iso", { ascending: true });
+
+  if (error) {
+    const msg = error.message.toLowerCase();
+    if (msg.includes("relation") && msg.includes("does not exist")) return [];
+    throw new Error(`Erro ao listar dias da fila: ${error.message}`);
+  }
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const row of data ?? []) {
+    const d = String(row.planned_day_iso || "");
+    if (!d || seen.has(d)) continue;
+    seen.add(d);
+    out.push(d);
+  }
+  return out;
+}
+
+export async function countUnreleasedQueueItems(cadernoId: number): Promise<number> {
+  const { count, error } = await supabase
+    .from("caderno_send_queue")
+    .select("id", { count: "exact", head: true })
+    .eq("caderno_id", cadernoId)
+    .is("released_at", null);
+
+  if (error) {
+    const msg = error.message.toLowerCase();
+    if (msg.includes("relation") && msg.includes("does not exist")) return 0;
+    throw new Error(`Erro ao contar fila: ${error.message}`);
+  }
+  return count || 0;
+}
+
+/**
+ * Reserva e materializa questões para os próximos `days` dias (após o dia corrente
+ * do caderno / hoje). Retorna short_ids criados/reutilizados.
+ */
+export async function adiantarCadernoQuestions(
+  caderno: CadernoRow,
+  days: number
+): Promise<{ shortIds: string[]; daysFilled: number; message: string }> {
+  const N = Math.max(1, caderno.questionsPerDay);
+  const tz = caderno.timezone || "America/Sao_Paulo";
+  const todayIso = dateIsoInTimezone(new Date(), tz);
+
+  let startDayIso: string;
+  if (caderno.currentDayDate) {
+    const nextAfterCurrent = addDaysIso(caderno.currentDayDate, 1);
+    startDayIso = nextAfterCurrent > todayIso ? nextAfterCurrent : addDaysIso(todayIso, 1);
+  } else {
+    startDayIso = addDaysIso(todayIso, 1);
+  }
+
+  const existingDays = await listFutureQueueDays(caderno.id);
+  const occupied = new Set(existingDays);
+  const daysToFill: string[] = [];
+  let cursor = startDayIso;
+  for (let guard = 0; guard < 60 && daysToFill.length < days; guard++) {
+    if (!occupied.has(cursor)) daysToFill.push(cursor);
+    cursor = addDaysIso(cursor, 1);
+  }
+
+  if (daysToFill.length === 0) {
+    return {
+      shortIds: [],
+      daysFilled: 0,
+      message: `Caderno #${caderno.id} já tem os próximos dias reservados na fila.`
+    };
+  }
+
+  const need = daysToFill.length * N;
+  const pending = await listNextCadernoQuestionsToSend(caderno.id, need, caderno.randomOrder);
+  if (pending.length === 0) {
+    return {
+      shortIds: [],
+      daysFilled: 0,
+      message: `Caderno #${caderno.id} sem questões pendentes para adiantar.`
+    };
+  }
+
+  const shortIds: string[] = [];
+  let qi = 0;
+  let daysFilled = 0;
+
+  for (const dayIso of daysToFill) {
+    let slotsThisDay = 0;
+    for (let slot = 0; slot < N; slot++) {
+      if (qi >= pending.length) break;
+      const question = pending[qi++];
+      const { shortId, dbId } = await createQuestionFromCaderno({ caderno, question });
+      const { error } = await supabase.from("caderno_send_queue").insert({
+        caderno_id: caderno.id,
+        caderno_question_id: question.id,
+        planned_day_iso: dayIso,
+        slot_index: slot,
+        published_question_id: dbId
+      });
+      if (error) {
+        throw new Error(`Erro ao reservar questao na fila: ${error.message}`);
+      }
+      shortIds.push(shortId);
+      slotsThisDay += 1;
+    }
+    if (slotsThisDay > 0) daysFilled += 1;
+    if (qi >= pending.length) break;
+  }
+
+  return {
+    shortIds,
+    daysFilled,
+    message: `Caderno #${caderno.id} "${caderno.name}": ${shortIds.length} questão(ões) adiantada(s) para ${daysFilled} dia(s).`
+  };
+}
+
+export async function listActiveGroupCadernos(groupJid: string): Promise<CadernoRow[]> {
+  const { data, error } = await supabase
+    .from("cadernos")
+    .select(CADERNO_SELECT_COLUMNS)
+    .eq("status", "active")
+    .eq("target_group_jid", groupJid)
+    .neq("delivery_mode", "private")
+    .order("id", { ascending: true });
+
+  if (error) {
+    const msg = error.message.toLowerCase();
+    if (msg.includes("relation") && msg.includes("does not exist")) return [];
+    if (msg.includes("column") && msg.includes("delivery_mode")) {
+      const r = await supabase
+        .from("cadernos")
+        .select(CADERNO_SELECT_COLUMNS.replace(", delivery_mode", ""))
+        .eq("status", "active")
+        .eq("target_group_jid", groupJid)
+        .order("id", { ascending: true });
+      if (r.error) throw new Error(`Erro ao listar cadernos ativos: ${r.error.message}`);
+      return (r.data ?? []).map((row) =>
+        mapCadernoRow({
+          ...(row as unknown as Record<string, unknown>),
+          delivery_mode: "group"
+        })
+      );
+    }
+    throw new Error(`Erro ao listar cadernos ativos: ${error.message}`);
+  }
+  return (data ?? []).map(mapCadernoRow);
+}
+
+export async function wasGroupDailyDigestSent(
+  groupJid: string,
+  dayIso: string
+): Promise<boolean> {
+  const { data, error } = await supabase
+    .from("group_daily_digest")
+    .select("day_iso")
+    .eq("group_jid", groupJid)
+    .eq("day_iso", dayIso)
+    .maybeSingle();
+
+  if (error) {
+    const msg = error.message.toLowerCase();
+    if (msg.includes("relation") && msg.includes("does not exist")) return false;
+    throw new Error(`Erro ao checar digest diario: ${error.message}`);
+  }
+  return Boolean(data);
+}
+
+export async function recordGroupDailyDigest(groupJid: string, dayIso: string): Promise<boolean> {
+  const { error } = await supabase.from("group_daily_digest").insert({
+    group_jid: groupJid,
+    day_iso: dayIso,
+    sent_at: new Date().toISOString()
+  });
+
+  if (error) {
+    const msg = error.message.toLowerCase();
+    if (msg.includes("duplicate") || msg.includes("unique")) return false;
+    if (msg.includes("relation") && msg.includes("does not exist")) return false;
+    throw new Error(`Erro ao gravar digest diario: ${error.message}`);
+  }
+  return true;
+}
+
+export async function getPassiveCadernoIdsForUser(
+  userJid: string,
+  groupJid: string
+): Promise<Set<number>> {
+  const { data: cadernos, error: cErr } = await supabase
+    .from("cadernos")
+    .select("id")
+    .eq("target_group_jid", groupJid);
+
+  if (cErr) {
+    throw new Error(`Erro ao listar cadernos do grupo: ${cErr.message}`);
+  }
+
+  const cadernoIds = (cadernos ?? []).map((c) => Number(c.id)).filter((id) => Number.isFinite(id));
+  if (cadernoIds.length === 0) return new Set();
+
+  const { data: rows, error } = await supabase
+    .from("caderno_engagement")
+    .select("caderno_id, user_jid")
+    .in("caderno_id", cadernoIds)
+    .eq("passive", true);
+
+  if (error) {
+    const msg = error.message.toLowerCase();
+    if (msg.includes("relation") && msg.includes("does not exist")) return new Set();
+    if (msg.includes("column") && msg.includes("passive")) return new Set();
+    throw new Error(`Erro ao ler cadernos passivos do usuario: ${error.message}`);
+  }
+
+  const userKey = jidComparableKeyShared(userJid);
+  const out = new Set<number>();
+  for (const row of rows ?? []) {
+    const cid = Number(row.caderno_id);
+    if (!Number.isFinite(cid)) continue;
+    const rowJid = row.user_jid ? String(row.user_jid) : "";
+    if (rowJid && jidComparableKeyShared(rowJid) === userKey) {
+      out.add(cid);
+    }
+  }
+  return out;
+}
+
+export async function listEngagedGroupCadernosForUser(
+  userJid: string,
+  groupJid: string
+): Promise<CadernoRow[]> {
+  const engagedIds = await getEngagedCadernoIdsForUser(userJid, groupJid);
+  if (engagedIds.size === 0) return [];
+  const active = await listActiveGroupCadernos(groupJid);
+  return active.filter((c) => engagedIds.has(c.id));
 }
 
 /** Próximo número exibido no privado (parte antes do `-`), por caderno + destinatário. */
@@ -2628,8 +3026,25 @@ export async function listUnansweredShortIdsForUser(
   limit = 25
 ): Promise<string[]> {
   const publishedCadernoIds = await fetchPublishedCadernoQuestionIdsForGroup(groupJid);
+  const queuedVisibleIds = await listQueuedPublishedQuestionIdsForGroup(groupJid);
+  const visibleCadernoQuestionIds = new Set<number>([
+    ...publishedCadernoIds,
+    ...queuedVisibleIds
+  ]);
   const engagedCadernoIds = await getEngagedCadernoIdsForUser(userJid, groupJid);
+  const passiveCadernoIds = await getPassiveCadernoIdsForUser(userJid, groupJid);
   const globallyEngaged = await isUserGloballyEngaged(userJid, groupJid);
+
+  const passiveTodayDbIds = new Set<number>();
+  for (const cadernoId of passiveCadernoIds) {
+    if (engagedCadernoIds.has(cadernoId)) continue;
+    const caderno = await getCadernoById(cadernoId);
+    if (!caderno) continue;
+    const tz = caderno.timezone || "America/Sao_Paulo";
+    const todayIso = dateIsoInTimezone(new Date(), tz);
+    const pubs = await listCadernoQuestionsPublishedOnDate(cadernoId, todayIso, tz);
+    for (const p of pubs) passiveTodayDbIds.add(p.publishedQuestionId);
+  }
 
   const { data: questions, error: qErr } = await supabase
     .from("questions")
@@ -2662,20 +3077,58 @@ export async function listUnansweredShortIdsForUser(
     if (creatorJid && isSameQuizParticipant(creatorJid, userJid)) {
       continue;
     }
+
     if (isBotCreatorJid(creatorJid)) {
       const cadernoId = parseCadernoIdFromCreatorJid(creatorJid);
-      if (cadernoId == null || !engagedCadernoIds.has(cadernoId)) {
+      if (cadernoId == null) continue;
+      const isEngaged = engagedCadernoIds.has(cadernoId);
+      const isPassiveToday = passiveTodayDbIds.has(qid);
+      if (!isEngaged && !isPassiveToday) continue;
+      if (isEngaged && isOrphanCadernoGroupQuestion(qid, creatorJid, visibleCadernoQuestionIds)) {
         continue;
+      }
+      if (!isEngaged && isPassiveToday) {
+        // passivo: só as do dia (já filtradas em passiveTodayDbIds)
       }
     } else if (!globallyEngaged) {
       continue;
     }
-    if (isOrphanCadernoGroupQuestion(qid, creatorJid, publishedCadernoIds)) {
-      continue;
-    }
+
     if (answeredIds.has(qid)) continue;
     out.push(sid);
     if (out.length >= limit) break;
+  }
+  return out;
+}
+
+async function listQueuedPublishedQuestionIdsForGroup(groupJid: string): Promise<Set<number>> {
+  const { data: cadernos, error: cErr } = await supabase
+    .from("cadernos")
+    .select("id")
+    .eq("target_group_jid", groupJid);
+
+  if (cErr) {
+    throw new Error(`Erro ao listar cadernos do grupo: ${cErr.message}`);
+  }
+  const cadernoIds = (cadernos ?? []).map((c) => Number(c.id)).filter((id) => Number.isFinite(id));
+  if (cadernoIds.length === 0) return new Set();
+
+  const { data: rows, error } = await supabase
+    .from("caderno_send_queue")
+    .select("published_question_id")
+    .in("caderno_id", cadernoIds)
+    .not("published_question_id", "is", null);
+
+  if (error) {
+    const msg = error.message.toLowerCase();
+    if (msg.includes("relation") && msg.includes("does not exist")) return new Set();
+    throw new Error(`Erro ao listar questoes da fila: ${error.message}`);
+  }
+
+  const out = new Set<number>();
+  for (const row of rows ?? []) {
+    const id = row.published_question_id != null ? Number(row.published_question_id) : NaN;
+    if (Number.isFinite(id)) out.add(id);
   }
   return out;
 }

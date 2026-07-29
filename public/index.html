@@ -139,6 +139,32 @@
           <span>Participante no relatório</span>
           <select id="report-person" aria-label="Escopo do relatório"></select>
         </label>
+        <label class="report-field">
+          <span>Caderno</span>
+          <select id="report-caderno" aria-label="Filtrar por caderno">
+            <option value="__all__">Todos</option>
+          </select>
+        </label>
+        <div class="report-field-row">
+          <label class="report-field">
+            <span>Data de</span>
+            <input type="date" id="report-date-from" aria-label="Data inicial" />
+          </label>
+          <label class="report-field">
+            <span>Data até</span>
+            <input type="date" id="report-date-to" aria-label="Data final" />
+          </label>
+        </div>
+        <div class="report-field-row">
+          <label class="report-field">
+            <span>Questão de (#)</span>
+            <input type="text" id="report-qid-from" placeholder="ex: 10" aria-label="Número da questão inicial" />
+          </label>
+          <label class="report-field">
+            <span>Questão até (#)</span>
+            <input type="text" id="report-qid-to" placeholder="ex: 50" aria-label="Número da questão final" />
+          </label>
+        </div>
         <p id="report-status" class="report-status" role="status" aria-live="polite"></p>
         <button type="button" id="report-generate" class="btn-reveal">Baixar ZIP</button>
       </div>
@@ -150,9 +176,9 @@
           <div>
             <h3 id="cadernos-title">Cadernos</h3>
             <p class="report-sub">
-              Cadernões automáticos. Envie um PDF do Tec Concursos e configure horário e quantidade de
-              questões por envio. O bot publica no grupo nas datas programadas e o gabarito fecha quando
-              os engajados respondem (mesmo fluxo das questões manuais).
+              Cadernões automáticos. Envie um PDF do Tec Concursos e configure horário e quantidade.
+              No grupo vai um “bom dia” diário (sem enunciado); engajados e passivos usam /omissas no
+              privado. O gabarito fecha quando os engajados respondem.
             </p>
           </div>
           <button type="button" id="cadernos-close" class="btn-close" aria-label="Fechar">×</button>
@@ -361,8 +387,9 @@
 
           <div id="caderno-edit-engagement-panel" class="caderno-engagement-panel">
             <p class="report-sub">
-              <strong>Engajados deste caderno</strong> — quando todos responderem, o bot publica o gabarito no grupo.
-              Quem não está marcado pode responder, mas não bloqueia o fechamento.
+              <strong>Engajados</strong> fecham o gabarito e o ritmo do caderno.
+              <strong>Passivos</strong> recebem no /omissas só as questões do dia (não influenciam o ritmo).
+              Marque no máximo um dos dois por pessoa.
             </p>
             <button type="button" id="btn-caderno-edit-load-engagement" class="btn-tutorial">
               Carregar membros do grupo

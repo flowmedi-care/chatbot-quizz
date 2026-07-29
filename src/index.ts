@@ -22,6 +22,7 @@ import {
   parsePrivateCommand,
   parseGabaritoCommand,
   parseOmissasCommand,
+  parseAdiantarCommand,
   parseProgressoCommand,
   parseQaCommand,
   parseRepeatQuestionCommand,
@@ -53,6 +54,8 @@ import {
   listAnswerUserJidsForQuestion,
   listCadernosForOwner,
   listUnansweredShortIdsForUser,
+  listEngagedGroupCadernosForUser,
+  adiantarCadernoQuestions,
   resetCadernoPublishedQuestions,
   setCadernoStatus,
   setQuizModePrivate,
@@ -966,7 +969,7 @@ async function startBot(): Promise<void> {
                   "",
                   "/quiz",
                   "",
-                  "Sem modo quiz, só lemos aqui comandos neutros: gabarito, /q&a, quem respondeu e /omissas."
+                  "Sem modo quiz, só lemos aqui comandos neutros: gabarito, /q&a, quem respondeu, /omissas e adiantar N."
                 ].join("\n")
               });
               continue;
@@ -986,6 +989,7 @@ async function startBot(): Promise<void> {
               passiveProbe.kind === "answer_key" ||
               Boolean(respondentIdProbe) ||
               parseOmissasCommand(text) ||
+              Boolean(parseAdiantarCommand(text)) ||
               parseQaCommand(text);
 
             if (!passiveReadOnly) {
@@ -1076,7 +1080,7 @@ async function startBot(): Promise<void> {
               const openIds = await listUnansweredShortIdsForUser(sender, gj, 30);
               if (openIds.length === 0) {
                 await sock.sendMessage(remoteJid, {
-                  text: "Voce nao tem questoes em aberto nos cadernos em que esta engajado (ou ja respondeu a todas). Questoes de cadernos que voce nao faz e as suas proprias nao entram na lista."
+                  text: "Voce nao tem questoes em aberto (engajado/passivo) ou ja respondeu a todas. Passivos so veem as do dia; questoes suas nao entram na lista."
                 });
                 continue;
               }
@@ -1092,6 +1096,50 @@ async function startBot(): Promise<void> {
             } catch (omErr) {
               await sock.sendMessage(remoteJid, {
                 text: `Erro ao listar omissas: ${(omErr as Error).message}`
+              });
+            }
+            continue;
+          }
+
+          const adiantarCmd = fromPrivate ? parseAdiantarCommand(text) : null;
+          if (adiantarCmd) {
+            try {
+              const gj = getQuizTargetGroupJid();
+              const cadernos = await listEngagedGroupCadernosForUser(sender, gj);
+              if (cadernos.length === 0) {
+                await sock.sendMessage(remoteJid, {
+                  text: "Voce nao esta engajado em nenhum caderno ativo deste grupo. Marque-se na edicao do caderno no site."
+                });
+                continue;
+              }
+              const allShortIds: string[] = [];
+              const summaries: string[] = [];
+              for (const c of cadernos) {
+                const result = await adiantarCadernoQuestions(c, adiantarCmd.days);
+                summaries.push(result.message);
+                allShortIds.push(...result.shortIds);
+              }
+              if (allShortIds.length === 0) {
+                await sock.sendMessage(remoteJid, {
+                  text: ["Nada a adiantar.", "", ...summaries].join("\n")
+                });
+                continue;
+              }
+              omissasOfferByUser.set(sender, allShortIds);
+              await sock.sendMessage(remoteJid, {
+                text: [
+                  ...summaries,
+                  "",
+                  "Questoes adiantadas:",
+                  ...allShortIds.map((id, i) => `${i + 1}. #${id}`),
+                  "",
+                  "Deseja receber os enunciados agora? Responda sim ou nao.",
+                  "(Elas tambem entram no /omissas.)"
+                ].join("\n")
+              });
+            } catch (adErr) {
+              await sock.sendMessage(remoteJid, {
+                text: `Erro ao adiantar: ${(adErr as Error).message}`
               });
             }
             continue;

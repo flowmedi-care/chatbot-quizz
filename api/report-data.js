@@ -13,6 +13,13 @@ function answerIsCorrect(answerLetter, answerKey) {
   return normalizeLetter(answerLetter) === String(answerKey || "").toUpperCase().slice(0, 1);
 }
 
+function parseCadernoIdFromCreator(creatorJid) {
+  const m = String(creatorJid || "").match(/^caderno:(\d+)@bot$/i);
+  if (!m) return null;
+  const id = Number(m[1]);
+  return Number.isFinite(id) && id > 0 ? id : null;
+}
+
 module.exports = async (req, res) => {
   applyCors(res);
   if (req.method === "OPTIONS") return res.status(204).end();
@@ -43,6 +50,45 @@ module.exports = async (req, res) => {
 
       if (aErr) throw aErr;
       answersRaw = ans || [];
+    }
+
+    const cadernoByQuestionId = new Map();
+    if (questionIds.length) {
+      const { data: cqRows, error: cqErr } = await supabase
+        .from("caderno_questions")
+        .select("published_question_id, caderno_id")
+        .in("published_question_id", questionIds);
+      if (!cqErr) {
+        for (const row of cqRows || []) {
+          const qid = Number(row.published_question_id);
+          const cid = Number(row.caderno_id);
+          if (Number.isFinite(qid) && Number.isFinite(cid)) {
+            cadernoByQuestionId.set(qid, cid);
+          }
+        }
+      }
+    }
+
+    const cadernoIds = [...new Set(cadernoByQuestionId.values())];
+    for (const row of rows) {
+      const fromCreator = parseCadernoIdFromCreator(row.creator_jid);
+      if (fromCreator && !cadernoByQuestionId.has(row.id)) {
+        cadernoByQuestionId.set(row.id, fromCreator);
+        if (!cadernoIds.includes(fromCreator)) cadernoIds.push(fromCreator);
+      }
+    }
+
+    const cadernoNames = new Map();
+    if (cadernoIds.length) {
+      const { data: cRows, error: cErr } = await supabase
+        .from("cadernos")
+        .select("id, name")
+        .in("id", cadernoIds);
+      if (!cErr) {
+        for (const c of cRows || []) {
+          cadernoNames.set(Number(c.id), String(c.name || `Caderno #${c.id}`));
+        }
+      }
     }
 
     const qById = new Map(rows.map((r) => [r.id, r]));
@@ -76,20 +122,25 @@ module.exports = async (req, res) => {
       x.userName.localeCompare(y.userName, "pt-BR")
     );
 
-    const questions = rows.map((row) => ({
-      id: row.id,
-      shortId: String(row.short_id || "").toUpperCase(),
-      creatorName: row.creator_name || "Autor",
-      questionType: row.question_type,
-      statementText: row.statement_text || "",
-      statementMediaUrl: row.statement_media_url || null,
-      statementMediaMimeType: row.statement_media_mime_type || null,
-      answerKey: String(row.answer_key || "").toUpperCase().slice(0, 1),
-      explanationText: row.explanation_text || null,
-      explanationMediaUrl: row.explanation_media_url || null,
-      explanationMediaMimeType: row.explanation_media_mime_type || null,
-      createdAt: row.created_at
-    }));
+    const questions = rows.map((row) => {
+      const cadernoId = cadernoByQuestionId.get(row.id) ?? null;
+      return {
+        id: row.id,
+        shortId: String(row.short_id || "").toUpperCase(),
+        creatorName: row.creator_name || "Autor",
+        questionType: row.question_type,
+        statementText: row.statement_text || "",
+        statementMediaUrl: row.statement_media_url || null,
+        statementMediaMimeType: row.statement_media_mime_type || null,
+        answerKey: String(row.answer_key || "").toUpperCase().slice(0, 1),
+        explanationText: row.explanation_text || null,
+        explanationMediaUrl: row.explanation_media_url || null,
+        explanationMediaMimeType: row.explanation_media_mime_type || null,
+        createdAt: row.created_at,
+        cadernoId,
+        cadernoName: cadernoId != null ? cadernoNames.get(cadernoId) || `Caderno #${cadernoId}` : null
+      };
+    });
 
     return res.status(200).json({
       groupJid,
@@ -98,7 +149,7 @@ module.exports = async (req, res) => {
       participants
     });
   } catch (e) {
-    console.error(e);
-    return res.status(500).json({ error: e.message || "Erro ao montar relatorio" });
+    console.error("[report-data]", e);
+    return res.status(500).json({ error: e.message || "Erro interno" });
   }
 };

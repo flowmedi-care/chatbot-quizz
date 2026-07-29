@@ -24,15 +24,32 @@ async function listCadernoEngagementMembers(supabase, cadernoId, groupJid) {
   }
 
   let cadernoRows = [];
-  const { data: ce, error: ceErr } = await supabase
+  let hasPassive = true;
+  let { data: ce, error: ceErr } = await supabase
     .from("caderno_engagement")
-    .select("user_jid, user_label, quiz_display_name, engaged, engaged_since, updated_at")
+    .select("user_jid, user_label, quiz_display_name, engaged, passive, engaged_since, updated_at")
     .eq("caderno_id", cadernoId);
 
   if (ceErr) {
     const msg = String(ceErr.message || "").toLowerCase();
-    if (!(msg.includes("relation") && msg.includes("does not exist"))) throw ceErr;
-  } else {
+    if (msg.includes("column") && msg.includes("passive")) {
+      hasPassive = false;
+      const fb = await supabase
+        .from("caderno_engagement")
+        .select("user_jid, user_label, quiz_display_name, engaged, engaged_since, updated_at")
+        .eq("caderno_id", cadernoId);
+      if (fb.error) {
+        const m2 = String(fb.error.message || "").toLowerCase();
+        if (!(m2.includes("relation") && m2.includes("does not exist"))) throw fb.error;
+      } else {
+        ce = fb.data;
+        ceErr = null;
+      }
+    } else if (!(msg.includes("relation") && msg.includes("does not exist"))) {
+      throw ceErr;
+    }
+  }
+  if (!ceErr) {
     cadernoRows = ce || [];
   }
 
@@ -44,6 +61,7 @@ async function listCadernoEngagementMembers(supabase, cadernoId, groupJid) {
         userLabel: r.user_label ? String(r.user_label) : null,
         quizDisplayName: r.quiz_display_name != null ? String(r.quiz_display_name) : null,
         engaged: Boolean(r.engaged),
+        passive: hasPassive ? Boolean(r.passive) : false,
         updatedAt: r.updated_at ? String(r.updated_at) : null
       }
     ])
@@ -64,6 +82,7 @@ async function listCadernoEngagementMembers(supabase, cadernoId, groupJid) {
       userLabel,
       quizDisplayName,
       engaged: false,
+      passive: false,
       updatedAt: null
     };
     members.push({
@@ -77,6 +96,7 @@ async function listCadernoEngagementMembers(supabase, cadernoId, groupJid) {
         nameFromQuiz: hints.get(base.userJid) || null
       }),
       engaged: Boolean(base.engaged),
+      passive: Boolean(base.passive),
       updatedAt: base.updatedAt
     });
   }
@@ -94,6 +114,7 @@ async function listCadernoEngagementMembers(supabase, cadernoId, groupJid) {
         nameFromQuiz: hints.get(ceRow.userJid) || null
       }),
       engaged: Boolean(ceRow.engaged),
+      passive: Boolean(ceRow.passive),
       updatedAt: ceRow.updatedAt
     });
   }
@@ -125,7 +146,27 @@ async function handleCadernoEngagementPatch(req, res, supabase, groupJid, cadern
   if (!userJid) {
     return res.status(400).json({ error: "Campo userJid e obrigatorio." });
   }
-  const engaged = Boolean(body.engaged);
+
+  let engaged = body.engaged != null ? Boolean(body.engaged) : null;
+  let passive = body.passive != null ? Boolean(body.passive) : null;
+
+  const { data: prev } = await supabase
+    .from("caderno_engagement")
+    .select("engaged, passive, engaged_since")
+    .eq("caderno_id", cadernoId)
+    .eq("user_jid", userJid)
+    .maybeSingle();
+
+  if (engaged == null) engaged = Boolean(prev && prev.engaged);
+  if (passive == null) {
+    passive = prev && prev.passive != null ? Boolean(prev.passive) : false;
+  }
+
+  // Mutuamente exclusivos
+  if (body.engaged === true) passive = false;
+  if (body.passive === true) engaged = false;
+  if (engaged && passive) passive = false;
+
   const nowIso = new Date().toISOString();
 
   const { data: caderno, error: cErr } = await supabase
@@ -148,19 +189,13 @@ async function handleCadernoEngagementPatch(req, res, supabase, groupJid, cadern
   const quizDisplayName =
     groupRow?.quiz_display_name != null ? String(groupRow.quiz_display_name) : null;
 
-  const { data: prev } = await supabase
-    .from("caderno_engagement")
-    .select("engaged, engaged_since")
-    .eq("caderno_id", cadernoId)
-    .eq("user_jid", userJid)
-    .maybeSingle();
-
   const patch = {
     caderno_id: cadernoId,
     user_jid: userJid,
     user_label: userLabel,
     quiz_display_name: quizDisplayName,
     engaged,
+    passive,
     updated_at: nowIso
   };
 
@@ -179,15 +214,25 @@ async function handleCadernoEngagementPatch(req, res, supabase, groupJid, cadern
   let upd = await supabase
     .from("caderno_engagement")
     .upsert(patch, { onConflict: "caderno_id,user_jid" })
-    .select("user_jid, user_label, quiz_display_name, engaged, updated_at");
+    .select("user_jid, user_label, quiz_display_name, engaged, passive, updated_at");
 
-  if (upd.error && String(upd.error.message || "").toLowerCase().includes("engaged_since")) {
-    const fallback = { ...patch };
-    delete fallback.engaged_since;
-    upd = await supabase
-      .from("caderno_engagement")
-      .upsert(fallback, { onConflict: "caderno_id,user_jid" })
-      .select("user_jid, user_label, quiz_display_name, engaged, updated_at");
+  if (upd.error) {
+    const msg = String(upd.error.message || "").toLowerCase();
+    if (msg.includes("column") && msg.includes("passive")) {
+      const fallback = { ...patch };
+      delete fallback.passive;
+      upd = await supabase
+        .from("caderno_engagement")
+        .upsert(fallback, { onConflict: "caderno_id,user_jid" })
+        .select("user_jid, user_label, quiz_display_name, engaged, updated_at");
+    } else if (msg.includes("engaged_since")) {
+      const fallback = { ...patch };
+      delete fallback.engaged_since;
+      upd = await supabase
+        .from("caderno_engagement")
+        .upsert(fallback, { onConflict: "caderno_id,user_jid" })
+        .select("user_jid, user_label, quiz_display_name, engaged, passive, updated_at");
+    }
   }
 
   if (upd.error) throw upd.error;
@@ -211,6 +256,7 @@ async function handleCadernoEngagementPatch(req, res, supabase, groupJid, cadern
         nameFromQuiz: hints.get(memberJid) || null
       }),
       engaged: Boolean(r.engaged),
+      passive: Boolean(r.passive),
       updatedAt: r.updated_at ? String(r.updated_at) : null
     }
   });

@@ -211,7 +211,20 @@ button.btn-tutorial {
   color: #57534e;
 }
 
-.report-field select {
+.report-field-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1rem;
+}
+
+.report-field-row .report-field {
+  flex: 1 1 8rem;
+  min-width: 7rem;
+}
+
+.report-field select,
+.report-field input[type="date"],
+.report-field input[type="text"] {
   padding: 0.55rem 0.65rem;
   border-radius: var(--radius);
   border: 1px solid var(--border);
@@ -535,6 +548,10 @@ table.ranking-table th {
 }
 
 .engagement-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.85rem;
   padding: 0.55rem 0;
   border-bottom: 1px solid var(--border);
 }
@@ -551,8 +568,21 @@ table.ranking-table th {
   font-size: 0.95rem;
 }
 
+.engagement-label.engagement-role {
+  gap: 0.35rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--muted);
+  flex: 0 0 auto;
+}
+
+.engagement-role-tag {
+  white-space: nowrap;
+}
+
 .engagement-name {
-  flex: 1;
+  flex: 1 1 8rem;
+  min-width: 6rem;
 }
 
 .engagement-empty {
