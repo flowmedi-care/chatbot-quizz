@@ -7,7 +7,8 @@
     members: [],
     profile: null,
     shopItems: [],
-    shopTab: "all",
+    shopTab: "destaques",
+    shopSelected: null,
     rankBoard: "aura",
     page: "diario"
   };
@@ -133,13 +134,25 @@
     const name = eco.display_name || state.userJid;
     const unlocked = (data.achievements || []).filter((a) => a.unlocked);
     const equipped = (data.inventory || []).filter((i) => i.equipped);
+    const bySlot = Object.fromEntries(
+      equipped.filter((i) => i.metadata?.slot).map((i) => [i.metadata.slot, i])
+    );
+    const frameCss = bySlot.frame?.metadata?.css || "frame-none";
+    const auraFx = bySlot.aura_fx?.metadata?.css || "";
+    const avatarCss = bySlot.avatar?.metadata?.css || "";
+    const nameCss = bySlot.name_color?.metadata?.css || "";
+    const bannerCss = bySlot.banner?.metadata?.css || "";
+    const emoji = bySlot.emoji?.metadata?.emoji || "";
     const nextNeed = aura.remainingToNext != null ? `${aura.remainingToNext} Aura até o próximo nível` : "Topo da escala";
 
     $("#perfil-root").innerHTML = `
-      <div class="profile-hero hub-card">
-        <div class="profile-avatar" aria-hidden="true">${esc(initials(name))}</div>
+      <div class="profile-hero hub-card ${esc(bannerCss)}">
+        <div class="plaza-avatar lg ${esc(frameCss)} ${esc(auraFx)} ${esc(avatarCss)}" aria-hidden="true">
+          <span class="plaza-initials">${esc(initials(name))}</span>
+          ${emoji ? `<span class="plaza-emoji">${esc(emoji)}</span>` : ""}
+        </div>
         <div class="profile-meta">
-          <h2>${esc(name)}</h2>
+          <h2 class="${esc(nameCss)}">${esc(name)}</h2>
           <p class="profile-title-line">${esc(eco.active_title || "Sem título equipado")} · ${esc(aura.label || "Aura Latente")}</p>
           <div class="profile-tags">
             <span class="tag rarity-${esc(rarity.key)}">Raridade: ${esc(rarity.label)}</span>
@@ -209,7 +222,60 @@
     `;
   }
 
+  function avatarMarkup(m, sizeClass = "") {
+    const frame = m.frameCss || "frame-none";
+    const fx = m.auraFxCss || "";
+    const av = m.avatarCss || "";
+    const emoji = m.emoji ? `<span class="plaza-emoji">${esc(m.emoji)}</span>` : "";
+    return `
+      <div class="plaza-avatar ${esc(sizeClass)} ${esc(frame)} ${esc(fx)} ${esc(av)}" aria-hidden="true">
+        <span class="plaza-initials">${esc(initials(m.name))}</span>
+        ${emoji}
+      </div>`;
+  }
+
+  async function loadPlaza() {
+    const root = $("#plaza-root");
+    if (!root) return;
+    try {
+      const data = await apiGet({ view: "plaza", limit: 48 });
+      const members = data.members || [];
+      if (!members.length) {
+        root.innerHTML = `<div class="hub-card"><p class="muted" style="margin:0">Ainda não há perfis com economia. Assim que o grupo responder no WhatsApp, a praça enche.</p></div>`;
+        return;
+      }
+      root.innerHTML = members
+        .map((m) => {
+          const nameClass = m.nameCss || "";
+          const banner = m.bannerCss || "";
+          return `
+          <button type="button" class="plaza-tile ${esc(banner)}" data-open-profile="${esc(m.userJid)}">
+            ${avatarMarkup(m)}
+            <div class="plaza-info">
+              <strong class="plaza-name ${esc(nameClass)}">${esc(m.name)}</strong>
+              <span class="plaza-title">${esc(m.title || m.auraLevel?.shortLabel || "Sem título")}</span>
+              <span class="plaza-aura">${esc(m.auraLevel?.emoji || "🌱")} ${esc(m.aura)} Aura</span>
+              <span class="plaza-streak">🔥 ${esc(m.streak)} dias</span>
+            </div>
+          </button>`;
+        })
+        .join("");
+      $$("[data-open-profile]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          state.userJid = btn.dataset.openProfile;
+          localStorage.setItem(STORAGE_USER, state.userJid);
+          const sel = $("#hub-user");
+          if (sel) sel.value = state.userJid;
+          setPage("perfil");
+        });
+      });
+    } catch (e) {
+      root.innerHTML = `<div class="hub-card"><p class="muted" style="margin:0">${esc(e.message || String(e))}</p></div>`;
+    }
+  }
+
   async function loadDiario() {
+    await loadPlaza();
     const dayEl = $("#diario-day");
     if (dayEl && !dayEl.value) dayEl.value = todayInputValue();
     const day = dayEl?.value || todayInputValue();
@@ -354,22 +420,154 @@
     });
   }
 
+  const SHOP_LABELS = {
+    destaques: "Destaques",
+    cosmeticos: "Cosméticos",
+    aura: "Efeitos de Aura",
+    assistencias: "Assistências",
+    protecao: "Proteção",
+    geral: "Geral"
+  };
+
+  function shopPreviewFor(item, buyerName) {
+    const meta = item?.metadata || {};
+    const css = meta.css || "";
+    const slot = meta.slot || "";
+    const name = buyerName || "Você";
+    if (slot === "frame" || item?.item_key?.startsWith("frame_")) {
+      return `
+        <div class="shop-mannequin">
+          <div class="plaza-avatar lg ${esc(css)}"><span class="plaza-initials">${esc(initials(name))}</span></div>
+          <p>Preview da moldura</p>
+        </div>`;
+    }
+    if (slot === "aura_fx" || item?.category === "aura") {
+      return `
+        <div class="shop-mannequin">
+          <div class="plaza-avatar lg frame-none ${esc(css)}"><span class="plaza-initials">${esc(initials(name))}</span></div>
+          <p>Efeito de Aura</p>
+        </div>`;
+    }
+    if (slot === "avatar") {
+      return `
+        <div class="shop-mannequin">
+          <div class="plaza-avatar lg frame-rare ${esc(css)}"><span class="plaza-initials">${esc(initials(name))}</span></div>
+          <p>Avatar exclusivo</p>
+        </div>`;
+    }
+    if (slot === "banner") {
+      return `
+        <div class="shop-mannequin banner-preview ${esc(css)}">
+          <div class="plaza-avatar md frame-basic"><span class="plaza-initials">${esc(initials(name))}</span></div>
+          <strong class="plaza-name">${esc(name)}</strong>
+          <p>Banner de perfil</p>
+        </div>`;
+    }
+    if (slot === "name_color") {
+      return `
+        <div class="shop-mannequin">
+          <strong class="plaza-name ${esc(css)}" style="font-size:1.4rem">${esc(name)}</strong>
+          <p>Cor do nome no Hub</p>
+        </div>`;
+    }
+    if (slot === "emoji" || meta.emoji) {
+      return `
+        <div class="shop-mannequin">
+          <div class="plaza-avatar lg frame-basic">
+            <span class="plaza-initials">${esc(initials(name))}</span>
+            <span class="plaza-emoji">${esc(meta.emoji || "⚡")}</span>
+          </div>
+          <p>Emoji exclusivo</p>
+        </div>`;
+    }
+    if (item?.consumable || item?.category === "assistencias" || item?.category === "protecao") {
+      const icon = item?.item_key?.includes("streak") ? "🛡️" : item?.item_key?.includes("eliminate") ? "✂️" : "📦";
+      return `
+        <div class="shop-mannequin consumable-preview">
+          <div class="shop-icon-blob">${icon}</div>
+          <p>Consumível — vai para o inventário</p>
+        </div>`;
+    }
+    return `
+      <div class="shop-mannequin">
+        <div class="shop-icon-blob">🏛️</div>
+        <p>Item do Portal</p>
+      </div>`;
+  }
+
+  function renderShopDetail(item, profile) {
+    const detail = $("#shop-detail");
+    if (!detail) return;
+    if (!item) {
+      detail.innerHTML = `<p class="muted">Selecione um item na vitrine.</p>`;
+      return;
+    }
+    const name = profile?.economy?.display_name || "Você";
+    const canBuy = Boolean(state.userJid);
+    const auraOk = !item.min_aura || (profile?.economy?.aura || 0) >= item.min_aura;
+    const credOk = (profile?.availableCredits ?? 0) >= item.price_credits;
+    detail.innerHTML = `
+      ${shopPreviewFor(item, name)}
+      <div class="shop-detail-copy">
+        <p class="shop-dept">${esc(SHOP_LABELS[item.category] || item.category || "Portal")}</p>
+        <h2>${esc(item.name)}</h2>
+        <p>${esc(item.description || "Empenhe a despesa e confirme com sim no WhatsApp.")}</p>
+        <dl class="shop-specs">
+          <div><dt>Preço</dt><dd>${esc(item.price_credits)} Créditos</dd></div>
+          <div><dt>Aura mínima</dt><dd>${item.min_aura ? esc(item.min_aura) : "—"}</dd></div>
+          <div><dt>Tipo</dt><dd>${item.consumable ? "Consumível" : esc(item.metadata?.slot || "Cosmético")}</dd></div>
+        </dl>
+        <button type="button" class="shop-buy-btn" data-buy="${esc(item.item_key)}" ${!canBuy || !auraOk ? "disabled" : ""}>
+          Empenhar despesa · ${esc(item.price_credits)} Créd.
+        </button>
+        ${!canBuy ? `<p class="muted">Selecione quem você é no topo.</p>` : ""}
+        ${canBuy && !auraOk ? `<p class="muted">Aura insuficiente (precisa ${esc(item.min_aura)}).</p>` : ""}
+        ${canBuy && auraOk && !credOk ? `<p class="muted">Saldo disponível pode ser curto — o bot confirma no WhatsApp.</p>` : ""}
+      </div>`;
+    detail.querySelector("[data-buy]")?.addEventListener("click", async () => {
+      const status = $("#shop-status");
+      status.textContent = "Criando pedido…";
+      try {
+        const r = await apiPost({
+          action: "purchase-intent",
+          userJid: state.userJid,
+          itemKey: item.item_key
+        });
+        status.textContent = r.message || "Confirme com *sim* no WhatsApp.";
+      } catch (e) {
+        status.textContent = e.message || String(e);
+      }
+    });
+  }
+
   async function loadLoja() {
     const [shop, profile] = await Promise.all([
       apiGet({ view: "shop" }),
       state.userJid ? apiGet({ view: "profile", userJid: state.userJid }).catch(() => null) : Promise.resolve(null)
     ]);
     state.shopItems = shop.items || [];
-    const cats = [...new Set(state.shopItems.map((i) => i.category || "geral"))];
+    const featured = [...state.shopItems].sort((a, b) => (b.price_credits || 0) - (a.price_credits || 0)).slice(0, 3);
+    const cats = ["destaques", ...new Set(state.shopItems.map((i) => i.category || "geral"))];
+
+    const bal = $("#shop-balance");
+    if (profile) {
+      bal.innerHTML = `
+        <div class="wallet-chip"><span>Disponível</span><strong>${esc(profile.availableCredits)}</strong></div>
+        <div class="wallet-chip"><span>Escrow</span><strong>${esc(profile.economy?.credits_escrowed || 0)}</strong></div>
+        <div class="wallet-chip"><span>Aura</span><strong>${esc(profile.economy?.aura || 0)}</strong></div>`;
+    } else {
+      bal.innerHTML = `<p class="muted" style="margin:0">Selecione quem você é para empenhar despesas neste balcão.</p>`;
+    }
+
     const tabs = $("#shop-tabs");
-    tabs.innerHTML =
-      `<button type="button" class="${state.shopTab === "all" ? "active" : ""}" data-shop-tab="all">Tudo</button>` +
-      cats
-        .map(
-          (c) =>
-            `<button type="button" class="${state.shopTab === c ? "active" : ""}" data-shop-tab="${esc(c)}">${esc(c)}</button>`
-        )
-        .join("");
+    tabs.innerHTML = cats
+      .map(
+        (c) =>
+          `<button type="button" class="aisle-btn ${state.shopTab === c ? "active" : ""}" data-shop-tab="${esc(c)}">${esc(
+            SHOP_LABELS[c] || c
+          )}</button>`
+      )
+      .join("");
     $$("[data-shop-tab]").forEach((b) =>
       b.addEventListener("click", () => {
         state.shopTab = b.dataset.shopTab;
@@ -377,51 +575,74 @@
       })
     );
 
-    const bal = $("#shop-balance");
-    if (profile) {
-      bal.innerHTML = `Saldo disponível: <strong>${esc(profile.availableCredits)}</strong> Créditos · Aura: <strong>${esc(profile.economy?.aura || 0)}</strong>`;
+    const filtered =
+      state.shopTab === "destaques"
+        ? featured
+        : state.shopItems.filter((i) => (i.category || "geral") === state.shopTab);
+
+    if (!state.shopSelected || !filtered.some((i) => i.item_key === state.shopSelected)) {
+      state.shopSelected = filtered[0]?.item_key || state.shopItems[0]?.item_key || null;
+    }
+    const selected = state.shopItems.find((i) => i.item_key === state.shopSelected) || null;
+
+    const showcase = $("#shop-showcase");
+    if (state.shopTab === "destaques") {
+      showcase.innerHTML = `
+        <div class="shop-featured-banner">
+          <div>
+            <p class="shop-dept">Oficina do dia</p>
+            <h2>Vitrine orçamentária</h2>
+            <p>Itens de prestígio e consumíveis. Toque na prateleira para ver o preview ao vivo.</p>
+          </div>
+        </div>
+        <div class="shop-shelf">
+          ${filtered
+            .map((item) => {
+              return `
+              <button type="button" class="shelf-item ${item.item_key === state.shopSelected ? "selected" : ""}" data-select="${esc(item.item_key)}">
+                <div class="shelf-visual">${shopPreviewFor(item, profile?.economy?.display_name || "PV")}</div>
+                <div class="shelf-meta">
+                  <strong>${esc(item.name)}</strong>
+                  <span>${esc(item.price_credits)} Créd.</span>
+                </div>
+              </button>`;
+            })
+            .join("")}
+        </div>`;
     } else {
-      bal.innerHTML = `Selecione quem você é para comprar.`;
+      showcase.innerHTML = `
+        <div class="shop-rail">
+          ${filtered
+            .map(
+              (item) => `
+            <button type="button" class="rail-row ${item.item_key === state.shopSelected ? "selected" : ""}" data-select="${esc(item.item_key)}">
+              <div class="rail-preview">${shopPreviewFor(item, profile?.economy?.display_name || "PV")}</div>
+              <div>
+                <strong>${esc(item.name)}</strong>
+                <p>${esc(item.description || metaSlot(item))}</p>
+              </div>
+              <span class="rail-price">${esc(item.price_credits)}</span>
+            </button>`
+            )
+            .join("") || `<p class="muted">Nenhum item neste corredor.</p>`}
+        </div>`;
     }
 
-    const filtered =
-      state.shopTab === "all" ? state.shopItems : state.shopItems.filter((i) => (i.category || "geral") === state.shopTab);
-    $("#shop-grid").innerHTML = filtered
-      .map(
-        (item) => `
-      <div class="shop-card">
-        <div class="shop-card-top">
-          <strong>${esc(item.name)}</strong>
-          <span class="price">${esc(item.price_credits)} Créd.</span>
-        </div>
-        <p>${esc(item.description || "Item do Portal de compras.")}</p>
-        <div class="shop-meta">
-          ${item.min_aura ? `<span>Aura mín. ${esc(item.min_aura)}</span>` : ""}
-          ${item.consumable ? `<span>Consumível</span>` : `<span>${esc(item.metadata?.slot || "Cosmético")}</span>`}
-        </div>
-        <button type="button" class="hub-chip primary" data-buy="${esc(item.item_key)}" ${!state.userJid ? "disabled" : ""}>
-          Empenhar despesa
-        </button>
-      </div>`
-      )
-      .join("");
-
-    $$("[data-buy]").forEach((btn) => {
-      btn.addEventListener("click", async () => {
-        const status = $("#shop-status");
-        status.textContent = "Criando pedido…";
-        try {
-          const r = await apiPost({
-            action: "purchase-intent",
-            userJid: state.userJid,
-            itemKey: btn.dataset.buy
-          });
-          status.textContent = r.message || "Confirme com *sim* no WhatsApp.";
-        } catch (e) {
-          status.textContent = e.message || String(e);
-        }
+    $$("[data-select]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        state.shopSelected = btn.dataset.select;
+        const item = state.shopItems.find((i) => i.item_key === state.shopSelected);
+        $$("[data-select]").forEach((b) => b.classList.toggle("selected", b.dataset.select === state.shopSelected));
+        renderShopDetail(item, profile);
       });
     });
+
+    renderShopDetail(selected, profile);
+  }
+
+  function metaSlot(item) {
+    if (item.consumable) return "Consumível";
+    return item.metadata?.slot || "Item do Portal";
   }
 
   async function loadHistorico() {

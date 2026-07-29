@@ -22,7 +22,7 @@
         <nav class="hub-top-links" aria-label="Atalhos">
           <a class="hub-chip" href="/">Quiz</a>
           <a class="hub-chip" href="/tutorial">Como usar</a>
-          <button type="button" class="hub-chip primary" data-go="diario">Diário Oficial</button>
+          <button type="button" class="hub-chip primary" data-go="diario">Praça</button>
         </nav>
       </header>
 
@@ -39,7 +39,7 @@
       <div class="hub-layout">
         <nav class="hub-nav" aria-label="Hub">
           <div class="nav-section">Mundo vivo</div>
-          <button type="button" data-go="diario" class="active">Diário Oficial</button>
+          <button type="button" data-go="diario" class="active">Praça</button>
           <button type="button" data-go="perfil">Meu perfil</button>
           <button type="button" data-go="rankings">Rankings</button>
 
@@ -58,36 +58,44 @@
         </nav>
 
         <main class="hub-main">
-          <!-- DIÁRIO -->
+          <!-- HOME: Praça + Diário -->
           <section id="page-diario" class="hub-page active">
             <div class="hub-hero">
-              <h1>Diário Oficial</h1>
+              <h1>Praça dos concurseiros</h1>
               <p>
-                O feed vivo do Papa Vagas — nomeações, recordes, mandados e despesas empenhadas. Parece boletim
-                institucional; diverte como um MMORPG.
+                Quadro vivo do grupo — molduras, Aura e títulos. Clique em alguém para abrir o perfil. O Diário Oficial
+                fica abaixo.
               </p>
             </div>
-            <div class="hub-grid-2">
-              <div class="hub-card">
-                <h2>Edição de hoje</h2>
-                <div class="filters-row" style="display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.75rem">
-                  <input type="date" id="diario-day" />
-                  <button type="button" class="hub-chip" id="diario-reload">Atualizar</button>
-                </div>
-                <div id="diario-feed" class="feed-list"></div>
+            <div id="plaza-root" class="plaza-grid" aria-live="polite"></div>
+
+            <div class="diario-section">
+              <div class="hub-hero diario-hero">
+                <h2>Diário Oficial</h2>
+                <p>Nomeações, recordes, mandados e despesas empenhadas do dia.</p>
               </div>
-              <aside class="hub-card">
-                <h3>Seções do Diário</h3>
-                <ul>
-                  <li><strong>Nomeações</strong> — conquistas e títulos</li>
-                  <li><strong>Recordes</strong> — streak e 1ºs lugares</li>
-                  <li><strong>Mandados</strong> — duelos públicos</li>
-                  <li><strong>Despesas</strong> — compras no Portal</li>
-                </ul>
-                <p style="color: var(--muted); font-size: 0.9rem; margin-top: 1rem">
-                  No WhatsApp o digest matinal é enxuto (Aura + streak). Aqui está a auditoria completa.
-                </p>
-              </aside>
+              <div class="hub-grid-2">
+                <div class="hub-card">
+                  <h3>Edição de hoje</h3>
+                  <div class="filters-row" style="display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.75rem">
+                    <input type="date" id="diario-day" />
+                    <button type="button" class="hub-chip" id="diario-reload">Atualizar</button>
+                  </div>
+                  <div id="diario-feed" class="feed-list"></div>
+                </div>
+                <aside class="hub-card">
+                  <h3>Seções do Diário</h3>
+                  <ul>
+                    <li><strong>Nomeações</strong> — conquistas e títulos</li>
+                    <li><strong>Recordes</strong> — streak e 1ºs lugares</li>
+                    <li><strong>Mandados</strong> — duelos públicos</li>
+                    <li><strong>Despesas</strong> — compras no Portal</li>
+                  </ul>
+                  <p style="color: var(--muted); font-size: 0.9rem; margin-top: 1rem">
+                    No WhatsApp o digest matinal é enxuto (Aura + streak). Aqui está a auditoria completa.
+                  </p>
+                </aside>
+              </div>
             </div>
           </section>
 
@@ -146,11 +154,18 @@
           <section id="page-loja" class="hub-page">
             <div class="hub-hero">
               <h1>Portal de compras</h1>
-              <p>Balcão orçamentário: empenhe Créditos, confirme no WhatsApp, vista o prestígio.</p>
+              <p>Balcão orçamentário com vitrine — escolha o item, veja o preview e empenhe a despesa.</p>
             </div>
-            <div id="shop-balance" class="status-line"></div>
-            <div class="shop-tabs" id="shop-tabs"></div>
-            <div id="shop-grid" class="shop-grid"></div>
+            <div id="shop-balance" class="shop-wallet"></div>
+            <div class="shop-stage">
+              <aside class="shop-aisle" id="shop-tabs" aria-label="Corredores"></aside>
+              <div class="shop-showcase" id="shop-showcase">
+                <p class="muted">Carregando catálogo…</p>
+              </div>
+              <div class="shop-detail" id="shop-detail">
+                <p class="muted">Selecione um item na vitrine.</p>
+              </div>
+            </div>
             <p id="shop-status" class="status-line"></p>
           </section>
 
