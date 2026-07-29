@@ -12,7 +12,7 @@ const {
 
 /**
  * API unificada de gamificação (Hobby plan = máx. 12 functions).
- * GET  ?view=members|profile|shop|diario|rankings|ledger|transparencia
+ * GET  ?view=members|profile|shop|diario|rankings|plaza|ledger|transparencia
  * POST body.action = purchase-intent|equip
  */
 
@@ -319,6 +319,68 @@ module.exports = async function handler(req, res) {
       });
     }
 
+    if (view === "plaza" || view === "roster") {
+      const limit = Math.min(80, Math.max(1, Number(url.searchParams.get("limit") || 48)));
+      const { data: ecos, error } = await supabase
+        .from("user_economy")
+        .select("user_jid, display_name, active_title, aura, lifetime_answers, mandados_won")
+        .order("aura", { ascending: false })
+        .limit(limit);
+      if (error) throw error;
+      const jids = (ecos || []).map((e) => e.user_jid);
+      const { data: streaks } = jids.length
+        ? await supabase.from("user_streak").select("user_jid, current_streak, best_streak").in("user_jid", jids)
+        : { data: [] };
+      const streakMap = new Map((streaks || []).map((s) => [s.user_jid, s]));
+      const { data: inv } = jids.length
+        ? await supabase
+            .from("user_inventory")
+            .select("user_jid, item_key, equipped")
+            .in("user_jid", jids)
+            .eq("equipped", true)
+        : { data: [] };
+      const { data: catalog } = await supabase.from("shop_catalog").select("item_key, name, metadata, category");
+      const catMap = new Map((catalog || []).map((c) => [c.item_key, c]));
+      const equippedByUser = new Map();
+      for (const row of inv || []) {
+        const list = equippedByUser.get(row.user_jid) || [];
+        const item = catMap.get(row.item_key);
+        list.push({
+          item_key: row.item_key,
+          name: item?.name || row.item_key,
+          slot: item?.metadata?.slot || null,
+          css: item?.metadata?.css || null,
+          emoji: item?.metadata?.emoji || null,
+          metadata: item?.metadata || {}
+        });
+        equippedByUser.set(row.user_jid, list);
+      }
+      const members = (ecos || []).map((e) => {
+        const equipped = equippedByUser.get(e.user_jid) || [];
+        const bySlot = Object.fromEntries(equipped.filter((x) => x.slot).map((x) => [x.slot, x]));
+        const aura = getAuraLevel(e.aura);
+        return {
+          userJid: e.user_jid,
+          name: e.display_name || e.user_jid,
+          title: e.active_title || null,
+          aura: e.aura || 0,
+          auraLevel: aura,
+          lifetimeAnswers: e.lifetime_answers || 0,
+          mandadosWon: e.mandados_won || 0,
+          streak: streakMap.get(e.user_jid)?.current_streak || 0,
+          bestStreak: streakMap.get(e.user_jid)?.best_streak || 0,
+          equipped,
+          frameCss: bySlot.frame?.css || null,
+          auraFxCss: bySlot.aura_fx?.css || null,
+          nameCss: bySlot.name_color?.css || null,
+          bannerCss: bySlot.banner?.css || null,
+          avatarCss: bySlot.avatar?.css || null,
+          emoji: bySlot.emoji?.emoji || null
+        };
+      });
+      return res.status(200).json({ members });
+    }
+
     if (view === "rankings" || view === "ranking") {
       return await handleRankings(supabase, url, res);
     }
@@ -370,7 +432,7 @@ module.exports = async function handler(req, res) {
     }
 
     return res.status(400).json({
-      error: "Use view=members|profile|shop|diario|rankings|ledger|transparencia (ou userJid / token)"
+      error: "Use view=members|profile|shop|diario|rankings|plaza|ledger|transparencia (ou userJid / token)"
     });
   } catch (e) {
     console.error(e);
