@@ -826,14 +826,41 @@
       <p>Itens podem exigir Aura mínima. Consumíveis (ex.: eliminar alternativa) saem do inventário ao usar.</p>
     `,
     mandado: `
-      <h2>Mandado de Intimação</h2>
-      <p>Duelo público com stake em Créditos (taxa 10% queimada). Escrow até resolução em até 24h.</p>
+      <h2>Mandado de Intimação — passo a passo</h2>
+      <p>É um <strong>duelo público</strong>: você desafia alguém a acertar uma questão. Vale Créditos e Aura.</p>
+
+      <h3>1. O comando (WhatsApp)</h3>
+      <pre class="code-block">/intimar Nome 50 123</pre>
       <ul>
-        <li>Stake típico: 20–200</li>
-        <li>Vitória do desafiado: +10 Aura · desafiante: +5 Aura</li>
-        <li>Derrota do defensor: −2 Aura</li>
+        <li><strong>Nome</strong> — parte do nome da pessoa (precisa já ter respondido alguma questão)</li>
+        <li><strong>50</strong> — stake em Créditos (mín. 20, máx. 200)</li>
+        <li><strong>123</strong> — número da questão que o intimado deve responder</li>
       </ul>
-      <p>Card no grupo = prova social + espetáculo (competição saudável).</p>
+      <p>Exemplo: <code>/intimar Caio 50 182</code></p>
+
+      <h3>2. O que é debitado de você</h3>
+      <ul>
+        <li><strong>Taxa 10%</strong> do stake (mín. 5 Créditos) — queimada na hora</li>
+        <li><strong>Stake</strong> — fica empenhado (escrow) até o fim do mandado</li>
+        <li>Máximo <strong>2 mandados</strong> abertos por você ao mesmo tempo</li>
+      </ul>
+
+      <h3>3. O que o intimado faz</h3>
+      <p>Tem <strong>24 horas</strong> para responder a questão citada. O grupo vê um card “MANDADO DE INTIMAÇÃO”.</p>
+
+      <h3>4. Resultado</h3>
+      <ul>
+        <li>Defensor acerta → ele ganha o stake + Aura; você recebe um pouco de Aura de prestígio</li>
+        <li>Defensor erra / não cumpre no prazo → regras de resolução do bot (Aura/créditos conforme o caso)</li>
+        <li>Vitória do defensor: +10 Aura · vitória do desafiante: +5 Aura · derrota do defensor: −2 Aura</li>
+      </ul>
+
+      <h3>5. Dicas</h3>
+      <ul>
+        <li>Se der “não achei o intimado”, a pessoa ainda não tem perfil — peça para responder qualquer questão</li>
+        <li>Não dá para intimar a si mesmo</li>
+        <li>Ainda não existe botão de Mandado no site — só no WhatsApp</li>
+      </ul>
     `,
     aplicar: `
       <h2>Aplicação Orçamentária</h2>
@@ -913,13 +940,14 @@
       ["ranking", "Atalho para ranking de Aura"]
     ],
     economia: [
-      ["/perfil ou /aura", "Carteira, nível, streak, conquistas"],
+      ["/perfil ou /aura", "Sua carteira, nível, streak, conquistas"],
+      ["/auras ou /aura todos", "Aura de todo mundo numa mensagem (bom no grupo)"],
       ["/loja", "Catálogo do Portal"],
       ["/comprar <item>", "Inicia compra"],
       ["/equipar <item>", "Equipa cosmético"],
       ["/eliminar N", "Remove 1 alternativa errada"],
       ["/aplicar 500", "Aplicação Orçamentária"],
-      ["/intimar Nome 50 123", "Mandado de Intimação"],
+      ["/intimar Nome 50 123", "Mandado: nome · stake · #questão"],
       ["/ranking aura|producao|disciplina|duelo", "Placares"],
       ["/diario", "Resumo diário enxuto"]
     ]
@@ -974,6 +1002,57 @@
     }
   ];
 
+  const UPDATE_TEXT = `🏛️ *Atualização Papa Vagas — economia do concurseiro*
+
+Galera, rolou uma atualização grande. Resumo corrido:
+
+*O que é*
+Agora responder questão gera *Aura* (prestígio) e *Créditos Orçamentários* (moeda pra gastar). Tem streak diário, conquistas de carreira, loja, rankings e mandado.
+
+*Como ganhar*
+• Acertar: +2 Aura / +2 Créditos
+• Errar: +1 / +1 (ainda conta esforço)
+• Manter sequência no dia: +1 / +1
+• 1º a zerar omissas: +4 / +4
+• Marcos de streak (3, 7, 15, 30) e títulos (Calouro → Nazli)
+
+*Comandos úteis*
+• \`/aura\` — seu perfil
+• \`/auras\` — Aura de *todo mundo* numa mensagem
+• \`/loja\` · \`/comprar item\` · \`/equipar item\`
+• \`/aplicar 500\` — trava créditos por 10 dias de streak (~12% se cumprir)
+• \`/intimar Nome 50 123\` — Mandado de Intimação (stake 20–200; taxa 10%)
+• \`/ranking aura\` (também producao / disciplina / duelo)
+
+*Mandado (duelo)*
+Exemplo: \`/intimar Caio 50 182\`
+Você empenha créditos + taxa; a pessoa tem 24h pra responder a questão. Card sai no grupo.
+
+*Site / Hub*
+https://papa-vagas.vercel.app/hub
+Praça dos perfis, Diário Oficial, loja, manual da economia e tabela de ações.
+Compras no site só debitam depois do *sim* no WhatsApp.
+
+Bora farmar Aura. Quem zerar omissas primeiro leva bônus 👀`;
+
+  function loadAtualizacao() {
+    const pre = $("#update-copy-text");
+    if (pre) pre.textContent = UPDATE_TEXT;
+    const btn = $("#btn-copy-update");
+    if (btn && !btn.dataset.bound) {
+      btn.dataset.bound = "1";
+      btn.addEventListener("click", async () => {
+        const status = $("#copy-update-status");
+        try {
+          await navigator.clipboard.writeText(UPDATE_TEXT);
+          if (status) status.textContent = "Copiado!";
+        } catch {
+          if (status) status.textContent = "Selecione o texto e copie manualmente (Ctrl+C).";
+        }
+      });
+    }
+  }
+
   function loadIdeias() {
     $("#ideias-root").innerHTML = IDEIAS.map(
       (i) => `
@@ -1008,6 +1087,8 @@
         return loadAcoes();
       case "comandos":
         return loadComandos($("#cmd-tabs .active")?.dataset.cmd || "sessao");
+      case "atualizacao":
+        return loadAtualizacao();
       case "ideias":
         return loadIdeias();
       default:

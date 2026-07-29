@@ -117,6 +117,7 @@ export function parseAdiantarCommand(text: string): { days: number } | null {
 
 export type EconomyCommand =
   | { kind: "perfil" }
+  | { kind: "auras" }
   | { kind: "loja" }
   | { kind: "comprar"; itemKey: string }
   | { kind: "equipar"; itemKey: string }
@@ -131,9 +132,19 @@ export type EconomyCommand =
       questionShortId: string;
     };
 
-/** /perfil /aura /loja /comprar X /equipar X /aplicar N /diario /ranking aura|... /intimar */
+/** /perfil /aura /loja /comprar X /equipar X /aplicar N /diario /ranking aura|... /intimar /auras */
 export function parseEconomyCommand(text: string): EconomyCommand | null {
   const t = normalizeInput(text.trim());
+  if (
+    t === "/auras" ||
+    t === "auras" ||
+    t === "/aura todos" ||
+    t === "aura todos" ||
+    t === "/aura grupo" ||
+    t === "aura grupo"
+  ) {
+    return { kind: "auras" };
+  }
   if (t === "/perfil" || t === "perfil" || t === "/aura" || t === "aura") {
     return { kind: "perfil" };
   }

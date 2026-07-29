@@ -3,6 +3,7 @@ import type { EconomyCommand } from "../message-utils";
 import { config } from "../config";
 import {
   buildProfileText,
+  buildAurasBoardText,
   buildDiarioOficialDigest,
   listShopCatalog,
   formatShopList,
@@ -170,7 +171,11 @@ export async function handleEconomyCommand(
   const groupJid = quizGroupJid();
 
   if (cmd.kind === "perfil") {
-    await sock.sendMessage(remoteJid, { text: await buildProfileText(sender) });
+    await sock.sendMessage(remoteJid, { text: await buildProfileText(sender, displayName) });
+    return true;
+  }
+  if (cmd.kind === "auras") {
+    await sock.sendMessage(remoteJid, { text: await buildAurasBoardText() });
     return true;
   }
   if (cmd.kind === "loja") {

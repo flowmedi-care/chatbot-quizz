@@ -54,6 +54,7 @@
           <button type="button" data-go="manual">Manual da Economia</button>
           <button type="button" data-go="acoes">Tabela de Ações</button>
           <button type="button" data-go="comandos">Comandos WhatsApp</button>
+          <button type="button" data-go="atualizacao">Texto pro grupo</button>
           <button type="button" data-go="ideias">Ideias de retenção</button>
         </nav>
 
@@ -233,6 +234,21 @@
               <button type="button" data-cmd="economia">Economia</button>
             </div>
             <div class="cmd-grid" id="cmd-body"></div>
+          </section>
+
+          <!-- ATUALIZAÇÃO -->
+          <section id="page-atualizacao" class="hub-page">
+            <div class="hub-hero">
+              <h1>Texto pro grupo</h1>
+              <p>Copie e cole no WhatsApp para anunciar a atualização. Ajuste o tom se quiser.</p>
+            </div>
+            <div class="hub-card">
+              <div class="filters-row" style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.75rem">
+                <button type="button" class="hub-chip primary" id="btn-copy-update">Copiar texto</button>
+                <span id="copy-update-status" class="muted" style="align-self:center"></span>
+              </div>
+              <pre id="update-copy-text" class="update-copy"></pre>
+            </div>
           </section>
 
           <!-- IDEIAS -->

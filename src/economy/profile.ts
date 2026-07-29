@@ -5,17 +5,62 @@ import { getActiveAplicacao } from "./aplicacao";
 import { listOpenMandadosForUser } from "./mandado";
 import { ACHIEVEMENTS } from "./constants";
 
-export async function buildProfileText(userJid: string): Promise<string> {
-  const eco = await ensureEconomy(userJid);
+function looksLikeRawId(s: string | null | undefined): boolean {
+  const t = String(s || "").trim();
+  if (!t) return true;
+  if (t.includes("@")) return true;
+  if (/^\+?\d{8,}$/.test(t)) return true;
+  if (/^\d{10,}/.test(t)) return true;
+  if (/^Caderno:/i.test(t)) return true;
+  return false;
+}
+
+/** Nome legível para WhatsApp / rankings — nunca JID cru. */
+export function friendlyEconomyLabel(
+  preferred: string | null | undefined,
+  stored: string | null | undefined,
+  userJid: string
+): string {
+  if (preferred && !looksLikeRawId(preferred)) return preferred.trim();
+  if (stored && !looksLikeRawId(stored)) return stored.trim();
+  return "Participante";
+}
+
+export async function buildProfileText(userJid: string, preferredName?: string | null): Promise<string> {
+  const cleanedPreferred =
+    preferredName && !looksLikeRawId(preferredName) ? preferredName.trim() : undefined;
+
+  // Tenta nome já conhecido no engajamento do grupo
+  let fromEngagement: string | undefined;
+  try {
+    const { data: eng } = await economyDb()
+      .from("group_member_engagement")
+      .select("quiz_display_name, user_label")
+      .eq("user_jid", userJid)
+      .limit(5);
+    for (const row of eng || []) {
+      const cand = row.quiz_display_name || row.user_label;
+      if (cand && !looksLikeRawId(String(cand))) {
+        fromEngagement = String(cand).trim();
+        break;
+      }
+    }
+  } catch {
+    /* tabela pode não existir em algum ambiente */
+  }
+
+  const nameToStore = cleanedPreferred || fromEngagement;
+  const eco = await ensureEconomy(userJid, nameToStore);
   const streak = await ensureStreak(userJid);
   const avail = await availableCredits(userJid);
   const inv = await listInventory(userJid);
   const app = await getActiveAplicacao(userJid);
   const mandados = await listOpenMandadosForUser(userJid);
   const equipped = inv.filter((i) => i.equipped);
+  const label = friendlyEconomyLabel(nameToStore, eco.display_name, userJid);
 
   const lines = [
-    `👤 ${eco.display_name || userJid}`,
+    `👤 ${label}`,
     eco.active_title ? `Título: *${eco.active_title}*` : "Título: —",
     "",
     formatAuraBlock(eco.aura),
@@ -102,7 +147,7 @@ export async function getRanking(kind: RankingKind, limit = 20): Promise<
     const map = new Map((ecos || []).map((e) => [e.user_jid, e]));
     return (data || []).map((r) => ({
       userJid: r.user_jid,
-      label: map.get(r.user_jid)?.display_name || r.user_jid,
+      label: friendlyEconomyLabel(null, map.get(r.user_jid)?.display_name, r.user_jid),
       value: r.current_streak,
       title: map.get(r.user_jid)?.active_title
     }));
@@ -118,12 +163,14 @@ export async function getRanking(kind: RankingKind, limit = 20): Promise<
     .order(orderCol, { ascending: false })
     .limit(limit);
   if (error) throw new Error(error.message);
-  return (data || []).map((r) => ({
-    userJid: r.user_jid,
-    label: r.display_name || r.user_jid,
-    value: Number(r[orderCol as keyof typeof r] || 0),
-    title: r.active_title
-  }));
+  return (data || [])
+    .filter((r) => !String(r.user_jid || "").startsWith("caderno:"))
+    .map((r) => ({
+      userJid: r.user_jid,
+      label: friendlyEconomyLabel(null, r.display_name, r.user_jid),
+      value: Number(r[orderCol as keyof typeof r] || 0),
+      title: r.active_title
+    }));
 }
 
 export function formatRankingMessage(kind: RankingKind, rows: { label: string; value: number; title?: string | null }[]): string {
@@ -142,6 +189,25 @@ export function formatRankingMessage(kind: RankingKind, rows: { label: string; v
     const t = r.title ? ` · ${r.title}` : "";
     lines.push(`${i + 1}. ${r.label}${t} — ${r.value.toLocaleString("pt-BR")}`);
   });
+  return lines.join("\n");
+}
+
+/** Quadro da Aura de todo mundo (mensagem única para o grupo). */
+export async function buildAurasBoardText(limit = 40): Promise<string> {
+  const rows = await getRanking("aura", limit);
+  const lines = ["✨ *Aura do grupo*", ""];
+  if (!rows.length) {
+    lines.push("Ninguém tem Aura ainda. Respondam questões no WhatsApp!");
+    return lines.join("\n");
+  }
+  for (const [i, r] of rows.entries()) {
+    const level = getAuraLevel(r.value);
+    const medal = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `${i + 1}.`;
+    const title = r.title ? ` · _${r.title}_` : "";
+    lines.push(`${medal} *${r.label}*${title}`);
+    lines.push(`   ${level.emoji} ${r.value.toLocaleString("pt-BR")} Aura · ${level.shortLabel}`);
+  }
+  lines.push("", "Ver o seu: /aura · Hub: papa-vagas.vercel.app/hub");
   return lines.join("\n");
 }
 
@@ -172,14 +238,14 @@ export async function buildDiarioOficialDigest(input: {
   ];
 
   for (const e of ecos || []) {
+    if (String(e.user_jid || "").startsWith("caderno:")) continue;
     const auraInfo = getAuraLevel(e.aura);
     const st = streakMap.get(e.user_jid) || 0;
-    lines.push(
-      `✨ ${e.display_name || e.user_jid} — Aura ${e.aura} (${auraInfo.shortLabel}) · 🔥 ${st}`
-    );
+    const name = friendlyEconomyLabel(null, e.display_name, e.user_jid);
+    lines.push(`✨ ${name} — Aura ${e.aura} (${auraInfo.shortLabel}) · 🔥 ${st}`);
   }
 
-  lines.push("", "/omissas · /perfil · /ranking");
+  lines.push("", "/omissas · /aura · /auras · /ranking");
   return lines.join("\n");
 }
 
