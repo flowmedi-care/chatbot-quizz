@@ -11,6 +11,8 @@
     { "source": "/api/shop", "destination": "/api/economy?view=shop" },
     { "source": "/api/diario", "destination": "/api/economy?view=diario" },
     { "source": "/api/rankings", "destination": "/api/economy?view=rankings" },
-    { "source": "/tutorial", "destination": "/tutorial/index.html" }
+    { "source": "/tutorial", "destination": "/tutorial/index.html" },
+    { "source": "/hub", "destination": "/hub/index.html" },
+    { "source": "/hub/", "destination": "/hub/index.html" }
   ]
 }

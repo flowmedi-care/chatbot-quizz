@@ -12,7 +12,7 @@ const {
 
 /**
  * API unificada de gamificação (Hobby plan = máx. 12 functions).
- * GET  ?view=members|profile|shop|diario|rankings|purchase
+ * GET  ?view=members|profile|shop|diario|rankings|ledger|transparencia
  * POST body.action = purchase-intent|equip
  */
 
@@ -257,6 +257,68 @@ module.exports = async function handler(req, res) {
       return await handleDiario(supabase, url, res);
     }
 
+    if (view === "ledger" || view === "transparencia") {
+      const userJid = url.searchParams.get("userJid");
+      const limit = Math.min(300, Math.max(1, Number(url.searchParams.get("limit") || 100)));
+      let q = supabase
+        .from("economy_ledger")
+        .select("created_at, user_jid, reason, delta_aura, delta_credits, meta, day_iso")
+        .order("created_at", { ascending: false })
+        .limit(limit);
+      if (userJid) q = q.eq("user_jid", userJid);
+      const { data, error } = await q;
+      if (error) throw error;
+      const jids = [...new Set((data || []).map((r) => r.user_jid))];
+      const { data: ecos } = jids.length
+        ? await supabase.from("user_economy").select("user_jid, display_name").in("user_jid", jids)
+        : { data: [] };
+      const nameMap = new Map((ecos || []).map((e) => [e.user_jid, e.display_name]));
+      const events = (data || []).map((r) => {
+        const meta = { ...(r.meta || {}), actorLabel: nameMap.get(r.user_jid) || r.user_jid };
+        return {
+          created_at: r.created_at,
+          day_iso: r.day_iso,
+          user_jid: r.user_jid,
+          reason: r.reason,
+          label: ledgerReasonLabel(r.reason, meta),
+          delta_aura: r.delta_aura,
+          delta_credits: r.delta_credits,
+          meta
+        };
+      });
+      const sum = (arr, key) => arr.reduce((a, r) => a + Number(r[key] || 0), 0);
+      const gains = events.filter((e) => Number(e.delta_aura) > 0 || Number(e.delta_credits) > 0);
+      const losses = events.filter((e) => Number(e.delta_aura) < 0 || Number(e.delta_credits) < 0);
+      return res.status(200).json({
+        events,
+        stats: {
+          auraGained: sum(
+            events.filter((e) => Number(e.delta_aura) > 0),
+            "delta_aura"
+          ),
+          auraLost: Math.abs(
+            sum(
+              events.filter((e) => Number(e.delta_aura) < 0),
+              "delta_aura"
+            )
+          ),
+          creditsGained: sum(
+            events.filter((e) => Number(e.delta_credits) > 0),
+            "delta_credits"
+          ),
+          creditsSpent: Math.abs(
+            sum(
+              events.filter((e) => Number(e.delta_credits) < 0),
+              "delta_credits"
+            )
+          ),
+          movements: events.length,
+          gainEvents: gains.length,
+          lossEvents: losses.length
+        }
+      });
+    }
+
     if (view === "rankings" || view === "ranking") {
       return await handleRankings(supabase, url, res);
     }
@@ -308,7 +370,7 @@ module.exports = async function handler(req, res) {
     }
 
     return res.status(400).json({
-      error: "Use view=members|profile|shop|diario|rankings (ou userJid / token)"
+      error: "Use view=members|profile|shop|diario|rankings|ledger|transparencia (ou userJid / token)"
     });
   } catch (e) {
     console.error(e);

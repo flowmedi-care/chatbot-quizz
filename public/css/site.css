@@ -1,5 +1,5 @@
 :root {
-  /* Tema claro pastel inspirado no Claude: creme, pêssego suave, acento terracota */
+  /* Tema institucional + jogo: papel, navy, terracota */
   --bg: #faf8f5;
   --bg-soft: #f3eee6;
   --bg-card: #ffffff;
@@ -10,10 +10,12 @@
   --accent: #c2410c;
   --accent-dim: rgba(194, 65, 12, 0.12);
   --accent-soft-bg: #fff7ed;
+  --navy: #1e3a5f;
   --success: #047857;
   --danger: #be123c;
   --radius: 14px;
   --shadow: 0 12px 40px rgba(61, 48, 36, 0.08);
+  --display: "Fraunces", Georgia, serif;
   font-family: "Plus Jakarta Sans", system-ui, sans-serif;
 }
 
@@ -28,7 +30,7 @@ body {
   min-height: 100vh;
   background:
     radial-gradient(ellipse 900px 480px at 12% -8%, rgba(255, 237, 213, 0.95), transparent 55%),
-    radial-gradient(ellipse 800px 420px at 88% 15%, rgba(254, 243, 199, 0.65), transparent 50%),
+    radial-gradient(ellipse 700px 380px at 92% 0%, rgba(30, 58, 95, 0.08), transparent 50%),
     radial-gradient(ellipse 700px 400px at 50% 100%, rgba(255, 228, 210, 0.45), transparent 55%),
     linear-gradient(180deg, var(--bg) 0%, var(--bg-soft) 100%);
   color: var(--text);
@@ -52,16 +54,53 @@ header.hero {
 }
 
 header.hero h1 {
-  font-size: clamp(1.75rem, 4vw, 2.35rem);
+  font-family: var(--display);
+  font-size: clamp(2rem, 5vw, 2.85rem);
   font-weight: 700;
   letter-spacing: -0.03em;
   margin: 0 0 0.5rem;
+  color: var(--navy);
 }
 
 header.hero p {
   color: var(--muted);
-  margin: 0;
-  font-size: 1rem;
+  margin: 0 auto;
+  font-size: 1.02rem;
+  max-width: 52ch;
+}
+
+.hero-kicker {
+  margin: 0 0 0.35rem !important;
+  font-size: 0.72rem !important;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--navy) !important;
+}
+
+.hero-cta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  justify-content: center;
+  margin-top: 1.15rem;
+}
+
+.btn-hub {
+  background: var(--navy) !important;
+  border-color: var(--navy) !important;
+  color: #fff !important;
+}
+
+.btn-hub:hover {
+  background: #16304f !important;
+  color: #fff !important;
+}
+
+a.btn-hub-cta {
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
 }
 
 .hero-toolbar {

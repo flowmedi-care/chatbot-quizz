@@ -58,7 +58,7 @@ export function buildQuizFullGuide(): string {
     "",
     "Ajuda e saida:",
     "- Guia completo: /ajuda",
-    "- Mais informacoes no front-end: https://papa-vagas.vercel.app/",
+    "- Mais informacoes no front-end: https://papa-vagas.vercel.app/ e Hub: https://papa-vagas.vercel.app/hub",
     "- Sair do modo quiz e voltar ao chat normal: /quizoff"
   ].join("\n");
 }
@@ -78,7 +78,7 @@ export function buildQuizQuickReference(): string {
     "- /q&a — estatisticas do grupo (criadas | respondidas)",
     "",
     "Guia completo: envie /ajuda",
-    "Mais informacoes no front-end: https://papa-vagas.vercel.app/",
+    "Mais informacoes no front-end: https://papa-vagas.vercel.app/ · Hub: https://papa-vagas.vercel.app/hub",
     "Para sair do bot e voltar a conversa normal: /quizoff"
   ].join("\n");
 }
