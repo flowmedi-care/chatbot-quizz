@@ -12,9 +12,10 @@
     cadernoUpload: "/api/caderno-upload",
     cadernoDelete: "/api/caderno-delete",
     economy: "/api/economy",
-    shop: "/api/shop",
-    diario: "/api/diario",
-    rankings: "/api/rankings"
+    shop: "/api/economy?view=shop",
+    shopPost: "/api/economy",
+    diario: "/api/economy",
+    rankings: "/api/economy"
   };
 
   const els = {
@@ -2326,7 +2327,7 @@
     body.querySelectorAll("[data-equip]").forEach((btn) => {
       btn.addEventListener("click", async () => {
         const itemKey = btn.getAttribute("data-equip");
-        const r = await fetch(API.shop, {
+        const r = await fetch(API.shopPost, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ action: "equip", userJid: sel.value, itemKey })
@@ -2352,7 +2353,7 @@
     const userSel = document.getElementById("shop-user-select");
     if (!grid || !tabs) return;
 
-    const res = await fetch(API.shop);
+    const res = await fetch(`${API.economy}?view=shop`);
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || "Loja indisponível");
     eco.shopItems = data.items || [];
@@ -2408,7 +2409,7 @@
     btn.disabled = true;
     btn.textContent = "Aguardando WhatsApp…";
     if (status) status.textContent = "Pedido criado. Confirme com *sim* no privado do bot.";
-    const res = await fetch(API.shop, {
+    const res = await fetch(API.shopPost, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ userJid: userSel.value, itemKey })
@@ -2422,7 +2423,7 @@
     }
     if (eco.pollTimer) clearInterval(eco.pollTimer);
     eco.pollTimer = setInterval(async () => {
-      const st = await fetch(`${API.shop}?token=${encodeURIComponent(data.token)}`);
+      const st = await fetch(`${API.economy}?view=shop&token=${encodeURIComponent(data.token)}`);
       const sj = await st.json();
       if (!st.ok) return;
       if (sj.status === "confirmed") {
@@ -2449,7 +2450,7 @@
       const d = new Date();
       dayEl.value = d.toISOString().slice(0, 10);
     }
-    const params = new URLSearchParams();
+    const params = new URLSearchParams({ view: "diario" });
     if (dayEl?.value) params.set("day", dayEl.value);
     if (userEl?.value?.trim()) params.set("userJid", userEl.value.trim());
     const res = await fetch(`${API.diario}?${params}`);
@@ -2473,7 +2474,9 @@
   async function renderRankings(board) {
     const body = document.getElementById("rankings-body");
     if (!body) return;
-    const res = await fetch(`${API.rankings}?board=${encodeURIComponent(board || "aura")}`);
+    const res = await fetch(
+      `${API.rankings}?view=rankings&board=${encodeURIComponent(board || "aura")}`
+    );
     const data = await res.json();
     if (!res.ok) {
       body.innerHTML = `<p class="error-banner">${data.error || "Erro"}</p>`;

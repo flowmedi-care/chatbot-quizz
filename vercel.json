@@ -7,6 +7,10 @@
     { "source": "/api/flashcards-whatsapp-users", "destination": "/api/flashcards-inbound?fc=users" },
     { "source": "/api/flashcards-link-request", "destination": "/api/flashcards-inbound?fc=link" },
     { "source": "/api/flashcards-unlink-request", "destination": "/api/flashcards-inbound?fc=unlink" },
+    { "source": "/api/ranking", "destination": "/api/qa-stats" },
+    { "source": "/api/shop", "destination": "/api/economy?view=shop" },
+    { "source": "/api/diario", "destination": "/api/economy?view=diario" },
+    { "source": "/api/rankings", "destination": "/api/economy?view=rankings" },
     { "source": "/tutorial", "destination": "/tutorial/index.html" }
   ]
 }

@@ -6,8 +6,229 @@ const {
   ensureEconomy,
   ensureStreak,
   todayIso,
+  randomToken,
   ledgerReasonLabel
 } = require("./_economy");
+
+/**
+ * API unificada de gamificação (Hobby plan = máx. 12 functions).
+ * GET  ?view=members|profile|shop|diario|rankings|purchase
+ * POST body.action = purchase-intent|equip
+ */
+
+async function handleDiario(supabase, url, res) {
+  const day = url.searchParams.get("day") || todayIso();
+  const filterUser = url.searchParams.get("userJid") || url.searchParams.get("filterUserJid");
+
+  let q = supabase
+    .from("economy_ledger")
+    .select("created_at, user_jid, reason, delta_aura, delta_credits, meta, day_iso")
+    .eq("day_iso", day)
+    .order("created_at", { ascending: false })
+    .limit(200);
+  if (filterUser) q = q.eq("user_jid", filterUser);
+  const { data, error } = await q;
+  if (error) throw error;
+
+  const jids = [...new Set((data || []).map((r) => r.user_jid))];
+  const { data: ecos } = jids.length
+    ? await supabase.from("user_economy").select("user_jid, display_name").in("user_jid", jids)
+    : { data: [] };
+  const nameMap = new Map((ecos || []).map((e) => [e.user_jid, e.display_name]));
+
+  const { data: social } = await supabase
+    .from("diario_oficial_events")
+    .select("*")
+    .eq("day_iso", day)
+    .order("created_at", { ascending: false })
+    .limit(50);
+
+  const events = (data || []).map((r) => {
+    const meta = { ...(r.meta || {}), actorLabel: nameMap.get(r.user_jid) || r.user_jid };
+    return {
+      type: "ledger",
+      created_at: r.created_at,
+      user_jid: r.user_jid,
+      label: ledgerReasonLabel(r.reason, meta),
+      delta_aura: r.delta_aura,
+      delta_credits: r.delta_credits
+    };
+  });
+
+  for (const s of social || []) {
+    events.push({
+      type: "social",
+      created_at: s.created_at,
+      user_jid: s.actor_jid,
+      label: `${s.event_type}: ${s.actor_label || s.actor_jid || ""}`,
+      payload: s.payload
+    });
+  }
+
+  events.sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
+  return res.status(200).json({ day, events });
+}
+
+async function handleRankings(supabase, url, res) {
+  const board = (url.searchParams.get("board") || "aura").toLowerCase();
+  const limit = Math.min(50, Math.max(1, Number(url.searchParams.get("limit") || 20)));
+
+  if (board === "disciplina" || board === "streak") {
+    const { data, error } = await supabase
+      .from("user_streak")
+      .select("user_jid, current_streak, best_streak")
+      .order("current_streak", { ascending: false })
+      .order("best_streak", { ascending: false })
+      .limit(limit);
+    if (error) throw error;
+    const jids = (data || []).map((r) => r.user_jid);
+    const { data: ecos } = jids.length
+      ? await supabase.from("user_economy").select("user_jid, display_name, active_title").in("user_jid", jids)
+      : { data: [] };
+    const map = new Map((ecos || []).map((e) => [e.user_jid, e]));
+    return res.status(200).json({
+      board: "disciplina",
+      rows: (data || []).map((r) => ({
+        userJid: r.user_jid,
+        label: map.get(r.user_jid)?.display_name || r.user_jid,
+        value: r.current_streak,
+        title: map.get(r.user_jid)?.active_title
+      }))
+    });
+  }
+
+  let col = "aura";
+  if (board === "producao" || board === "produção") col = "lifetime_answers";
+  if (board === "duelo") col = "mandados_won";
+
+  const { data, error } = await supabase
+    .from("user_economy")
+    .select("user_jid, display_name, active_title, aura, lifetime_answers, mandados_won")
+    .order(col, { ascending: false })
+    .limit(limit);
+  if (error) throw error;
+
+  return res.status(200).json({
+    board: board === "producao" || board === "produção" ? "producao" : board === "duelo" ? "duelo" : "aura",
+    rows: (data || []).map((r) => ({
+      userJid: r.user_jid,
+      label: r.display_name || r.user_jid,
+      value: Number(r[col] || 0),
+      title: r.active_title
+    }))
+  });
+}
+
+async function handleShopGet(supabase, url, res) {
+  const token = url.searchParams.get("token");
+  if (token) {
+    const { data, error } = await supabase
+      .from("purchase_confirmations")
+      .select("status, item_key, expires_at, price_credits")
+      .eq("token", token)
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: "Pedido não encontrado" });
+    let status = data.status;
+    if (status === "pending" && new Date(data.expires_at).getTime() < Date.now()) {
+      await supabase.from("purchase_confirmations").update({ status: "expired" }).eq("token", token);
+      status = "expired";
+    }
+    return res.status(200).json({ status, item_key: data.item_key, price_credits: data.price_credits });
+  }
+
+  const { data, error } = await supabase
+    .from("shop_catalog")
+    .select("*")
+    .eq("active", true)
+    .order("sort_order", { ascending: true });
+  if (error) throw error;
+  return res.status(200).json({ items: data || [] });
+}
+
+async function handleShopPost(supabase, req, res) {
+  const body = typeof req.body === "string" ? JSON.parse(req.body || "{}") : req.body || {};
+  const action = body.action || "purchase-intent";
+
+  if (action === "equip") {
+    const { userJid, itemKey } = body;
+    if (!userJid || !itemKey) return res.status(400).json({ error: "userJid e itemKey obrigatórios" });
+    const { data: item } = await supabase.from("shop_catalog").select("*").eq("item_key", itemKey).maybeSingle();
+    if (!item || item.consumable) return res.status(400).json({ error: "Item inválido para equipar" });
+    const { data: inv } = await supabase
+      .from("user_inventory")
+      .select("*")
+      .eq("user_jid", userJid)
+      .eq("item_key", itemKey)
+      .maybeSingle();
+    if (!inv) return res.status(400).json({ error: "Você não possui este item" });
+    const slot = item.metadata?.slot;
+    if (slot) {
+      const { data: catalog } = await supabase.from("shop_catalog").select("item_key, metadata");
+      const same = (catalog || []).filter((c) => c.metadata?.slot === slot).map((c) => c.item_key);
+      if (same.length) {
+        await supabase.from("user_inventory").update({ equipped: false }).eq("user_jid", userJid).in("item_key", same);
+      }
+    }
+    await supabase
+      .from("user_inventory")
+      .update({ equipped: true, updated_at: new Date().toISOString() })
+      .eq("user_jid", userJid)
+      .eq("item_key", itemKey);
+    return res.status(200).json({ ok: true, message: `Equipado: ${item.name}` });
+  }
+
+  const { userJid, itemKey } = body;
+  if (!userJid || !itemKey) return res.status(400).json({ error: "userJid e itemKey obrigatórios" });
+
+  const { data: item, error: itemErr } = await supabase
+    .from("shop_catalog")
+    .select("*")
+    .eq("item_key", itemKey)
+    .eq("active", true)
+    .maybeSingle();
+  if (itemErr) throw itemErr;
+  if (!item) return res.status(404).json({ error: "Item não encontrado" });
+
+  const eco = await ensureEconomy(supabase, userJid);
+  if ((eco.aura || 0) < (item.min_aura || 0)) {
+    return res.status(400).json({ error: `Aura insuficiente (precisa ${item.min_aura})` });
+  }
+  const available = Math.max(0, (eco.credits || 0) - (eco.credits_escrowed || 0));
+  if (available < item.price_credits) {
+    return res.status(400).json({ error: "Saldo disponível insuficiente" });
+  }
+
+  await supabase
+    .from("purchase_confirmations")
+    .update({ status: "cancelled" })
+    .eq("user_jid", userJid)
+    .eq("status", "pending");
+
+  const token = randomToken();
+  const expiresAt = new Date(Date.now() + 5 * 60_000).toISOString();
+  const { error: insErr } = await supabase.from("purchase_confirmations").insert({
+    token,
+    user_jid: userJid,
+    item_key: item.item_key,
+    qty: 1,
+    price_credits: item.price_credits,
+    status: "pending",
+    source: "site",
+    expires_at: expiresAt
+  });
+  if (insErr) throw insErr;
+
+  return res.status(200).json({
+    token,
+    expiresAt,
+    item,
+    price: item.price_credits,
+    balance: available,
+    message:
+      "Aguardando confirmação no WhatsApp. Responda *sim* no privado com o bot (pedido enviado a esta pessoa)."
+  });
+}
 
 module.exports = async function handler(req, res) {
   applyCors(res);
@@ -17,43 +238,36 @@ module.exports = async function handler(req, res) {
     const supabase = getClient();
     const groupJid = pickTargetGroupJid();
     const url = new URL(req.url, "http://localhost");
-    const userJid = url.searchParams.get("userJid");
-    const view = url.searchParams.get("view") || "profile";
+    const view = (url.searchParams.get("view") || "").toLowerCase();
 
-    if (req.method === "GET" && view === "members") {
+    // POST: compras / equipar
+    if (req.method === "POST") {
+      return await handleShopPost(supabase, req, res);
+    }
+
+    if (req.method !== "GET") return res.status(405).json({ error: "Method not allowed" });
+
+    if (view === "members") {
       if (!groupJid) return res.status(500).json({ error: "TARGET_GROUP_JIDS não configurado" });
       const { members } = await getMembersForGroup(supabase, groupJid);
       return res.status(200).json({ members });
     }
 
-    if (req.method === "GET" && view === "audit") {
-      const day = url.searchParams.get("day") || todayIso();
-      const filterUser = url.searchParams.get("filterUserJid");
-      let q = supabase
-        .from("economy_ledger")
-        .select("created_at, user_jid, reason, delta_aura, delta_credits, meta, day_iso")
-        .eq("day_iso", day)
-        .order("created_at", { ascending: false })
-        .limit(200);
-      if (filterUser) q = q.eq("user_jid", filterUser);
-      const { data, error } = await q;
-      if (error) throw error;
-      const jids = [...new Set((data || []).map((r) => r.user_jid))];
-      const { data: ecos } = jids.length
-        ? await supabase.from("user_economy").select("user_jid, display_name").in("user_jid", jids)
-        : { data: [] };
-      const nameMap = new Map((ecos || []).map((e) => [e.user_jid, e.display_name]));
-      const events = (data || []).map((r) => {
-        const meta = { ...(r.meta || {}), actorLabel: nameMap.get(r.user_jid) || r.user_jid };
-        return {
-          ...r,
-          label: ledgerReasonLabel(r.reason, meta)
-        };
-      });
-      return res.status(200).json({ day, events });
+    if (view === "diario" || view === "audit") {
+      return await handleDiario(supabase, url, res);
     }
 
-    if (req.method === "GET" && userJid) {
+    if (view === "rankings" || view === "ranking") {
+      return await handleRankings(supabase, url, res);
+    }
+
+    if (view === "shop" || url.searchParams.get("token")) {
+      return await handleShopGet(supabase, url, res);
+    }
+
+    const userJid = url.searchParams.get("userJid");
+    if (userJid || view === "profile") {
+      if (!userJid) return res.status(400).json({ error: "Informe userJid" });
       const eco = await ensureEconomy(supabase, userJid);
       const streak = await ensureStreak(supabase, userJid);
       const { data: inv } = await supabase.from("user_inventory").select("*").eq("user_jid", userJid);
@@ -93,7 +307,9 @@ module.exports = async function handler(req, res) {
       });
     }
 
-    return res.status(400).json({ error: "Informe userJid ou view=members|audit" });
+    return res.status(400).json({
+      error: "Use view=members|profile|shop|diario|rankings (ou userJid / token)"
+    });
   } catch (e) {
     console.error(e);
     return res.status(500).json({ error: e.message || String(e) });
