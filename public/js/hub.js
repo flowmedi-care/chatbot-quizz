@@ -43,13 +43,31 @@
   }
 
   function initials(name) {
-    const parts = String(name || "?")
-      .trim()
-      .split(/\s+/)
-      .filter(Boolean);
+    const cleaned = String(name || "").trim();
+    if (!cleaned || cleaned.includes("@") || /^\+?\d{6,}$/.test(cleaned)) return "?";
+    const parts = cleaned.split(/\s+/).filter(Boolean);
     if (!parts.length) return "?";
     if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
     return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  }
+
+  function looksLikeId(s) {
+    const t = String(s || "").trim();
+    if (!t) return true;
+    if (t.includes("@")) return true;
+    if (/^\+?\d{8,}$/.test(t)) return true;
+    if (/^\d{10,}/.test(t)) return true;
+    return false;
+  }
+
+  function resolveMemberName(jid, fallback) {
+    const m = state.members.find((x) => memberJid(x) === jid);
+    if (m) {
+      const label = memberLabel(m);
+      if (label && !looksLikeId(label)) return label;
+    }
+    if (fallback && !looksLikeId(fallback)) return fallback;
+    return "Participante";
   }
 
   function rarityOf(aura) {
@@ -131,7 +149,7 @@
     const streak = data.streak || {};
     const aura = data.aura || {};
     const rarity = rarityOf(eco.aura || 0);
-    const name = eco.display_name || state.userJid;
+    const name = resolveMemberName(state.userJid, eco.display_name);
     const unlocked = (data.achievements || []).filter((a) => a.unlocked);
     const equipped = (data.inventory || []).filter((i) => i.equipped);
     const bySlot = Object.fromEntries(
@@ -248,11 +266,13 @@
         .map((m) => {
           const nameClass = m.nameCss || "";
           const banner = m.bannerCss || "";
+          const displayName = resolveMemberName(m.userJid, m.name);
+          const person = { ...m, name: displayName };
           return `
           <button type="button" class="plaza-tile ${esc(banner)}" data-open-profile="${esc(m.userJid)}">
-            ${avatarMarkup(m)}
+            ${avatarMarkup(person)}
             <div class="plaza-info">
-              <strong class="plaza-name ${esc(nameClass)}">${esc(m.name)}</strong>
+              <strong class="plaza-name ${esc(nameClass)}">${esc(displayName)}</strong>
               <span class="plaza-title">${esc(m.title || m.auraLevel?.shortLabel || "Sem título")}</span>
               <span class="plaza-aura">${esc(m.auraLevel?.emoji || "🌱")} ${esc(m.aura)} Aura</span>
               <span class="plaza-streak">🔥 ${esc(m.streak)} dias</span>
@@ -429,11 +449,26 @@
     geral: "Geral"
   };
 
+  function shopThumb(item) {
+    const meta = item?.metadata || {};
+    const css = meta.css || "";
+    if (item?.item_key?.includes("streak")) return `<span class="thumb-emoji">🛡️</span>`;
+    if (item?.item_key?.includes("eliminate")) return `<span class="thumb-emoji">✂️</span>`;
+    if (meta.emoji) return `<span class="thumb-emoji">${esc(meta.emoji)}</span>`;
+    if (meta.slot === "frame") return `<span class="thumb-swatch ${esc(css)}"></span>`;
+    if (meta.slot === "aura_fx" || item?.category === "aura")
+      return `<span class="thumb-swatch aura ${esc(css)}"></span>`;
+    if (meta.slot === "avatar") return `<span class="thumb-emoji">⭐</span>`;
+    if (meta.slot === "banner") return `<span class="thumb-emoji">🏳️</span>`;
+    if (meta.slot === "name_color") return `<span class="thumb-emoji">🎨</span>`;
+    return `<span class="thumb-emoji">🏛️</span>`;
+  }
+
   function shopPreviewFor(item, buyerName) {
     const meta = item?.metadata || {};
     const css = meta.css || "";
     const slot = meta.slot || "";
-    const name = buyerName || "Você";
+    const name = looksLikeId(buyerName) ? "Você" : buyerName || "Você";
     if (slot === "frame" || item?.item_key?.startsWith("frame_")) {
       return `
         <div class="shop-mannequin">
@@ -495,17 +530,29 @@
       </div>`;
   }
 
+  function buyerLabel(profile) {
+    if (!state.userJid) return "Você";
+    return resolveMemberName(state.userJid, profile?.economy?.display_name);
+  }
+
   function renderShopDetail(item, profile) {
     const detail = $("#shop-detail");
     if (!detail) return;
     if (!item) {
-      detail.innerHTML = `<p class="muted">Selecione um item na vitrine.</p>`;
+      detail.innerHTML = `<p class="muted">Selecione um item na lista.</p>`;
       return;
     }
-    const name = profile?.economy?.display_name || "Você";
+    const name = buyerLabel(profile);
     const canBuy = Boolean(state.userJid);
     const auraOk = !item.min_aura || (profile?.economy?.aura || 0) >= item.min_aura;
     const credOk = (profile?.availableCredits ?? 0) >= item.price_credits;
+    const tipo = item.consumable
+      ? "Consumível"
+      : item.metadata?.slot === "aura_fx"
+        ? "Efeito de Aura"
+        : item.metadata?.slot === "frame"
+          ? "Moldura"
+          : item.metadata?.slot || "Cosmético";
     detail.innerHTML = `
       ${shopPreviewFor(item, name)}
       <div class="shop-detail-copy">
@@ -515,7 +562,7 @@
         <dl class="shop-specs">
           <div><dt>Preço</dt><dd>${esc(item.price_credits)} Créditos</dd></div>
           <div><dt>Aura mínima</dt><dd>${item.min_aura ? esc(item.min_aura) : "—"}</dd></div>
-          <div><dt>Tipo</dt><dd>${item.consumable ? "Consumível" : esc(item.metadata?.slot || "Cosmético")}</dd></div>
+          <div><dt>Tipo</dt><dd>${esc(tipo)}</dd></div>
         </dl>
         <button type="button" class="shop-buy-btn" data-buy="${esc(item.item_key)}" ${!canBuy || !auraOk ? "disabled" : ""}>
           Empenhar despesa · ${esc(item.price_credits)} Créd.
@@ -546,12 +593,14 @@
       state.userJid ? apiGet({ view: "profile", userJid: state.userJid }).catch(() => null) : Promise.resolve(null)
     ]);
     state.shopItems = shop.items || [];
-    const featured = [...state.shopItems].sort((a, b) => (b.price_credits || 0) - (a.price_credits || 0)).slice(0, 3);
+    const featured = [...state.shopItems].sort((a, b) => (b.price_credits || 0) - (a.price_credits || 0)).slice(0, 4);
     const cats = ["destaques", ...new Set(state.shopItems.map((i) => i.category || "geral"))];
 
     const bal = $("#shop-balance");
     if (profile) {
+      const who = buyerLabel(profile);
       bal.innerHTML = `
+        <div class="wallet-chip wide"><span>Comprador</span><strong>${esc(who)}</strong></div>
         <div class="wallet-chip"><span>Disponível</span><strong>${esc(profile.availableCredits)}</strong></div>
         <div class="wallet-chip"><span>Escrow</span><strong>${esc(profile.economy?.credits_escrowed || 0)}</strong></div>
         <div class="wallet-chip"><span>Aura</span><strong>${esc(profile.economy?.aura || 0)}</strong></div>`;
@@ -586,47 +635,35 @@
     const selected = state.shopItems.find((i) => i.item_key === state.shopSelected) || null;
 
     const showcase = $("#shop-showcase");
-    if (state.shopTab === "destaques") {
-      showcase.innerHTML = `
-        <div class="shop-featured-banner">
-          <div>
-            <p class="shop-dept">Oficina do dia</p>
-            <h2>Vitrine orçamentária</h2>
-            <p>Itens de prestígio e consumíveis. Toque na prateleira para ver o preview ao vivo.</p>
-          </div>
-        </div>
-        <div class="shop-shelf">
-          ${filtered
-            .map((item) => {
-              return `
-              <button type="button" class="shelf-item ${item.item_key === state.shopSelected ? "selected" : ""}" data-select="${esc(item.item_key)}">
-                <div class="shelf-visual">${shopPreviewFor(item, profile?.economy?.display_name || "PV")}</div>
-                <div class="shelf-meta">
-                  <strong>${esc(item.name)}</strong>
-                  <span>${esc(item.price_credits)} Créd.</span>
-                </div>
-              </button>`;
-            })
-            .join("")}
-        </div>`;
-    } else {
-      showcase.innerHTML = `
-        <div class="shop-rail">
-          ${filtered
+    showcase.innerHTML = `
+      ${
+        state.shopTab === "destaques"
+          ? `<div class="shop-featured-banner">
+              <div>
+                <p class="shop-dept">Oficina do dia</p>
+                <h2>Vitrine orçamentária</h2>
+                <p>Escolha na lista — o preview aparece ao lado.</p>
+              </div>
+            </div>`
+          : ""
+      }
+      <div class="shop-list">
+        ${
+          filtered
             .map(
               (item) => `
-            <button type="button" class="rail-row ${item.item_key === state.shopSelected ? "selected" : ""}" data-select="${esc(item.item_key)}">
-              <div class="rail-preview">${shopPreviewFor(item, profile?.economy?.display_name || "PV")}</div>
-              <div>
-                <strong>${esc(item.name)}</strong>
-                <p>${esc(item.description || metaSlot(item))}</p>
-              </div>
-              <span class="rail-price">${esc(item.price_credits)}</span>
-            </button>`
+          <button type="button" class="shop-list-row ${item.item_key === state.shopSelected ? "selected" : ""}" data-select="${esc(item.item_key)}">
+            <span class="shop-thumb">${shopThumb(item)}</span>
+            <span class="shop-list-copy">
+              <strong>${esc(item.name)}</strong>
+              <small>${esc(item.description || metaSlot(item))}${item.min_aura ? ` · Aura mín. ${esc(item.min_aura)}` : ""}</small>
+            </span>
+            <span class="shop-list-price">${esc(item.price_credits)} <em>Créd.</em></span>
+          </button>`
             )
-            .join("") || `<p class="muted">Nenhum item neste corredor.</p>`}
-        </div>`;
-    }
+            .join("") || `<p class="muted">Nenhum item neste corredor.</p>`
+        }
+      </div>`;
 
     $$("[data-select]").forEach((btn) => {
       btn.addEventListener("click", () => {

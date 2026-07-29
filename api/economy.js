@@ -1,5 +1,5 @@
 const { applyCors, getClient, pickTargetGroupJid } = require("./_lib");
-const { getMembersForGroup } = require("./_group-members");
+const { getMembersForGroup, getNameHintsForGroup, pickDisplayLabel } = require("./_group-members");
 const {
   getAuraLevel,
   ACHIEVEMENTS,
@@ -321,13 +321,63 @@ module.exports = async function handler(req, res) {
 
     if (view === "plaza" || view === "roster") {
       const limit = Math.min(80, Math.max(1, Number(url.searchParams.get("limit") || 48)));
+      const nameByJid = new Map();
+      if (groupJid) {
+        try {
+          const { members: groupMembers } = await getMembersForGroup(supabase, groupJid);
+          for (const m of groupMembers || []) {
+            if (m.userJid && m.displayLabel) nameByJid.set(m.userJid, m.displayLabel);
+          }
+        } catch (_) {
+          /* lista de membros opcional */
+        }
+        try {
+          const hints = await getNameHintsForGroup(supabase, groupJid);
+          for (const [jid, name] of hints || []) {
+            if (!nameByJid.has(jid) && name) nameByJid.set(jid, name);
+          }
+        } catch (_) {
+          /* hints opcionais */
+        }
+      }
+
+      const resolveName = (userJid, displayName) => {
+        const fromGroup = nameByJid.get(userJid);
+        if (fromGroup) return fromGroup;
+        return pickDisplayLabel({
+          userJid,
+          userLabel: displayName || null,
+          quizDisplayName: displayName || null,
+          nameFromQuiz: null
+        });
+      };
+
       const { data: ecos, error } = await supabase
         .from("user_economy")
         .select("user_jid, display_name, active_title, aura, lifetime_answers, mandados_won")
         .order("aura", { ascending: false })
         .limit(limit);
       if (error) throw error;
-      const jids = (ecos || []).map((e) => e.user_jid);
+
+      // Inclui membros do grupo ainda sem linha de economia (praça completa)
+      const ecoMap = new Map((ecos || []).map((e) => [e.user_jid, e]));
+      for (const [jid, label] of nameByJid) {
+        if (!ecoMap.has(jid)) {
+          ecoMap.set(jid, {
+            user_jid: jid,
+            display_name: label,
+            active_title: null,
+            aura: 0,
+            lifetime_answers: 0,
+            mandados_won: 0
+          });
+        }
+      }
+      const roster = [...ecoMap.values()]
+        .sort((a, b) => Number(b.aura || 0) - Number(a.aura || 0))
+        .slice(0, limit);
+
+      const jids = roster.map((e) => e.user_jid);
       const { data: streaks } = jids.length
         ? await supabase.from("user_streak").select("user_jid, current_streak, best_streak").in("user_jid", jids)
         : { data: [] };
@@ -355,13 +405,13 @@ module.exports = async function handler(req, res) {
         });
         equippedByUser.set(row.user_jid, list);
       }
-      const members = (ecos || []).map((e) => {
+      const members = roster.map((e) => {
         const equipped = equippedByUser.get(e.user_jid) || [];
         const bySlot = Object.fromEntries(equipped.filter((x) => x.slot).map((x) => [x.slot, x]));
         const aura = getAuraLevel(e.aura);
         return {
           userJid: e.user_jid,
-          name: e.display_name || e.user_jid,
+          name: resolveName(e.user_jid, e.display_name),
           title: e.active_title || null,
           aura: e.aura || 0,
           auraLevel: aura,
@@ -419,8 +469,25 @@ module.exports = async function handler(req, res) {
         .or(`challenger_jid.eq.${userJid},defender_jid.eq.${userJid}`)
         .eq("status", "pending");
 
+      let displayName = eco.display_name;
+      if (groupJid) {
+        try {
+          const { members: groupMembers } = await getMembersForGroup(supabase, groupJid);
+          const hit = (groupMembers || []).find((m) => m.userJid === userJid);
+          if (hit?.displayLabel) displayName = hit.displayLabel;
+        } catch (_) {
+          /* ignore */
+        }
+      }
+      displayName = pickDisplayLabel({
+        userJid,
+        userLabel: displayName || null,
+        quizDisplayName: displayName || null,
+        nameFromQuiz: null
+      });
+
       return res.status(200).json({
-        economy: eco,
+        economy: { ...eco, display_name: displayName },
         streak,
         availableCredits: Math.max(0, (eco.credits || 0) - (eco.credits_escrowed || 0)),
         aura: getAuraLevel(eco.aura),
