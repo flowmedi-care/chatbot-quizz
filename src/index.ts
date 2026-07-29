@@ -23,6 +23,7 @@ import {
   parseGabaritoCommand,
   parseOmissasCommand,
   parseAdiantarCommand,
+  parseEconomyCommand,
   parseProgressoCommand,
   parseQaCommand,
   parseRepeatQuestionCommand,
@@ -69,6 +70,13 @@ import {
   startFlashcardsBot,
   stopFlashcardsBot
 } from "./flashcards/bot";
+import {
+  flushEconomyOutbox,
+  handleEconomyCommand,
+  processEconomyAfterAnswer,
+  processEconomyAfterCreateQuestion,
+  tryHandlePurchaseConfirm
+} from "./economy/bot-handlers";
 import { MediaPayload, QuestionDraft, QuestionType } from "./types";
 
 function toIsoTimestamp(value: unknown): string {
@@ -129,6 +137,7 @@ type PendingChange = {
   questionId: string;
   newAnswerLetter: string;
   newAnswerComment?: string | null;
+  previousAnswerLetter?: string | null;
 };
 const pendingAnswerChanges = new Map<string, PendingChange>();
 
@@ -952,6 +961,25 @@ async function startBot(): Promise<void> {
             continue;
           }
 
+          // Confirmação de compra do Portal (prioridade sobre outros sim/nao)
+          try {
+            if (await tryHandlePurchaseConfirm(sock, sender, text)) {
+              continue;
+            }
+          } catch (ecoErr) {
+            console.warn("[economy] purchase confirm:", (ecoErr as Error).message);
+          }
+
+          const ecoCmdEarly = parseEconomyCommand(text);
+          if (ecoCmdEarly) {
+            try {
+              await handleEconomyCommand(sock, remoteJid, sender, getDisplayName(msg, sender), ecoCmdEarly);
+            } catch (ecoErr) {
+              await sock.sendMessage(remoteJid, { text: `Erro: ${(ecoErr as Error).message}` });
+            }
+            continue;
+          }
+
           quizModePrivateEnabled = await getQuizModePrivate(sender);
           const slashPriv = parseSlashSessionCommand(text);
 
@@ -983,6 +1011,7 @@ async function startBot(): Promise<void> {
 
             const passiveProbe = parsePrivateCommand(text);
             const respondentIdProbe = parseRespondentsCommand(text);
+            const ecoProbe = parseEconomyCommand(text);
             const passiveReadOnly =
               passiveProbe.kind === "ranking" ||
               passiveProbe.kind === "qa_stats" ||
@@ -990,7 +1019,8 @@ async function startBot(): Promise<void> {
               Boolean(respondentIdProbe) ||
               parseOmissasCommand(text) ||
               Boolean(parseAdiantarCommand(text)) ||
-              parseQaCommand(text);
+              parseQaCommand(text) ||
+              Boolean(ecoProbe);
 
             if (!passiveReadOnly) {
               continue;
@@ -1114,10 +1144,20 @@ async function startBot(): Promise<void> {
               }
               const allShortIds: string[] = [];
               const summaries: string[] = [];
+              const prepaidDays: string[] = [];
               for (const c of cadernos) {
                 const result = await adiantarCadernoQuestions(c, adiantarCmd.days);
                 summaries.push(result.message);
                 allShortIds.push(...result.shortIds);
+                prepaidDays.push(...(result.plannedDays || []));
+              }
+              if (prepaidDays.length) {
+                try {
+                  const { addPrepaidStreakDays } = await import("./economy/streak");
+                  await addPrepaidStreakDays(sender, [...new Set(prepaidDays)]);
+                } catch (e) {
+                  console.warn("[economy] prepaid streak:", (e as Error).message);
+                }
               }
               if (allShortIds.length === 0) {
                 await sock.sendMessage(remoteJid, {
@@ -1156,9 +1196,30 @@ async function startBot(): Promise<void> {
           }
 
           if (groupCommand.kind === "ranking" || groupCommand.kind === "qa_stats" || parseQaCommand(text)) {
-            const groupJidForStats = fromGroup ? remoteJid : getQuizTargetGroupJid();
-            const stats = await getQaStatsForGroup(groupJidForStats);
-            await sock.sendMessage(remoteJid, { text: formatQaStatsMessage(stats) });
+            const ecoRank = parseEconomyCommand(text);
+            if (ecoRank && (ecoRank.kind === "ranking_eco" || text.trim().toLowerCase().startsWith("/ranking"))) {
+              try {
+                await handleEconomyCommand(sock, remoteJid, sender, getDisplayName(msg, sender), ecoRank.kind === "ranking_eco" ? ecoRank : { kind: "ranking_eco", board: "aura" });
+              } catch (ecoErr) {
+                await sock.sendMessage(remoteJid, { text: `Erro: ${(ecoErr as Error).message}` });
+              }
+              continue;
+            }
+            if (parseQaCommand(text) || groupCommand.kind === "qa_stats") {
+              const groupJidForStats = fromGroup ? remoteJid : getQuizTargetGroupJid();
+              const stats = await getQaStatsForGroup(groupJidForStats);
+              await sock.sendMessage(remoteJid, { text: formatQaStatsMessage(stats) });
+              continue;
+            }
+            // "ranking" sem /q&a → ranking Aura
+            try {
+              await handleEconomyCommand(sock, remoteJid, sender, getDisplayName(msg, sender), {
+                kind: "ranking_eco",
+                board: "aura"
+              });
+            } catch (ecoErr) {
+              await sock.sendMessage(remoteJid, { text: `Erro: ${(ecoErr as Error).message}` });
+            }
             continue;
           }
         }
@@ -1190,6 +1251,22 @@ async function startBot(): Promise<void> {
               await sock.sendMessage(remoteJid, { text: "Resposta atualizada ✅" });
               await maybePostAutoGabaritoToGroup(sock, pending.questionId);
               await maybeWakeCadernoAfterAnswer(sock, pending.questionId);
+              try {
+                const result = await getQuestionResult(pending.questionId);
+                await processEconomyAfterAnswer(sock, {
+                  userJid: sender,
+                  userName: getDisplayName(msg, sender),
+                  questionShortId: pending.questionId,
+                  questionId: pending.questionId,
+                  answerLetter: pending.newAnswerLetter,
+                  answerKey: result.answerKey,
+                  groupJid: getQuizTargetGroupJid(),
+                  wasUpdate: true,
+                  previousLetter: pending.previousAnswerLetter ?? null
+                });
+              } catch (ecoErr) {
+                console.warn("[economy] update answer:", (ecoErr as Error).message);
+              }
               continue;
             }
 
@@ -1322,6 +1399,13 @@ async function startBot(): Promise<void> {
               await sock.sendMessage(remoteJid, {
                 text: `Questao #${created.shortId} criada e publicada no grupo.`
               });
+              await processEconomyAfterCreateQuestion(sock, {
+                userJid: draft.creatorJid,
+                userName: draft.creatorName,
+                questionId: created.shortId,
+                creatorIsBot: false,
+                groupJid: quizGroupJid
+              });
             } catch (createError) {
               creationSessions.delete(sender);
               const message = (createError as Error).message;
@@ -1364,7 +1448,8 @@ async function startBot(): Promise<void> {
               pendingAnswerChanges.set(sender, {
                 questionId: command.questionId,
                 newAnswerLetter: command.answer,
-                newAnswerComment: command.comment ?? null
+                newAnswerComment: command.comment ?? null,
+                previousAnswerLetter: existing.answerLetter
               });
 
               const commentNote = command.comment ? "\n(com comentario)" : "";
@@ -1397,6 +1482,20 @@ async function startBot(): Promise<void> {
             });
             await maybePostAutoGabaritoToGroup(sock, command.questionId);
             await maybeWakeCadernoAfterAnswer(sock, command.questionId);
+            try {
+              await processEconomyAfterAnswer(sock, {
+                userJid: sender,
+                userName: getDisplayName(msg, sender),
+                questionShortId: command.questionId,
+                questionId: command.questionId,
+                answerLetter: command.answer,
+                answerKey: result.answerKey,
+                groupJid: getQuizTargetGroupJid(),
+                wasUpdate: false
+              });
+            } catch (ecoErr) {
+              console.warn("[economy] insert answer:", (ecoErr as Error).message);
+            }
             continue;
           }
 

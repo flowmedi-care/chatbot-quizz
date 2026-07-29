@@ -10,7 +10,11 @@
       `/api/engagement?cadernoId=${encodeURIComponent(cadernoId)}`,
     cadernos: "/api/cadernos",
     cadernoUpload: "/api/caderno-upload",
-    cadernoDelete: "/api/caderno-delete"
+    cadernoDelete: "/api/caderno-delete",
+    economy: "/api/economy",
+    shop: "/api/shop",
+    diario: "/api/diario",
+    rankings: "/api/rankings"
   };
 
   const els = {
@@ -199,14 +203,18 @@
     }
 
     els.qaStatsTable.innerHTML = participants
-      .map(
-        (p) => `
+      .map((p) => {
+        const c = p.cosmetics || {};
+        const css = (c.css || []).join(" ");
+        const emoji = c.emoji ? `${c.emoji} ` : "";
+        const title = c.title ? ` <span class="qa-title-badge">${esc(c.title)}</span>` : "";
+        return `
         <tr>
-          <td>${esc(p.userLabel)}</td>
+          <td class="qa-name ${esc(css)}">${emoji}${esc(p.userLabel)}${title}</td>
           <td>${p.createdCount}</td>
           <td>${p.answeredCount}</td>
-        </tr>`
-      )
+        </tr>`;
+      })
       .join("");
     if (els.qaStatsTableWrap) els.qaStatsTableWrap.style.display = "";
   }
@@ -2206,4 +2214,332 @@
   }
 
   init();
+
+  /* ——— Gamificação Papa Vagas ——— */
+  const eco = {
+    members: [],
+    shopItems: [],
+    shopTab: "all",
+    pollTimer: null
+  };
+
+  function openOverlay(id) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.classList.add("open");
+    el.setAttribute("aria-hidden", "false");
+  }
+  function closeOverlay(id) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.classList.remove("open");
+    el.setAttribute("aria-hidden", "true");
+  }
+
+  async function loadEconomyMembers() {
+    const res = await fetch(`${API.economy}?view=members`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Falha ao carregar membros");
+    eco.members = data.members || [];
+    for (const selId of ["profile-user-select", "shop-user-select"]) {
+      const sel = document.getElementById(selId);
+      if (!sel) continue;
+      const prev = sel.value;
+      sel.innerHTML = '<option value="">Selecione…</option>';
+      for (const m of eco.members) {
+        const opt = document.createElement("option");
+        opt.value = m.userJid || m.user_jid;
+        opt.textContent = m.displayLabel || m.display_name || opt.value;
+        sel.appendChild(opt);
+      }
+      if (prev) sel.value = prev;
+    }
+  }
+
+  function auraBar(pct) {
+    const filled = Math.round((Math.min(100, Math.max(0, pct)) / 100) * 10);
+    return "█".repeat(filled) + "░".repeat(10 - filled);
+  }
+
+  async function renderProfile() {
+    const sel = document.getElementById("profile-user-select");
+    const body = document.getElementById("profile-body");
+    if (!sel || !body || !sel.value) {
+      if (body) body.innerHTML = "<p class='empty-state'>Selecione quem é você.</p>";
+      return;
+    }
+    const res = await fetch(`${API.economy}?userJid=${encodeURIComponent(sel.value)}`);
+    const data = await res.json();
+    if (!res.ok) {
+      body.innerHTML = `<p class="error-banner">${data.error || "Erro"}</p>`;
+      return;
+    }
+    const a = data.aura || {};
+    const e = data.economy || {};
+    const st = data.streak || {};
+    body.innerHTML = `
+      <div class="profile-hero ${e.active_title ? "has-title" : ""}">
+        <div class="profile-title-chip">${e.active_title ? escapeHtml(e.active_title) : "Sem título"}</div>
+        <div class="profile-counters">
+          <div class="counter-card"><span class="counter-label">💰 Créditos</span><span class="counter-value" data-count="${e.credits || 0}">0</span><small>${data.availableCredits || 0} disponíveis</small></div>
+          <div class="counter-card"><span class="counter-label">✨ Aura</span><span class="counter-value" data-count="${e.aura || 0}">0</span></div>
+          <div class="counter-card streak-pulse"><span class="counter-label">🔥 Sequência</span><span class="counter-value">${st.current_streak || 0}</span><small>recorde ${st.best_streak || 0}</small></div>
+        </div>
+        <div class="aura-level-block">
+          <div>${escapeHtml(a.label || "")}</div>
+          <div class="aura-bar" aria-hidden="true">${auraBar(a.progressPct || 0)}</div>
+          <small>${a.remainingToNext != null ? `Próximo nível: +${a.remainingToNext}` : "Nível máximo"}</small>
+        </div>
+      </div>
+      <div class="achievements-row">
+        ${(data.achievements || [])
+          .map(
+            (x) =>
+              `<span class="ach-chip ${x.unlocked ? "on" : "off"}" title="${x.minAnswers} Q">${x.unlocked ? "✅" : "⬜"} ${escapeHtml(x.title)}</span>`
+          )
+          .join("")}
+      </div>
+      <div class="inventory-grid">
+        ${(data.inventory || [])
+          .map(
+            (it) =>
+              `<button type="button" class="inv-card ${it.equipped ? "equipped" : ""}" data-equip="${escapeHtml(it.item_key)}">${escapeHtml(it.name || it.item_key)}${it.equipped ? " · equipado" : ""}${it.qty > 1 ? ` ×${it.qty}` : ""}</button>`
+          )
+          .join("") || "<p class='empty-state'>Inventário vazio — visite o Portal.</p>"}
+      </div>
+      ${
+        data.aplicacao
+          ? `<p class="report-sub">🏦 Aplicação: ${data.aplicacao.principal} → ${data.aplicacao.return_amount} até ${data.aplicacao.matures_day}</p>`
+          : ""
+      }
+    `;
+    body.querySelectorAll(".counter-value[data-count]").forEach((el) => {
+      const target = Number(el.getAttribute("data-count") || 0);
+      let n = 0;
+      const step = Math.max(1, Math.ceil(target / 24));
+      const t = setInterval(() => {
+        n = Math.min(target, n + step);
+        el.textContent = String(n);
+        if (n >= target) clearInterval(t);
+      }, 30);
+    });
+    body.querySelectorAll("[data-equip]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const itemKey = btn.getAttribute("data-equip");
+        const r = await fetch(API.shop, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "equip", userJid: sel.value, itemKey })
+        });
+        const j = await r.json();
+        if (!r.ok) alert(j.error || "Erro ao equipar");
+        else renderProfile();
+      });
+    });
+  }
+
+  const CAT_LABELS = {
+    assistencias: "Assistências",
+    cosmeticos: "Cosméticos",
+    aura: "Aura",
+    protecao: "Proteção"
+  };
+
+  async function renderShop() {
+    const grid = document.getElementById("shop-grid");
+    const tabs = document.getElementById("shop-tabs");
+    const bal = document.getElementById("shop-balance");
+    const userSel = document.getElementById("shop-user-select");
+    if (!grid || !tabs) return;
+
+    const res = await fetch(API.shop);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Loja indisponível");
+    eco.shopItems = data.items || [];
+
+    const cats = ["all", ...new Set(eco.shopItems.map((i) => i.category))];
+    tabs.innerHTML = cats
+      .map(
+        (c) =>
+          `<button type="button" class="shop-tab ${eco.shopTab === c ? "active" : ""}" data-cat="${c}">${c === "all" ? "Todos" : CAT_LABELS[c] || c}</button>`
+      )
+      .join("");
+    tabs.querySelectorAll(".shop-tab").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        eco.shopTab = btn.getAttribute("data-cat");
+        renderShop();
+      });
+    });
+
+    if (userSel && userSel.value) {
+      const pr = await fetch(`${API.economy}?userJid=${encodeURIComponent(userSel.value)}`);
+      const pd = await pr.json();
+      if (pr.ok && bal) {
+        bal.innerHTML = `💰 <strong>${pd.availableCredits || 0}</strong> Créditos disponíveis · ✨ ${pd.economy?.aura || 0} Aura`;
+      }
+    } else if (bal) bal.innerHTML = "";
+
+    const list =
+      eco.shopTab === "all" ? eco.shopItems : eco.shopItems.filter((i) => i.category === eco.shopTab);
+    grid.innerHTML = list
+      .map((it) => {
+        const locked = false;
+        return `<article class="shop-card" data-key="${escapeHtml(it.item_key)}">
+          <div class="shop-card-emoji">${it.category === "protecao" ? "🛡️" : it.category === "aura" ? "✨" : it.category === "assistencias" ? "🧩" : "🎨"}</div>
+          <h3>${escapeHtml(it.name)}</h3>
+          <p class="shop-price">${it.price_credits} Créditos${it.min_aura ? ` · Aura≥${it.min_aura}` : ""}</p>
+          <button type="button" class="btn-reveal shop-buy" data-buy="${escapeHtml(it.item_key)}" ${locked ? "disabled" : ""}>Comprar</button>
+        </article>`;
+      })
+      .join("");
+
+    grid.querySelectorAll("[data-buy]").forEach((btn) => {
+      btn.addEventListener("click", () => buyItem(btn.getAttribute("data-buy"), btn));
+    });
+  }
+
+  async function buyItem(itemKey, btn) {
+    const userSel = document.getElementById("shop-user-select");
+    const status = document.getElementById("shop-status");
+    if (!userSel || !userSel.value) {
+      alert("Selecione quem é você.");
+      return;
+    }
+    btn.disabled = true;
+    btn.textContent = "Aguardando WhatsApp…";
+    if (status) status.textContent = "Pedido criado. Confirme com *sim* no privado do bot.";
+    const res = await fetch(API.shop, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userJid: userSel.value, itemKey })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      alert(data.error || "Falha na compra");
+      btn.disabled = false;
+      btn.textContent = "Comprar";
+      return;
+    }
+    if (eco.pollTimer) clearInterval(eco.pollTimer);
+    eco.pollTimer = setInterval(async () => {
+      const st = await fetch(`${API.shop}?token=${encodeURIComponent(data.token)}`);
+      const sj = await st.json();
+      if (!st.ok) return;
+      if (sj.status === "confirmed") {
+        clearInterval(eco.pollTimer);
+        if (status) status.textContent = "📄 Despesa empenhada! Item no inventário.";
+        btn.textContent = "Comprado ✓";
+        document.getElementById("shop-grid")?.classList.add("shop-success-flash");
+        renderShop();
+      } else if (sj.status === "cancelled" || sj.status === "expired") {
+        clearInterval(eco.pollTimer);
+        if (status) status.textContent = "Pedido cancelado ou expirado.";
+        btn.disabled = false;
+        btn.textContent = "Comprar";
+      }
+    }, 2000);
+  }
+
+  async function renderDiario() {
+    const feed = document.getElementById("diario-feed");
+    const dayEl = document.getElementById("diario-day");
+    const userEl = document.getElementById("diario-user");
+    if (!feed) return;
+    if (dayEl && !dayEl.value) {
+      const d = new Date();
+      dayEl.value = d.toISOString().slice(0, 10);
+    }
+    const params = new URLSearchParams();
+    if (dayEl?.value) params.set("day", dayEl.value);
+    if (userEl?.value?.trim()) params.set("userJid", userEl.value.trim());
+    const res = await fetch(`${API.diario}?${params}`);
+    const data = await res.json();
+    if (!res.ok) {
+      feed.innerHTML = `<p class="error-banner">${data.error || "Erro"}</p>`;
+      return;
+    }
+    if (!data.events?.length) {
+      feed.innerHTML = "<p class='empty-state'>Nenhum evento neste filtro.</p>";
+      return;
+    }
+    feed.innerHTML = data.events
+      .map(
+        (ev) =>
+          `<article class="diario-item"><time>${escapeHtml(String(ev.created_at || "").replace("T", " ").slice(0, 19))}</time><p>${escapeHtml(ev.label || "")}</p></article>`
+      )
+      .join("");
+  }
+
+  async function renderRankings(board) {
+    const body = document.getElementById("rankings-body");
+    if (!body) return;
+    const res = await fetch(`${API.rankings}?board=${encodeURIComponent(board || "aura")}`);
+    const data = await res.json();
+    if (!res.ok) {
+      body.innerHTML = `<p class="error-banner">${data.error || "Erro"}</p>`;
+      return;
+    }
+    body.innerHTML = `<ol class="rankings-list">${(data.rows || [])
+      .map(
+        (r, i) =>
+          `<li><span class="rank-pos">${i + 1}</span> <span class="rank-name">${escapeHtml(r.label)}${r.title ? ` · <em>${escapeHtml(r.title)}</em>` : ""}</span> <strong>${Number(r.value).toLocaleString("pt-BR")}</strong></li>`
+      )
+      .join("")}</ol>`;
+  }
+
+  function escapeHtml(s) {
+    return String(s || "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  document.getElementById("btn-profile-open")?.addEventListener("click", async () => {
+    try {
+      await loadEconomyMembers();
+      openOverlay("profile-overlay");
+      await renderProfile();
+    } catch (e) {
+      alert(e.message);
+    }
+  });
+  document.getElementById("profile-close")?.addEventListener("click", () => closeOverlay("profile-overlay"));
+  document.getElementById("profile-user-select")?.addEventListener("change", () => renderProfile());
+
+  document.getElementById("btn-shop-open")?.addEventListener("click", async () => {
+    try {
+      await loadEconomyMembers();
+      openOverlay("shop-overlay");
+      await renderShop();
+    } catch (e) {
+      alert(e.message);
+    }
+  });
+  document.getElementById("shop-close")?.addEventListener("click", () => closeOverlay("shop-overlay"));
+  document.getElementById("shop-user-select")?.addEventListener("change", () => renderShop());
+
+  document.getElementById("btn-diario-open")?.addEventListener("click", async () => {
+    openOverlay("diario-overlay");
+    try {
+      await renderDiario();
+    } catch (e) {
+      alert(e.message);
+    }
+  });
+  document.getElementById("diario-close")?.addEventListener("click", () => closeOverlay("diario-overlay"));
+  document.getElementById("diario-reload")?.addEventListener("click", () => renderDiario());
+
+  document.getElementById("btn-rankings-open")?.addEventListener("click", async () => {
+    openOverlay("rankings-overlay");
+    await renderRankings("aura");
+  });
+  document.getElementById("rankings-close")?.addEventListener("click", () => closeOverlay("rankings-overlay"));
+  document.getElementById("rankings-tabs")?.addEventListener("click", (ev) => {
+    const btn = ev.target.closest("[data-board]");
+    if (!btn) return;
+    document.querySelectorAll("#rankings-tabs .shop-tab").forEach((b) => b.classList.remove("active"));
+    btn.classList.add("active");
+    renderRankings(btn.getAttribute("data-board"));
+  });
 })();

@@ -72,9 +72,51 @@ module.exports = async (req, res) => {
       return a.userLabel.localeCompare(b.userLabel, "pt-BR");
     });
 
+    const jids = participants.map((p) => p.userJid).filter(Boolean);
+    let cosmeticsByJid = {};
+    if (jids.length) {
+      try {
+        const { data: ecos } = await supabase
+          .from("user_economy")
+          .select("user_jid, active_title, aura")
+          .in("user_jid", jids);
+        const { data: inv } = await supabase
+          .from("user_inventory")
+          .select("user_jid, item_key, equipped")
+          .in("user_jid", jids)
+          .eq("equipped", true);
+        const { data: catalog } = await supabase.from("shop_catalog").select("item_key, metadata");
+        const metaByKey = new Map((catalog || []).map((c) => [c.item_key, c.metadata || {}]));
+        const map = {};
+        for (const e of ecos || []) {
+          map[e.user_jid] = {
+            title: e.active_title || null,
+            aura: e.aura || 0,
+            css: [],
+            emoji: null
+          };
+        }
+        for (const row of inv || []) {
+          const slot = map[row.user_jid] || { title: null, aura: 0, css: [], emoji: null };
+          const meta = metaByKey.get(row.item_key) || {};
+          if (meta.css) slot.css.push(meta.css);
+          if (meta.emoji) slot.emoji = meta.emoji;
+          map[row.user_jid] = slot;
+        }
+        cosmeticsByJid = map;
+      } catch (_) {
+        /* tabelas de economia ainda nao migradas */
+      }
+    }
+
+    const enriched = participants.map((p) => ({
+      ...p,
+      cosmetics: cosmeticsByJid[p.userJid] || null
+    }));
+
     return res.status(200).json({
       groupJid,
-      participants,
+      participants: enriched,
       botCreatedCount,
       totals: {
         questionsCreated: questions.length,

@@ -2485,7 +2485,7 @@ export async function countUnreleasedQueueItems(cadernoId: number): Promise<numb
 export async function adiantarCadernoQuestions(
   caderno: CadernoRow,
   days: number
-): Promise<{ shortIds: string[]; daysFilled: number; message: string }> {
+): Promise<{ shortIds: string[]; daysFilled: number; plannedDays: string[]; message: string }> {
   const N = Math.max(1, caderno.questionsPerDay);
   const tz = caderno.timezone || "America/Sao_Paulo";
   const todayIso = dateIsoInTimezone(new Date(), tz);
@@ -2511,6 +2511,7 @@ export async function adiantarCadernoQuestions(
     return {
       shortIds: [],
       daysFilled: 0,
+      plannedDays: [],
       message: `Caderno #${caderno.id} já tem os próximos dias reservados na fila.`
     };
   }
@@ -2521,11 +2522,13 @@ export async function adiantarCadernoQuestions(
     return {
       shortIds: [],
       daysFilled: 0,
+      plannedDays: [],
       message: `Caderno #${caderno.id} sem questões pendentes para adiantar.`
     };
   }
 
   const shortIds: string[] = [];
+  const filledDays: string[] = [];
   let qi = 0;
   let daysFilled = 0;
 
@@ -2548,13 +2551,17 @@ export async function adiantarCadernoQuestions(
       shortIds.push(shortId);
       slotsThisDay += 1;
     }
-    if (slotsThisDay > 0) daysFilled += 1;
+    if (slotsThisDay > 0) {
+      daysFilled += 1;
+      filledDays.push(dayIso);
+    }
     if (qi >= pending.length) break;
   }
 
   return {
     shortIds,
     daysFilled,
+    plannedDays: filledDays,
     message: `Caderno #${caderno.id} "${caderno.name}": ${shortIds.length} questão(ões) adiantada(s) para ${daysFilled} dia(s).`
   };
 }

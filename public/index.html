@@ -17,6 +17,10 @@
       <header class="hero">
         <div class="hero-toolbar" aria-label="Atalhos">
           <a href="/tutorial" class="btn-tutorial">Como usar</a>
+          <button type="button" id="btn-profile-open" class="btn-tutorial">Perfil</button>
+          <button type="button" id="btn-shop-open" class="btn-tutorial btn-portal">Portal de compras</button>
+          <button type="button" id="btn-diario-open" class="btn-tutorial">Diário Oficial</button>
+          <button type="button" id="btn-rankings-open" class="btn-tutorial">Rankings</button>
           <button type="button" id="btn-engagement-open" class="btn-tutorial btn-engagement">
             Engajamento
           </button>
@@ -405,6 +409,74 @@
 
           <p id="caderno-edit-status" class="report-status" role="status" aria-live="polite"></p>
         </div>
+      </div>
+    </div>
+
+    <!-- Gamificação: Perfil -->
+    <div id="profile-overlay" class="modal-overlay" aria-hidden="true">
+      <div class="modal modal-wide economy-modal" role="dialog" aria-modal="true" aria-labelledby="profile-title">
+        <button type="button" class="btn-close" id="profile-close" aria-label="Fechar">×</button>
+        <h2 id="profile-title">Perfil</h2>
+        <label class="filter-field economy-who">
+          <span>Quem sou eu</span>
+          <select id="profile-user-select" aria-label="Selecionar membro"></select>
+        </label>
+        <div id="profile-body" class="economy-body"></div>
+      </div>
+    </div>
+
+    <!-- Portal de compras -->
+    <div id="shop-overlay" class="modal-overlay" aria-hidden="true">
+      <div class="modal modal-wide economy-modal" role="dialog" aria-modal="true" aria-labelledby="shop-title">
+        <button type="button" class="btn-close" id="shop-close" aria-label="Fechar">×</button>
+        <h2 id="shop-title">🏛️ Portal de compras</h2>
+        <label class="filter-field economy-who">
+          <span>Quem sou eu</span>
+          <select id="shop-user-select" aria-label="Selecionar membro"></select>
+        </label>
+        <p class="report-sub">
+          A confirmação será enviada no WhatsApp <strong>dessa</strong> pessoa. Responda <code>sim</code> no privado.
+        </p>
+        <div id="shop-balance" class="shop-balance"></div>
+        <div class="shop-tabs" id="shop-tabs" role="tablist"></div>
+        <div id="shop-grid" class="shop-grid"></div>
+        <p id="shop-status" class="report-status" role="status"></p>
+      </div>
+    </div>
+
+    <!-- Diário Oficial (auditoria) -->
+    <div id="diario-overlay" class="modal-overlay" aria-hidden="true">
+      <div class="modal modal-wide economy-modal" role="dialog" aria-modal="true" aria-labelledby="diario-title">
+        <button type="button" class="btn-close" id="diario-close" aria-label="Fechar">×</button>
+        <h2 id="diario-title">📰 Diário Oficial</h2>
+        <p class="report-sub">Auditoria completa de eventos (o WhatsApp recebe só o resumo diário).</p>
+        <div class="filters-row diario-filters">
+          <label class="filter-field">
+            <span>Dia</span>
+            <input type="date" id="diario-day" />
+          </label>
+          <label class="filter-field">
+            <span>Pessoa (JID opcional)</span>
+            <input type="text" id="diario-user" placeholder="user_jid…" />
+          </label>
+          <button type="button" id="diario-reload" class="btn-tutorial">Atualizar</button>
+        </div>
+        <div id="diario-feed" class="diario-feed"></div>
+      </div>
+    </div>
+
+    <!-- Rankings -->
+    <div id="rankings-overlay" class="modal-overlay" aria-hidden="true">
+      <div class="modal modal-wide economy-modal" role="dialog" aria-modal="true" aria-labelledby="rankings-title">
+        <button type="button" class="btn-close" id="rankings-close" aria-label="Fechar">×</button>
+        <h2 id="rankings-title">Rankings</h2>
+        <div class="shop-tabs" id="rankings-tabs" role="tablist">
+          <button type="button" class="shop-tab active" data-board="aura">🏛️ Aura</button>
+          <button type="button" class="shop-tab" data-board="producao">📚 Produção</button>
+          <button type="button" class="shop-tab" data-board="disciplina">🔥 Disciplina</button>
+          <button type="button" class="shop-tab" data-board="duelo">⚔️ Duelo</button>
+        </div>
+        <div id="rankings-body" class="rankings-body"></div>
       </div>
     </div>
 

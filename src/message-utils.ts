@@ -115,6 +115,68 @@ export function parseAdiantarCommand(text: string): { days: number } | null {
   return { days };
 }
 
+export type EconomyCommand =
+  | { kind: "perfil" }
+  | { kind: "loja" }
+  | { kind: "comprar"; itemKey: string }
+  | { kind: "equipar"; itemKey: string }
+  | { kind: "aplicar"; amount: number }
+  | { kind: "diario" }
+  | { kind: "eliminar"; questionShortId: string }
+  | { kind: "ranking_eco"; board: "aura" | "producao" | "disciplina" | "duelo" }
+  | {
+      kind: "intimar";
+      defenderQuery: string;
+      stake: number;
+      questionShortId: string;
+    };
+
+/** /perfil /aura /loja /comprar X /equipar X /aplicar N /diario /ranking aura|... /intimar */
+export function parseEconomyCommand(text: string): EconomyCommand | null {
+  const t = normalizeInput(text.trim());
+  if (t === "/perfil" || t === "perfil" || t === "/aura" || t === "aura") {
+    return { kind: "perfil" };
+  }
+  if (t === "/loja" || t === "loja" || t === "/portal" || t === "portal") {
+    return { kind: "loja" };
+  }
+  if (t === "/diario" || t === "diario") {
+    return { kind: "diario" };
+  }
+  const comprar = t.match(/^\/?comprar\s+([a-z0-9_-]+)$/);
+  if (comprar) return { kind: "comprar", itemKey: comprar[1] };
+  const eliminar = t.match(/^\/?eliminar\s+([a-z0-9-]+)$/);
+  if (eliminar) return { kind: "eliminar", questionShortId: eliminar[1].toUpperCase() };
+  const equipar = t.match(/^\/?equipar\s+([a-z0-9_-]+)$/);
+  if (equipar) return { kind: "equipar", itemKey: equipar[1] };
+  const aplicar = t.match(/^\/?aplicar\s+(\d+)$/);
+  if (aplicar) {
+    const amount = Number(aplicar[1]);
+    if (!Number.isFinite(amount) || amount < 1) return null;
+    return { kind: "aplicar", amount };
+  }
+  const rank = t.match(/^\/?ranking(?:\s+(aura|producao|produção|disciplina|duelo|streak))?$/);
+  if (rank) {
+    const raw = (rank[1] || "aura").normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    let board: "aura" | "producao" | "disciplina" | "duelo" = "aura";
+    if (raw === "producao") board = "producao";
+    else if (raw === "disciplina" || raw === "streak") board = "disciplina";
+    else if (raw === "duelo") board = "duelo";
+    return { kind: "ranking_eco", board };
+  }
+  // /intimar nome_ou_jid 50 123
+  const intimar = text.trim().match(/^\/?intimar\s+(.+?)\s+(\d+)\s+([a-z0-9-]+)$/i);
+  if (intimar) {
+    return {
+      kind: "intimar",
+      defenderQuery: intimar[1].trim(),
+      stake: Number(intimar[2]),
+      questionShortId: intimar[3].toUpperCase()
+    };
+  }
+  return null;
+}
+
 /** No grupo: sincroniza participantes no Supabase para marcar engajamento no site. */
 export function parseSyncMembrosCommand(text: string): boolean {
   const t = normalizeInput(text.trim());

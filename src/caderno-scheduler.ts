@@ -635,8 +635,20 @@ async function tick(sock: WASocket): Promise<void> {
       }
     }
 
-    // Depois dos envios do tick, para o bom dia já listar IDs liberados nesta manhã.
+    // Depois dos envios do tick, para o Diário Oficial já listar IDs liberados nesta manhã.
     await maybeSendGroupDailyDigest(sock);
+    try {
+      const { flushEconomyOutbox } = await import("./economy/bot-handlers");
+      await flushEconomyOutbox(sock);
+    } catch (e) {
+      console.warn("[caderno-scheduler] economy outbox:", (e as Error).message);
+    }
+    try {
+      const { runDailyEconomyMaintenance } = await import("./economy/daily");
+      await runDailyEconomyMaintenance(sock);
+    } catch (e) {
+      console.warn("[caderno-scheduler] economy daily:", (e as Error).message);
+    }
   } catch (e) {
     console.error("[caderno-scheduler] tick:", (e as Error).message);
   } finally {
@@ -685,12 +697,7 @@ async function buildGroupDailyDigestText(
   dayIso: string,
   cadernos: CadernoRow[]
 ): Promise<string> {
-  const lines: string[] = [
-    `Bom dia! — ${dayIso}`,
-    "",
-    "Resumo dos cadernos ativos (enunciados no privado via /omissas):",
-    ""
-  ];
+  const cadernoLines: string[] = [];
 
   let totalToday = 0;
   let totalPlanned = 0;
@@ -710,45 +717,25 @@ async function buildGroupDailyDigestText(
     totalToday += publishedToday.length;
     totalPlanned += Math.max(1, c.questionsPerDay);
 
-    const pct =
-      progress && progress.publishedCount > 0 && progress.engagedCount > 0
-        ? Math.round((progress.resolvedByEngaged / progress.publishedCount) * 100)
-        : null;
-
-    const scheduleLine =
-      c.sendTimes && c.sendTimes.length >= c.questionsPerDay
-        ? c.sendTimes
-            .slice(0, c.questionsPerDay)
-            .map((t) => `${pad2(t.hour)}:${pad2(t.minute)}`)
-            .join(", ")
-        : `${pad2(c.startHour)}:${pad2(c.startMinute)}–${pad2(c.endHour)}:${pad2(c.endMinute)}`;
-
-    lines.push(`• ${c.name} (#${c.id}) — ${c.questionsPerDay}/dia · ${scheduleLine}`);
-    if (progress) {
-      lines.push(
-        `  Enviadas: ${progress.publishedCount}/${progress.totalQuestions}` +
-          (pct != null ? ` · Engajados: ${progress.resolvedByEngaged}/${progress.publishedCount} (${pct}%)` : "")
-      );
-    }
-    if (shortIds.length > 0) {
-      lines.push(`  Hoje: ${shortIds.join(", ")}`);
-    } else {
-      lines.push(`  Hoje: até ${c.questionsPerDay} questão(ões) (ainda não liberadas ou aguardando)`);
-    }
-    if (c.waitForAnswers && c.currentDayDate && c.currentDaySent >= c.questionsPerDay) {
-      lines.push(`  Aguardando engajados responderem o dia ${c.currentDayDate}`);
-    }
-    lines.push(`  Próximo: ${formatNextRunPretty(c.nextRunAt, c.timezone)}`);
-    lines.push("");
+    const bits = [`Cadernos: #${c.id} ${c.name}`];
+    if (shortIds.length > 0) bits.push(`${shortIds.length} questões hoje (${shortIds.join(", ")})`);
+    else bits.push(`até ${c.questionsPerDay}/dia`);
+    cadernoLines.push(bits.join(" · "));
+    void progress;
   }
 
-  lines.push(
-    `Total liberado hoje: ${totalToday} (planejado ~${totalPlanned} se todos os cadernos enviarem).`
-  );
-  lines.push("");
-  lines.push("Enunciados: /omissas no privado · Repetir: /questao N · Gabarito: /gabarito N");
-  void groupJid;
-  return lines.join("\n");
+  cadernoLines.push("Enunciados: /omissas");
+  if (totalToday || totalPlanned) {
+    cadernoLines.push(`Total liberado hoje: ${totalToday} (planejado ~${totalPlanned}).`);
+  }
+
+  try {
+    const { buildDiarioOficialDigest } = await import("./economy/profile");
+    return await buildDiarioOficialDigest({ dayIso, cadernoLines, groupJid });
+  } catch (e) {
+    console.warn("[caderno-scheduler] diario oficial economy:", (e as Error).message);
+    return ["📰 Diário Oficial do Papa Vagas", dayIso, "", ...cadernoLines].join("\n");
+  }
 }
 
 async function maybeSendGroupDailyDigest(sock: WASocket): Promise<void> {
