@@ -7,6 +7,17 @@ function looksLikeRawId(s) {
   const t = String(s || "").trim();
   if (!t) return true;
   if (/^\d{8,}$/.test(t)) return true;
+  if (/^\+?\d{8,20}$/.test(t)) return true;
+  if (/@/.test(t) && (/^\d+@/.test(t) || /@s\.whatsapp\.net$/i.test(t) || /@lid$/i.test(t))) return true;
+  return false;
+}
+
+function isCadernoIdentity(jidOrName) {
+  const s = String(jidOrName || "").trim();
+  if (!s) return false;
+  if (/^caderno:/i.test(s)) return true;
+  if (/@bot$/i.test(s)) return true;
+  if (/^Caderno:\s*/i.test(s)) return true;
   return false;
 }
 
@@ -17,17 +28,17 @@ function formatPhoneJid(userJid) {
 }
 
 function pickDisplayLabel({ userJid, userLabel, quizDisplayName, nameFromQuiz }) {
+  if (isCadernoIdentity(userJid)) return null;
+
   const fromTable = quizDisplayName != null ? String(quizDisplayName).trim() : "";
   const stored = userLabel != null ? String(userLabel).trim() : "";
   const fromAnswers = nameFromQuiz != null ? String(nameFromQuiz).trim() : "";
 
-  if (fromTable && !looksLikeRawId(fromTable)) return fromTable;
-  if (fromAnswers && !looksLikeRawId(fromAnswers)) return fromAnswers;
-  if (stored && !looksLikeRawId(stored)) return stored;
-  if (fromAnswers) return fromAnswers;
+  if (fromTable && !looksLikeRawId(fromTable) && !isCadernoIdentity(fromTable)) return fromTable;
+  if (fromAnswers && !looksLikeRawId(fromAnswers) && !isCadernoIdentity(fromAnswers)) return fromAnswers;
+  if (stored && !looksLikeRawId(stored) && !isCadernoIdentity(stored)) return stored;
 
-  if (String(userJid).includes("@s.whatsapp.net")) return formatPhoneJid(userJid);
-  return stored || String(userJid);
+  return "Participante";
 }
 
 async function fetchQuestionIdsForGroup(supabase, groupJid) {
@@ -62,9 +73,9 @@ async function fetchNamesFromAnswers(supabase, groupJid) {
   const best = new Map();
   for (const row of answers || []) {
     const jid = row.user_jid != null ? String(row.user_jid) : "";
-    if (!jid) continue;
+    if (!jid || isCadernoIdentity(jid)) continue;
     const raw = row.user_name != null ? String(row.user_name).trim() : "";
-    if (!raw) continue;
+    if (!raw || looksLikeRawId(raw) || isCadernoIdentity(raw)) continue;
     const prev = best.get(jid);
     if (!prev || raw.length > prev.length) best.set(jid, raw);
   }
@@ -79,6 +90,8 @@ async function fetchNamesFromCreators(supabase, groupJid) {
       const jid = q.creator_jid != null ? String(q.creator_jid) : "";
       const name = q.creator_name != null ? String(q.creator_name).trim() : "";
       if (!jid || !name) continue;
+      if (isCadernoIdentity(jid) || isCadernoIdentity(name)) continue;
+      if (looksLikeRawId(name)) continue;
       const prev = best.get(jid);
       if (!prev || name.length > prev.length) best.set(jid, name);
     }
@@ -97,8 +110,13 @@ async function fetchNamesFromCreators(supabase, groupJid) {
 }
 
 function mergeNameHints(fromAnswers, fromCreators) {
-  const out = new Map(fromAnswers);
+  const out = new Map();
+  for (const [jid, name] of fromAnswers) {
+    if (isCadernoIdentity(jid) || isCadernoIdentity(name) || looksLikeRawId(name)) continue;
+    out.set(jid, name);
+  }
   for (const [jid, name] of fromCreators) {
+    if (isCadernoIdentity(jid) || isCadernoIdentity(name) || looksLikeRawId(name)) continue;
     const prev = out.get(jid);
     if (!prev || String(name).length > String(prev).length) out.set(jid, name);
   }
@@ -137,7 +155,9 @@ async function getMembersForGroup(supabase, groupJid) {
 
   const nameHints = await getNameHintsForGroup(supabase, groupJid);
 
-  const members = (data || []).map((r) => {
+  const members = (data || [])
+    .filter((r) => r.user_jid && !isCadernoIdentity(r.user_jid))
+    .map((r) => {
     const userJid = String(r.user_jid);
     const userLabel = r.user_label ? String(r.user_label) : null;
     const quizDisplayName = r.quiz_display_name != null ? String(r.quiz_display_name) : null;
@@ -159,5 +179,7 @@ async function getMembersForGroup(supabase, groupJid) {
 module.exports = {
   pickDisplayLabel,
   getMembersForGroup,
-  getNameHintsForGroup
+  getNameHintsForGroup,
+  isCadernoIdentity,
+  looksLikeRawId
 };

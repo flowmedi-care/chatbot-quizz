@@ -808,6 +808,19 @@
     els.reportOverlay.setAttribute("aria-hidden", "true");
   }
 
+  function friendlyPersonLabel(mOrLabel, fallbackJid) {
+    const raw =
+      typeof mOrLabel === "string"
+        ? mOrLabel
+        : mOrLabel?.displayLabel || mOrLabel?.userLabel || "";
+    const t = String(raw || "").trim();
+    if (!t) return "Participante";
+    if (/^Caderno:/i.test(t)) return "Participante";
+    if (/^\d{8,}$/.test(t) || /^\+?\d{8,20}$/.test(t)) return "Participante";
+    if (t.includes("@")) return "Participante";
+    return t;
+  }
+
   function renderEngagementList() {
     if (!els.engagementList) return;
     const members = engagementMembersCache;
@@ -822,9 +835,7 @@
       <li class="engagement-row" data-jid="${escAttr(m.userJid)}">
         <label class="engagement-label">
           <input type="checkbox" class="engagement-cb" ${m.engaged ? "checked" : ""} aria-label="Engajado" />
-          <span class="engagement-name" title="${escAttr(m.userJid)}">${esc(
-          m.displayLabel || m.userLabel || m.userJid
-        )}</span>
+          <span class="engagement-name" title="${escAttr(m.userJid)}">${esc(friendlyPersonLabel(m))}</span>
         </label>
       </li>`
       )
@@ -1095,9 +1106,7 @@
           <input type="checkbox" class="caderno-passive-cb" ${m.passive ? "checked" : ""} aria-label="Passivo neste caderno" />
           <span class="engagement-role-tag">Passivo</span>
         </label>
-        <span class="engagement-name" title="${escAttr(m.userJid)}">${esc(
-          m.displayLabel || m.userLabel || m.userJid
-        )}</span>
+        <span class="engagement-name" title="${escAttr(m.userJid)}">${esc(friendlyPersonLabel(m))}</span>
       </li>`
       )
       .join("");
@@ -1205,8 +1214,8 @@
     const jid = String(userJid || "").trim();
     if (!jid) return "";
     const m = engagementMembersCache.find((x) => x.userJid === jid);
-    if (m) return m.displayLabel || m.userLabel || jid;
-    return jid;
+    if (m) return friendlyPersonLabel(m);
+    return "Participante";
   }
 
   async function ensureEngagementMembersLoaded() {

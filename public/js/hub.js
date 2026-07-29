@@ -44,7 +44,8 @@
 
   function initials(name) {
     const cleaned = String(name || "").trim();
-    if (!cleaned || cleaned.includes("@") || /^\+?\d{6,}$/.test(cleaned)) return "?";
+    if (!cleaned || cleaned === "Participante" || cleaned.includes("@") || /^\+?\d{6,}$/.test(cleaned)) return "?";
+    if (/^Caderno:/i.test(cleaned)) return "?";
     const parts = cleaned.split(/\s+/).filter(Boolean);
     if (!parts.length) return "?";
     if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
@@ -54,6 +55,8 @@
   function looksLikeId(s) {
     const t = String(s || "").trim();
     if (!t) return true;
+    if (t === "Participante") return false;
+    if (/^Caderno:/i.test(t)) return true;
     if (t.includes("@")) return true;
     if (/^\+?\d{8,}$/.test(t)) return true;
     if (/^\d{10,}/.test(t)) return true;
@@ -61,10 +64,14 @@
   }
 
   function resolveMemberName(jid, fallback) {
+    if (/^caderno:/i.test(String(jid || "")) || /^Caderno:/i.test(String(fallback || ""))) {
+      return "Participante";
+    }
     const m = state.members.find((x) => memberJid(x) === jid);
     if (m) {
       const label = memberLabel(m);
       if (label && !looksLikeId(label)) return label;
+      if (label === "Participante") return label;
     }
     if (fallback && !looksLikeId(fallback)) return fallback;
     return "Participante";

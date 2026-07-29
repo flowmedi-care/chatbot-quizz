@@ -1,5 +1,5 @@
 const { applyCors, getClient, pickTargetGroupJid } = require("./_lib");
-const { getMembersForGroup, getNameHintsForGroup, pickDisplayLabel } = require("./_group-members");
+const { getMembersForGroup, getNameHintsForGroup, pickDisplayLabel, isCadernoIdentity } = require("./_group-members");
 const {
   getAuraLevel,
   ACHIEVEMENTS,
@@ -322,11 +322,14 @@ module.exports = async function handler(req, res) {
     if (view === "plaza" || view === "roster") {
       const limit = Math.min(80, Math.max(1, Number(url.searchParams.get("limit") || 48)));
       const nameByJid = new Map();
+      const groupJids = new Set();
       if (groupJid) {
         try {
           const { members: groupMembers } = await getMembersForGroup(supabase, groupJid);
           for (const m of groupMembers || []) {
-            if (m.userJid && m.displayLabel) nameByJid.set(m.userJid, m.displayLabel);
+            if (!m.userJid || isCadernoIdentity(m.userJid)) continue;
+            groupJids.add(m.userJid);
+            if (m.displayLabel) nameByJid.set(m.userJid, m.displayLabel);
           }
         } catch (_) {
           /* lista de membros opcional */
@@ -334,6 +337,8 @@ module.exports = async function handler(req, res) {
         try {
           const hints = await getNameHintsForGroup(supabase, groupJid);
           for (const [jid, name] of hints || []) {
+            if (!groupJids.has(jid)) continue;
+            if (isCadernoIdentity(jid) || isCadernoIdentity(name)) continue;
             if (!nameByJid.has(jid) && name) nameByJid.set(jid, name);
           }
         } catch (_) {
@@ -342,6 +347,7 @@ module.exports = async function handler(req, res) {
       }
 
       const resolveName = (userJid, displayName) => {
+        if (isCadernoIdentity(userJid) || isCadernoIdentity(displayName)) return null;
         const fromGroup = nameByJid.get(userJid);
         if (fromGroup) return fromGroup;
         return pickDisplayLabel({
@@ -356,16 +362,20 @@ module.exports = async function handler(req, res) {
         .from("user_economy")
         .select("user_jid, display_name, active_title, aura, lifetime_answers, mandados_won")
         .order("aura", { ascending: false })
-        .limit(limit);
+        .limit(limit * 2);
       if (error) throw error;
 
-      // Inclui membros do grupo ainda sem linha de economia (praça completa)
-      const ecoMap = new Map((ecos || []).map((e) => [e.user_jid, e]));
-      for (const [jid, label] of nameByJid) {
+      // Só pessoas reais: economia (sem caderno:@bot) + membros do grupo
+      const ecoMap = new Map();
+      for (const e of ecos || []) {
+        if (!e.user_jid || isCadernoIdentity(e.user_jid) || isCadernoIdentity(e.display_name)) continue;
+        ecoMap.set(e.user_jid, e);
+      }
+      for (const jid of groupJids) {
         if (!ecoMap.has(jid)) {
           ecoMap.set(jid, {
             user_jid: jid,
-            display_name: label,
+            display_name: nameByJid.get(jid) || null,
             active_title: null,
             aura: 0,
             lifetime_answers: 0,
@@ -411,7 +421,7 @@ module.exports = async function handler(req, res) {
         const aura = getAuraLevel(e.aura);
         return {
           userJid: e.user_jid,
-          name: resolveName(e.user_jid, e.display_name),
+          name: resolveName(e.user_jid, e.display_name) || "Participante",
           title: e.active_title || null,
           aura: e.aura || 0,
           auraLevel: aura,
