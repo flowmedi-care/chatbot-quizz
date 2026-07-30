@@ -205,7 +205,9 @@ export async function buildAurasBoardText(limit = 40): Promise<string> {
     const medal = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `${i + 1}.`;
     const title = r.title ? ` · _${r.title}_` : "";
     lines.push(`${medal} *${r.label}*${title}`);
-    lines.push(`   ${level.emoji} ${r.value.toLocaleString("pt-BR")} Aura · ${level.shortLabel}`);
+    lines.push(
+      `   ${level.level.emoji} ${r.value.toLocaleString("pt-BR")} Aura · ${level.shortLabel}`
+    );
   }
   lines.push("", "Ver o seu: /aura · Hub: papa-vagas.vercel.app/hub");
   return lines.join("\n");
