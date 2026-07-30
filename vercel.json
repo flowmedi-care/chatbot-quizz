@@ -13,6 +13,8 @@
     { "source": "/api/rankings", "destination": "/api/economy?view=rankings" },
     { "source": "/tutorial", "destination": "/tutorial/index.html" },
     { "source": "/hub", "destination": "/hub/index.html" },
-    { "source": "/hub/", "destination": "/hub/index.html" }
+    { "source": "/hub/", "destination": "/hub/index.html" },
+    { "source": "/cadernos", "destination": "/cadernos/index.html" },
+    { "source": "/cadernos/", "destination": "/cadernos/index.html" }
   ]
 }

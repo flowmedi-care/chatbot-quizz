@@ -1,4 +1,6 @@
 (function () {
+  const IS_CADERNOS_PAGE = document.body?.dataset?.page === "cadernos";
+
   const API = {
     questions: "/api/questions",
     qaStats: "/api/qa-stats",
@@ -85,6 +87,15 @@
     btnCadernoPreview: document.getElementById("btn-caderno-preview"),
     btnCadernoSave: document.getElementById("btn-caderno-save"),
     btnCadernoSaveActivate: document.getElementById("btn-caderno-save-activate"),
+    cadernoAddEngagementPanel: document.getElementById("caderno-add-engagement-panel"),
+    cadernoAddEngagementList: document.getElementById("caderno-add-engagement-list"),
+    cadernoAddEngagementStatus: document.getElementById("caderno-add-engagement-status"),
+    btnCadernoAddLoadEngagement: document.getElementById("btn-caderno-add-load-engagement"),
+    wizardPrev: document.getElementById("wizard-prev"),
+    wizardNext: document.getElementById("wizard-next"),
+    wizardSteps: document.getElementById("wizard-steps"),
+    wizardStepCaption: document.getElementById("wizard-step-caption"),
+    wizardSummary: document.getElementById("wizard-summary"),
     cadernoEditOverlay: document.getElementById("caderno-edit-overlay"),
     cadernoEditClose: document.getElementById("caderno-edit-close"),
     cadernoEditId: document.getElementById("caderno-edit-id"),
@@ -113,6 +124,12 @@
 
   let cadernosCache = [];
   let cadernoUploadInFlight = false;
+  const cadernosUi = {
+    search: "",
+    status: "all",
+    mode: "all",
+    sort: "name"
+  };
 
   let questionsList = [];
   /** @type {null | { questions: any[], answers: any[], participants: any[], warning?: string }} */
@@ -125,6 +142,16 @@
   /** @type {{ userJid: string, userLabel: string | null, displayLabel?: string | null, engaged: boolean, passive?: boolean }[]} */
   let cadernoEngagementCache = [];
   let cadernoEngagementEditId = null;
+  /** Seleção provisória de engajados/passivos no wizard (antes do caderno existir). */
+  let cadernoAddEngagementDraft = [];
+  let wizardStep = 1;
+  const WIZARD_CAPTIONS = {
+    1: "Passo 1 de 5 — Preparar PDF no TEC",
+    2: "Passo 2 de 5 — Enviar o PDF",
+    3: "Passo 3 de 5 — Configurações básicas",
+    4: "Passo 4 de 5 — Configurações avançadas",
+    5: "Passo 5 de 5 — Conferir e salvar"
+  };
 
   async function fetchJson(url, options = {}) {
     const headers = { ...(options.headers || {}) };
@@ -1070,7 +1097,198 @@
   function syncCadernoAddPrivatePanel() {
     const priv = getCadernoAddDeliveryMode() === "private";
     if (els.cadernoPrivateAddPanel) els.cadernoPrivateAddPanel.classList.toggle("hidden", !priv);
+    if (els.cadernoAddEngagementPanel) els.cadernoAddEngagementPanel.classList.toggle("hidden", priv);
     if (els.cadernoAddGroupSchedule) els.cadernoAddGroupSchedule.classList.toggle("hidden", priv);
+    const sendWrap = document.getElementById("caderno-send-times-wrap");
+    if (sendWrap) sendWrap.classList.toggle("hidden", priv);
+  }
+
+  function setWizardStep(step) {
+    wizardStep = Math.max(1, Math.min(5, step));
+    document.querySelectorAll("[data-wizard-step]").forEach((panel) => {
+      panel.classList.toggle("active", Number(panel.dataset.wizardStep) === wizardStep);
+    });
+    if (els.wizardSteps) {
+      els.wizardSteps.querySelectorAll("[data-step-dot]").forEach((dot) => {
+        const n = Number(dot.dataset.stepDot);
+        dot.classList.toggle("active", n === wizardStep);
+        dot.classList.toggle("done", n < wizardStep);
+      });
+    }
+    if (els.wizardStepCaption) els.wizardStepCaption.textContent = WIZARD_CAPTIONS[wizardStep] || "";
+    if (els.wizardPrev) els.wizardPrev.hidden = wizardStep <= 1;
+    if (els.wizardNext) {
+      els.wizardNext.hidden = wizardStep >= 5;
+      els.wizardNext.textContent = wizardStep === 1 ? "Entendi, continuar" : "Continuar";
+    }
+    if (wizardStep === 3) syncCadernoAddSendTimes(true);
+    if (wizardStep === 4) syncCadernoAddPrivatePanel();
+    if (wizardStep === 5) renderWizardSummary();
+  }
+
+  function validateWizardStep(step) {
+    if (step === 2) {
+      const file = els.cadernoPdf && els.cadernoPdf.files && els.cadernoPdf.files[0];
+      if (!file) {
+        if (els.cadernoAddStatus) els.cadernoAddStatus.textContent = "Selecione o PDF do TEC para continuar.";
+        return false;
+      }
+    }
+    if (step === 3) {
+      const name = ((els.cadernoName && els.cadernoName.value) || "").trim();
+      if (!name) {
+        if (els.cadernoAddStatus) els.cadernoAddStatus.textContent = "Informe um nome para o caderno.";
+        return false;
+      }
+      if (getCadernoAddDeliveryMode() !== "private") {
+        const qpd = Number((els.cadernoPerDay && els.cadernoPerDay.value) || 3);
+        const times = collectSendTimesFromList(els.cadernoSendTimesList);
+        const timesErr = validateSendTimesAscending(times);
+        if (timesErr || !times || times.length !== qpd) {
+          if (els.cadernoAddStatus)
+            els.cadernoAddStatus.textContent =
+              timesErr || `Informe ${qpd} horário(s), um por questão do dia.`;
+          return false;
+        }
+      }
+    }
+    if (step === 4 && getCadernoAddDeliveryMode() === "private") {
+      const recs = collectAddPrivateRecipients();
+      const hasActive = (recs || []).some((r) => r.active !== false && r.userJid);
+      if (!hasActive) {
+        if (els.cadernoAddStatus)
+          els.cadernoAddStatus.textContent =
+            "Modo privado: carregue membros e marque ao menos um destinatário.";
+        return false;
+      }
+    }
+    if (els.cadernoAddStatus) els.cadernoAddStatus.textContent = "";
+    return true;
+  }
+
+  function renderWizardSummary() {
+    if (!els.wizardSummary) return;
+    const form = getCadernoFormPayload();
+    const mode =
+      form.deliveryMode === "private"
+        ? "Privado (DM)"
+        : "Coletivo (Diário + /omissas)";
+    const fileName = form.file && form.file.name ? form.file.name : "—";
+    const engaged = cadernoAddEngagementDraft.filter((m) => m.engaged).length;
+    const passive = cadernoAddEngagementDraft.filter((m) => m.passive).length;
+    const privCount = (form.privateRecipients || []).filter((r) => r.active !== false).length;
+    const times =
+      form.schedule.sendTimes && form.schedule.sendTimes.length
+        ? formatSendTimesForDisplay(form.schedule.sendTimes)
+        : "—";
+    els.wizardSummary.innerHTML = `
+      <dl>
+        <div><dt>Nome</dt><dd>${esc(form.name || "—")}</dd></div>
+        <div><dt>PDF</dt><dd>${esc(fileName)}</dd></div>
+        <div><dt>Envio</dt><dd>${esc(mode)}</dd></div>
+        <div><dt>Q/dia</dt><dd>${esc(String(form.schedule.questionsPerDay))}</dd></div>
+        <div><dt>Horários</dt><dd>${esc(
+          form.deliveryMode === "private" ? `${privCount} destinatário(s)` : times
+        )}</dd></div>
+        <div><dt>Aleatório</dt><dd>${form.schedule.randomOrder ? "Sim" : "Não"}</dd></div>
+        <div><dt>Esperar engajados</dt><dd>${form.schedule.waitForAnswers ? "Sim" : "Não"}</dd></div>
+        ${
+          form.deliveryMode !== "private"
+            ? `<div><dt>Engajados / passivos</dt><dd>${engaged} / ${passive}</dd></div>`
+            : ""
+        }
+      </dl>`;
+  }
+
+  function renderCadernoAddEngagementList() {
+    if (!els.cadernoAddEngagementList) return;
+    const members = cadernoAddEngagementDraft;
+    if (!members.length) {
+      els.cadernoAddEngagementList.innerHTML =
+        '<li class="engagement-empty">Clique em “Carregar membros do grupo”.</li>';
+      return;
+    }
+    els.cadernoAddEngagementList.innerHTML = members
+      .map(
+        (m) => `
+      <li class="engagement-row" data-jid="${escAttr(m.userJid)}">
+        <label class="engagement-label engagement-role">
+          <input type="checkbox" class="caderno-add-eng-cb" ${m.engaged ? "checked" : ""} aria-label="Engajado" />
+          <span class="engagement-role-tag">Engajado</span>
+        </label>
+        <label class="engagement-label engagement-role">
+          <input type="checkbox" class="caderno-add-pass-cb" ${m.passive ? "checked" : ""} aria-label="Passivo" />
+          <span class="engagement-role-tag">Passivo</span>
+        </label>
+        <span class="engagement-name" title="${escAttr(m.userJid)}">${esc(friendlyPersonLabel(m))}</span>
+      </li>`
+      )
+      .join("");
+  }
+
+  async function onCadernoAddLoadEngagement() {
+    if (els.cadernoAddEngagementStatus) els.cadernoAddEngagementStatus.textContent = "Carregando…";
+    try {
+      await ensureEngagementMembersLoaded();
+      cadernoAddEngagementDraft = (engagementMembersCache || []).map((m) => ({
+        userJid: m.userJid,
+        displayLabel: m.displayLabel,
+        userLabel: m.userLabel,
+        engaged: false,
+        passive: false
+      }));
+      if (!cadernoAddEngagementDraft.length) {
+        if (els.cadernoAddEngagementStatus)
+          els.cadernoAddEngagementStatus.textContent =
+            "Lista vazia. Rode /sync-membros no grupo do WhatsApp.";
+      } else if (els.cadernoAddEngagementStatus) {
+        els.cadernoAddEngagementStatus.textContent = `${cadernoAddEngagementDraft.length} participante(s).`;
+      }
+      renderCadernoAddEngagementList();
+    } catch (e) {
+      if (els.cadernoAddEngagementStatus)
+        els.cadernoAddEngagementStatus.textContent = e.message || "Falha ao carregar.";
+    }
+  }
+
+  function onCadernoAddEngagementToggle(ev) {
+    const cb = ev.target;
+    if (!cb.classList) return;
+    const isEng = cb.classList.contains("caderno-add-eng-cb");
+    const isPass = cb.classList.contains("caderno-add-pass-cb");
+    if (!isEng && !isPass) return;
+    const row = cb.closest(".engagement-row");
+    const jid = row && row.dataset.jid;
+    const m = cadernoAddEngagementDraft.find((x) => x.userJid === jid);
+    if (!m) return;
+    if (isEng) {
+      m.engaged = cb.checked;
+      if (m.engaged) m.passive = false;
+    } else {
+      m.passive = cb.checked;
+      if (m.passive) m.engaged = false;
+    }
+    renderCadernoAddEngagementList();
+  }
+
+  async function applyPendingEngagementAfterCreate(cadernoId) {
+    if (getCadernoAddDeliveryMode() === "private") return;
+    const pending = cadernoAddEngagementDraft.filter((m) => m.engaged || m.passive);
+    for (const m of pending) {
+      try {
+        await fetchJson(API.cadernoEngagement(cadernoId), {
+          method: "PATCH",
+          body: JSON.stringify({
+            cadernoId,
+            userJid: m.userJid,
+            engaged: Boolean(m.engaged),
+            passive: Boolean(m.passive)
+          })
+        });
+      } catch {
+        /* segue para o próximo */
+      }
+    }
   }
 
   function getCadernoEditDeliveryMode() {
@@ -1454,93 +1672,181 @@
     if (!has) await onCadernoAddLoadMembers();
   }
 
+  function getCadernoNextIso(c) {
+    if (c.deliveryMode === "private" && c.status === "active") {
+      const times = (c.privateRecipients || [])
+        .filter((r) => r.active && r.nextRunAt)
+        .map((r) => new Date(r.nextRunAt).getTime())
+        .filter((t) => !Number.isNaN(t));
+      if (times.length) return new Date(Math.min(...times)).toISOString();
+      return null;
+    }
+    return c.nextRunAt || null;
+  }
+
+  function getFilteredCadernos() {
+    const q = cadernosUi.search.trim().toLowerCase();
+    let list = cadernosCache.slice();
+    if (cadernosUi.status !== "all") {
+      list = list.filter((c) => c.status === cadernosUi.status);
+    }
+    if (cadernosUi.mode !== "all") {
+      list = list.filter((c) => (c.deliveryMode || "group") === cadernosUi.mode);
+    }
+    if (q) {
+      list = list.filter(
+        (c) =>
+          String(c.name || "")
+            .toLowerCase()
+            .includes(q) || String(c.id).includes(q)
+      );
+    }
+    list.sort((a, b) => {
+      if (cadernosUi.sort === "status") return String(a.status).localeCompare(String(b.status));
+      if (cadernosUi.sort === "id") return Number(b.id) - Number(a.id);
+      if (cadernosUi.sort === "progress") {
+        const pa = (Number(a.publishedCount ?? a.cursor) || 0) / Math.max(1, Number(a.totalQuestions) || 1);
+        const pb = (Number(b.publishedCount ?? b.cursor) || 0) / Math.max(1, Number(b.totalQuestions) || 1);
+        return pb - pa;
+      }
+      if (cadernosUi.sort === "next") {
+        const ta = getCadernoNextIso(a) ? new Date(getCadernoNextIso(a)).getTime() : Infinity;
+        const tb = getCadernoNextIso(b) ? new Date(getCadernoNextIso(b)).getTime() : Infinity;
+        return ta - tb;
+      }
+      return String(a.name || "").localeCompare(String(b.name || ""), "pt-BR");
+    });
+    return list;
+  }
+
+  function renderCadernosSummary() {
+    const box = document.getElementById("cb-summary");
+    if (!box) return;
+    const total = cadernosCache.length;
+    const active = cadernosCache.filter((c) => c.status === "active").length;
+    const priv = cadernosCache.filter((c) => c.deliveryMode === "private").length;
+    const waiting = cadernosCache.filter((c) => c.status === "paused_waiting_decision").length;
+    box.innerHTML = `
+      <div class="cb-stat-pill"><span>Total</span><strong>${total}</strong></div>
+      <div class="cb-stat-pill"><span>Ativos</span><strong>${active}</strong></div>
+      <div class="cb-stat-pill"><span>Privados</span><strong>${priv}</strong></div>
+      <div class="cb-stat-pill"><span>Aguardando</span><strong>${waiting}</strong></div>`;
+  }
+
   function renderCadernos() {
     if (!els.cadernosList) return;
+    renderCadernosSummary();
+    const list = getFilteredCadernos();
     if (!cadernosCache.length) {
-      els.cadernosList.innerHTML =
-        '<li class="engagement-empty">Nenhum caderno cadastrado. Clique em "Adicionar caderno" para enviar um PDF.</li>';
+      els.cadernosList.innerHTML = IS_CADERNOS_PAGE
+        ? `<li class="cb-empty"><strong>Nenhum caderno ainda</strong>Clique em “Importar caderno” para enviar um PDF do Tec Concursos.</li>`
+        : '<li class="engagement-empty">Nenhum caderno cadastrado. Clique em "Importar caderno" para enviar um PDF.</li>';
       return;
     }
-    els.cadernosList.innerHTML = cadernosCache
+    if (!list.length) {
+      els.cadernosList.innerHTML = IS_CADERNOS_PAGE
+        ? `<li class="cb-empty"><strong>Nenhum resultado</strong>Ajuste busca ou filtros.</li>`
+        : '<li class="engagement-empty">Nenhum caderno com esses filtros.</li>';
+      return;
+    }
+    els.cadernosList.innerHTML = list
       .map((c) => {
-        const privBadge =
-          c.deliveryMode === "private"
-            ? '<span class="badge-mini" title="Envio no WhatsApp privado">Privado</span>'
-            : "";
-        let next =
-          c.status === "active" ? formatNextRunPretty(c.nextRunAt, c.timezone) : "—";
-        if (c.deliveryMode === "private" && c.status === "active") {
-          const recs = c.privateRecipients || [];
-          const times = recs
-            .filter((r) => r.active && r.nextRunAt)
-            .map((r) => new Date(r.nextRunAt).getTime())
-            .filter((t) => !Number.isNaN(t));
-          if (times.length) {
-            next = formatNextRunPretty(new Date(Math.min(...times)).toISOString(), c.timezone);
-          } else {
-            next = "—";
-          }
-        }
-        const last = c.lastRunAt ? formatNextRunPretty(c.lastRunAt, c.timezone) : "—";
         const published = typeof c.publishedCount === "number" ? c.publishedCount : c.cursor;
-        const totalLabel = `${published}/${c.totalQuestions}`;
+        const total = Number(c.totalQuestions) || 0;
+        const pct = total > 0 ? Math.min(100, Math.round((published / total) * 100)) : 0;
+        const nextIso = getCadernoNextIso(c);
+        const next =
+          c.status === "active" ? formatNextRunPretty(nextIso, c.timezone) : "—";
+        const last = c.lastRunAt ? formatNextRunPretty(c.lastRunAt, c.timezone) : "—";
+        const perDay = c.questionsPerDay != null ? c.questionsPerDay : c.questionsPerRun;
         const startHour = c.startHour != null ? c.startHour : c.sendHour;
         const startMinute = c.startMinute != null ? c.startMinute : c.sendMinute;
-        const horario = `${pad2(startHour)}:${pad2(startMinute)}`;
-        const perDay = c.questionsPerDay != null ? c.questionsPerDay : c.questionsPerRun;
         const timesLabel =
           c.sendTimes && c.sendTimes.length >= perDay
             ? formatSendTimesForDisplay(c.sendTimes.slice(0, perDay))
             : null;
+        const scheduleText =
+          c.deliveryMode === "private"
+            ? `${(c.privateRecipients || []).filter((r) => r.active).length} destinatário(s)`
+            : timesLabel
+              ? `${perDay} q./dia · ${timesLabel}`
+              : `${perDay} q./dia · ${pad2(startHour)}:${pad2(startMinute)}–${pad2(
+                  c.endHour != null ? c.endHour : 22
+                )}:${pad2(c.endMinute != null ? c.endMinute : 0)}`;
+        const todaySent = Number(c.currentDaySent || 0);
+        const todayText =
+          c.currentDayDate && c.status === "active" ? `${todaySent}/${perDay}` : "—";
         const isActive = c.status === "active";
         const canResume = c.status !== "active" && c.status !== "finished";
         const canRecycle =
           c.status === "paused_waiting_decision" || c.status === "finished";
-        const randomBadge = c.randomOrder
-          ? '<span class="badge-mini" title="Sorteia entre as não enviadas">Aleatório</span>'
-          : "";
-        const waitBadge = c.waitForAnswers
-          ? '<span class="badge-mini" title="Só inicia o próximo dia quando engajados responderem">Esperar resposta</span>'
-          : "";
-        const engagedBadge =
-          c.deliveryMode !== "private" && typeof c.engagedCount === "number" && c.engagedCount > 0
-            ? `<span class="badge-mini" title="Engajados neste caderno">${c.engagedCount} engajado(s)</span>`
-            : "";
-        const todaySent = Number(c.currentDaySent || 0);
-        const dayLine =
-          c.currentDayDate && isActive
-            ? `<div><strong>Hoje:</strong> ${todaySent}/${perDay} enviada(s)</div>`
-            : "";
-        return `
+        const badges = [
+          c.deliveryMode === "private"
+            ? `<span class="cb-badge">Privado</span>`
+            : `<span class="cb-badge">Coletivo</span>`,
+          c.randomOrder ? `<span class="cb-badge">Aleatório</span>` : "",
+          c.waitForAnswers ? `<span class="cb-badge">Esperar resposta</span>` : "",
+          c.deliveryMode !== "private" && c.engagedCount > 0
+            ? `<span class="cb-badge">${c.engagedCount} engajado(s)</span>`
+            : ""
+        ]
+          .filter(Boolean)
+          .join("");
+
+        if (!IS_CADERNOS_PAGE) {
+          return `
         <li class="caderno-card" data-id="${c.id}">
           <div class="caderno-card-head">
-            <h4 class="caderno-card-name">${esc(c.name)} <small style="color:var(--muted);font-weight:500;">#${c.id}</small>${randomBadge}${waitBadge}${engagedBadge}${privBadge}</h4>
+            <h4 class="caderno-card-name">${esc(c.name)} <small style="color:var(--muted);font-weight:500;">#${c.id}</small></h4>
             <span class="caderno-card-status status-${esc(c.status)}">${esc(formatStatusLabel(c.status))}</span>
           </div>
           <div class="caderno-card-meta">
-            <div><strong>Envio:</strong> ${
-              c.deliveryMode === "private"
-                ? `Privado — ${(c.privateRecipients || []).filter((r) => r.active).length} destinatário(s); horário por pessoa na edição`
-                : timesLabel
-                  ? `${perDay} q./dia às ${timesLabel}`
-                  : `${perDay} q./dia entre ${horario} e ${pad2(c.endHour != null ? c.endHour : 22)}:${pad2(
-                      c.endMinute != null ? c.endMinute : 0
-                    )} (uniforme)`
-            }</div>
-            <div><strong>Progresso:</strong> ${totalLabel}</div>
-            ${dayLine}
-            <div><strong>Próximo envio:</strong> ${esc(next)}</div>
-            <div><strong>Último envio:</strong> ${esc(last)}</div>
+            <div><strong>Envio:</strong> ${esc(scheduleText)}</div>
+            <div><strong>Progresso:</strong> ${published}/${total}</div>
+            <div><strong>Próximo:</strong> ${esc(next)}</div>
           </div>
           <div class="caderno-card-actions">
-            <button type="button" data-action="trigger" ${isActive ? "" : "disabled"} title="Envia a próxima questão agora (até 60s)">Enviar questão</button>
-            <button type="button" data-action="edit" title="Editar nome, agenda e modo">Editar</button>
-            <button type="button" data-action="toggle-random" title="${c.randomOrder ? "Desligar" : "Ligar"} ordem aleatória">${c.randomOrder ? "Ordem do PDF" : "Ordem aleatória"}</button>
+            <button type="button" data-action="edit">Editar</button>
+            <button type="button" data-action="pause" ${isActive ? "" : "disabled"}>Pausar</button>
+            <button type="button" data-action="resume" ${canResume ? "" : "disabled"}>Retomar</button>
+          </div>
+        </li>`;
+        }
+
+        return `
+        <li class="cb-card caderno-card" data-id="${c.id}">
+          <div class="cb-card-header">
+            <div class="cb-card-title-block">
+              <h2 class="cb-card-title">${esc(c.name)}</h2>
+              <p class="cb-card-id">#${c.id}</p>
+              <div class="cb-card-badges">${badges}</div>
+            </div>
+            <span class="cb-status-chip status-${esc(c.status)}">${esc(formatStatusLabel(c.status))}</span>
+          </div>
+          <div class="cb-card-body">
+            <div class="cb-progress">
+              <div class="cb-progress-top">
+                <span>Progresso</span>
+                <span>${published}/${total || "?"} · ${pct}%</span>
+              </div>
+              <div class="cb-progress-bar" aria-hidden="true"><span style="width:${pct}%"></span></div>
+            </div>
+            <div class="cb-stats">
+              <div class="cb-stat"><span>Agenda</span><strong>${esc(scheduleText)}</strong></div>
+              <div class="cb-stat"><span>Hoje</span><strong>${esc(todayText)}</strong></div>
+              <div class="cb-stat"><span>Próximo envio</span><strong>${esc(next)}</strong></div>
+              <div class="cb-stat"><span>Último envio</span><strong>${esc(last)}</strong></div>
+            </div>
+          </div>
+          <div class="cb-card-actions caderno-card-actions">
+            <button type="button" class="btn-primary-action" data-action="trigger" ${isActive ? "" : "disabled"} title="Envia a próxima questão agora (até 60s)">Enviar agora</button>
+            <button type="button" data-action="edit">Editar</button>
+            <button type="button" data-action="toggle-random">${c.randomOrder ? "Ordem do PDF" : "Aleatório"}</button>
             <button type="button" data-action="pause" ${isActive ? "" : "disabled"}>Pausar</button>
             <button type="button" data-action="resume" ${canResume ? "" : "disabled"}>${
           canRecycle ? "Retomar do começo" : "Retomar"
         }</button>
-            <button type="button" data-action="recycle" ${canRecycle ? "" : "disabled"}>Reciclar (zerar cursor)</button>
+            <button type="button" data-action="recycle" ${canRecycle ? "" : "disabled"}>Reciclar</button>
             <button type="button" class="btn-caderno-danger" data-action="delete">Excluir</button>
           </div>
         </li>`;
@@ -1825,6 +2131,7 @@
         }
       }
       const result = await callCadernoUpload({ activate });
+      if (result.cadernoId) await applyPendingEngagementAfterCreate(result.cadernoId);
       els.cadernoAddStatus.textContent = `Caderno #${result.cadernoId} salvo (${result.totalQuestions} questões).`;
       renderCadernoPreview(result);
       await loadCadernos();
@@ -2036,9 +2343,14 @@
     if (els.cadernoDeliveryGroup) els.cadernoDeliveryGroup.checked = true;
     if (els.cadernoDeliveryPrivate) els.cadernoDeliveryPrivate.checked = false;
     if (els.cadernoAddPrivateList) els.cadernoAddPrivateList.innerHTML = "";
+    cadernoAddEngagementDraft = [];
+    if (els.cadernoAddEngagementList) els.cadernoAddEngagementList.innerHTML = "";
+    if (els.cadernoAddEngagementStatus) els.cadernoAddEngagementStatus.textContent = "";
+    if (els.wizardSummary) els.wizardSummary.innerHTML = "";
     syncCadernoAddPrivatePanel();
     if (els.cadernoAddStatus) els.cadernoAddStatus.textContent = "";
     renderCadernoPreview(null);
+    setWizardStep(1);
     els.cadernoAddOverlay.classList.add("open");
     els.cadernoAddOverlay.setAttribute("aria-hidden", "false");
   }
@@ -2070,6 +2382,10 @@
   }
 
   async function init() {
+    if (IS_CADERNOS_PAGE) {
+      await loadCadernos();
+      return;
+    }
     try {
       const [qaRes, qRes, repOrErr] = await Promise.all([
         fetchJson(API.qaStats),
@@ -2109,18 +2425,22 @@
 
       applyFiltersAndRender();
     } catch (e) {
-      els.loadErr.textContent =
-        e.message ||
-        "Não foi possível carregar dados. Confira as variáveis de ambiente no Vercel (Supabase).";
-      els.loadErr.classList.remove("hidden");
+      if (els.loadErr) {
+        els.loadErr.textContent =
+          e.message ||
+          "Não foi possível carregar dados. Confira as variáveis de ambiente no Vercel (Supabase).";
+        els.loadErr.classList.remove("hidden");
+      }
     }
   }
 
-  els.btnClose.addEventListener("click", closeModal);
-  els.modal.addEventListener("click", (ev) => {
-    if (ev.target === els.modal) closeModal();
-  });
-  els.modalRevealBtn.addEventListener("click", showReveal);
+  if (els.btnClose) els.btnClose.addEventListener("click", closeModal);
+  if (els.modal) {
+    els.modal.addEventListener("click", (ev) => {
+      if (ev.target === els.modal) closeModal();
+    });
+  }
+  if (els.modalRevealBtn) els.modalRevealBtn.addEventListener("click", showReveal);
 
   if (els.btnReportOpen) els.btnReportOpen.addEventListener("click", openReportModal);
   if (els.reportClose) els.reportClose.addEventListener("click", closeReportModal);
@@ -2149,6 +2469,37 @@
   }
   if (els.cadernosList) els.cadernosList.addEventListener("click", onCadernosListClick);
   if (els.btnCadernoAdd) els.btnCadernoAdd.addEventListener("click", openCadernoAddModal);
+
+  const cbSearch = document.getElementById("cb-search");
+  const cbFilterStatus = document.getElementById("cb-filter-status");
+  const cbFilterMode = document.getElementById("cb-filter-mode");
+  const cbSort = document.getElementById("cb-sort");
+  const cbReload = document.getElementById("cb-reload");
+  if (cbSearch) {
+    cbSearch.addEventListener("input", () => {
+      cadernosUi.search = cbSearch.value || "";
+      renderCadernos();
+    });
+  }
+  if (cbFilterStatus) {
+    cbFilterStatus.addEventListener("change", () => {
+      cadernosUi.status = cbFilterStatus.value;
+      renderCadernos();
+    });
+  }
+  if (cbFilterMode) {
+    cbFilterMode.addEventListener("change", () => {
+      cadernosUi.mode = cbFilterMode.value;
+      renderCadernos();
+    });
+  }
+  if (cbSort) {
+    cbSort.addEventListener("change", () => {
+      cadernosUi.sort = cbSort.value;
+      renderCadernos();
+    });
+  }
+  if (cbReload) cbReload.addEventListener("click", () => loadCadernos());
   if (els.cadernoAddClose) els.cadernoAddClose.addEventListener("click", closeCadernoAddModal);
   if (els.cadernoAddOverlay) {
     els.cadernoAddOverlay.addEventListener("click", (ev) => {
@@ -2159,6 +2510,21 @@
   if (els.btnCadernoSave) els.btnCadernoSave.addEventListener("click", () => onCadernoSave(false));
   if (els.btnCadernoSaveActivate)
     els.btnCadernoSaveActivate.addEventListener("click", () => onCadernoSave(true));
+  if (els.wizardNext) {
+    els.wizardNext.addEventListener("click", () => {
+      if (!validateWizardStep(wizardStep)) return;
+      setWizardStep(wizardStep + 1);
+    });
+  }
+  if (els.wizardPrev) {
+    els.wizardPrev.addEventListener("click", () => setWizardStep(wizardStep - 1));
+  }
+  if (els.btnCadernoAddLoadEngagement) {
+    els.btnCadernoAddLoadEngagement.addEventListener("click", () => onCadernoAddLoadEngagement());
+  }
+  if (els.cadernoAddEngagementList) {
+    els.cadernoAddEngagementList.addEventListener("change", onCadernoAddEngagementToggle);
+  }
 
   if (els.cadernoEditClose) els.cadernoEditClose.addEventListener("click", closeCadernoEditModal);
   if (els.btnCadernoEditCancel)
