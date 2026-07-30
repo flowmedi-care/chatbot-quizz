@@ -647,6 +647,23 @@ body[data-page="cadernos"] .modal-caderno-wizard .wizard-body {
   margin: 0.75rem 0;
 }
 
+.wizard-load-members {
+  width: auto;
+  min-width: min(100%, 18rem);
+  margin: 0.65rem 0 0.85rem;
+  padding: 0.95rem 1.25rem;
+  font-size: 1rem;
+  font-weight: 700;
+  border-width: 2px;
+  border-color: rgba(194, 65, 12, 0.55);
+  box-shadow: 0 4px 14px rgba(194, 65, 12, 0.18);
+}
+
+.wizard-load-members:hover {
+  border-color: var(--accent, #c2410c);
+  filter: brightness(1.03);
+}
+
 .visually-hidden {
   position: absolute;
   width: 1px;

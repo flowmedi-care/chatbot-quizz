@@ -1122,7 +1122,16 @@
       els.wizardNext.textContent = wizardStep === 1 ? "Entendi, continuar" : "Continuar";
     }
     if (wizardStep === 3) syncCadernoAddSendTimes(true);
-    if (wizardStep === 4) syncCadernoAddPrivatePanel();
+    if (wizardStep === 4) {
+      syncCadernoAddPrivatePanel();
+      if (
+        getCadernoAddDeliveryMode() !== "private" &&
+        !cadernoAddEngagementDraft.length &&
+        els.btnCadernoAddLoadEngagement
+      ) {
+        void onCadernoAddLoadEngagement();
+      }
+    }
     if (wizardStep === 5) renderWizardSummary();
   }
 
@@ -1152,14 +1161,30 @@
         }
       }
     }
-    if (step === 4 && getCadernoAddDeliveryMode() === "private") {
-      const recs = collectAddPrivateRecipients();
-      const hasActive = (recs || []).some((r) => r.active !== false && r.userJid);
-      if (!hasActive) {
-        if (els.cadernoAddStatus)
-          els.cadernoAddStatus.textContent =
-            "Modo privado: carregue membros e marque ao menos um destinatário.";
-        return false;
+    if (step === 4) {
+      if (getCadernoAddDeliveryMode() === "private") {
+        const recs = collectAddPrivateRecipients();
+        const hasActive = (recs || []).some((r) => r.active !== false && r.userJid);
+        if (!hasActive) {
+          if (els.cadernoAddStatus)
+            els.cadernoAddStatus.textContent =
+              "Modo privado: carregue membros e marque ao menos um destinatário.";
+          return false;
+        }
+      } else {
+        if (!cadernoAddEngagementDraft.length) {
+          if (els.cadernoAddStatus)
+            els.cadernoAddStatus.textContent =
+              "Carregue os membros do grupo e marque engajados ou passivos.";
+          return false;
+        }
+        const hasRole = cadernoAddEngagementDraft.some((m) => m.engaged || m.passive);
+        if (!hasRole) {
+          if (els.cadernoAddStatus)
+            els.cadernoAddStatus.textContent =
+              "Marque ao menos um engajado ou passivo para continuar.";
+          return false;
+        }
       }
     }
     if (els.cadernoAddStatus) els.cadernoAddStatus.textContent = "";
@@ -2106,6 +2131,12 @@
         if (timesErr || !form.schedule.sendTimes || form.schedule.sendTimes.length !== qpd) {
           els.cadernoAddStatus.textContent =
             timesErr || `Grupo: informe ${qpd} horário(s), um por questão do dia.`;
+          return;
+        }
+        const hasRole = cadernoAddEngagementDraft.some((m) => m.engaged || m.passive);
+        if (!hasRole) {
+          els.cadernoAddStatus.textContent =
+            "Marque ao menos um engajado ou passivo antes de salvar.";
           return;
         }
       }
