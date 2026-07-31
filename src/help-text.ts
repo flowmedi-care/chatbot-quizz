@@ -39,7 +39,7 @@ export function buildQuizFullGuide(): string {
     "No wizard de nova questao, depois do tipo, escolha a matéria pelo número.",
     "Questoes de caderno nao vao mais com enunciado no grupo — o grupo recebe o **Diário Oficial** diario; enunciados via /omissas.",
     "Quando **todos os engajados da matéria** (exceto quem criou a questao) tiverem respondido, o bot posta o gabarito no grupo.",
-    "Lista o que falta responder (privado): **/omissas** — engajados veem o historico do caderno; passivos so o dia; depois **sim** ou **nao** para receber os enunciados.",
+    "Lista o que falta responder (privado): **/omissas** — engajados veem desde o dia em que entraram no caderno; passivos so o dia; depois **sim** ou **nao** para receber os enunciados.",
     "Adiantar dias (privado, engajados): **adiantar 2** — reserva as questoes dos proximos 2 dias na sua lista (max. 7).",
     "(Desligue o auto-gabarito com AUTO_GABARITO_WHEN_ALL=false no servidor se nao quiser.)",
     "",

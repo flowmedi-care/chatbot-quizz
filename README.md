@@ -107,7 +107,7 @@ Com o modo **desligado**, no privado o bot so le comandos **neutros**: `/quiz`, 
 
 **Auto-gabarito por engajamento:** no grupo, envie **`/sync-membros`** para o bot gravar os participantes no Supabase. No site Papa Vagas, abra **Engajamento** e marque quem participa do fechamento. Quando **todos os engajados** (exceto quem **criou** a questao) tiverem resposta gravada, o bot envia no grupo o mesmo texto de `/gabarito` (uma vez por questao). Quem nao esta engajado pode responder antes ou depois; nao bloqueia. Se ninguem estiver engajado na base, o auto-gabarito nao dispara por esse criterio. Para desligar: `AUTO_GABARITO_WHEN_ALL=false`.
 
-**Omissas (privado):** envie **`/omissas`** para listar questoes em aberto; responda **sim** ou **nao** para receber os enunciados repetidos no privado.
+**Omissas (privado):** envie **`/omissas`** para listar questoes em aberto; responda **sim** ou **nao** para receber os enunciados repetidos no privado. Engajados de caderno so veem questoes a partir do dia em que entraram (`engaged_since`); passivos so as do dia.
 
 ### Ranking (grupo ou privado)
 

@@ -44,6 +44,8 @@ import {
   getQaStatsForGroup,
   getQuestionForRepeat,
   getEngagedUserJidsForCaderno,
+  getEngagedEligibleUserJidsForCadernoAt,
+  getCadernoQuestionPublishedAt,
   getEngagedUserJidsForMateria,
   listMateriasForGroup,
   getCadernoIdForQuestion,
@@ -224,7 +226,10 @@ async function maybePostAutoGabaritoToGroup(sock: WASocket, rawShortId: string):
     const cadernoId = await getCadernoIdForQuestion(shortUp);
     let engaged: string[] = [];
     if (cadernoId != null) {
-      engaged = await getEngagedUserJidsForCaderno(cadernoId);
+      const publishedAt = await getCadernoQuestionPublishedAt(shortUp);
+      engaged = publishedAt
+        ? await getEngagedEligibleUserJidsForCadernoAt(cadernoId, publishedAt)
+        : await getEngagedUserJidsForCaderno(cadernoId);
     } else if (meta.materiaId != null) {
       engaged = await getEngagedUserJidsForMateria(meta.materiaId);
     } else {

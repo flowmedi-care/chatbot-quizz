@@ -3064,6 +3064,15 @@ export async function getEngagedCadernoIdsForUser(
   userJid: string,
   groupJid: string
 ): Promise<Set<number>> {
+  const sinceMap = await getEngagedCadernoSinceMapForUser(userJid, groupJid);
+  return new Set(sinceMap.keys());
+}
+
+/** caderno_id → engaged_since ISO (null = engajado “desde sempre”, vê o histórico). */
+export async function getEngagedCadernoSinceMapForUser(
+  userJid: string,
+  groupJid: string
+): Promise<Map<number, string | null>> {
   const { data: cadernos, error: cErr } = await supabase
     .from("cadernos")
     .select("id")
@@ -3074,31 +3083,110 @@ export async function getEngagedCadernoIdsForUser(
   }
 
   const cadernoIds = (cadernos ?? []).map((c) => Number(c.id)).filter((id) => Number.isFinite(id));
-  if (cadernoIds.length === 0) return new Set();
+  if (cadernoIds.length === 0) return new Map();
 
-  const { data: rows, error } = await supabase
-    .from("caderno_engagement")
-    .select("caderno_id, user_jid")
-    .in("caderno_id", cadernoIds)
-    .eq("engaged", true);
+  let rows: { caderno_id: unknown; user_jid: unknown; engaged_since?: unknown }[] | null = null;
+  let error: { message: string } | null = null;
+
+  {
+    const res = await supabase
+      .from("caderno_engagement")
+      .select("caderno_id, user_jid, engaged_since")
+      .in("caderno_id", cadernoIds)
+      .eq("engaged", true);
+    error = res.error;
+    rows = res.data;
+    if (error) {
+      const msg = error.message.toLowerCase();
+      if (msg.includes("column") && msg.includes("engaged_since")) {
+        const fb = await supabase
+          .from("caderno_engagement")
+          .select("caderno_id, user_jid")
+          .in("caderno_id", cadernoIds)
+          .eq("engaged", true);
+        error = fb.error;
+        rows = (fb.data || []).map((r) => ({ ...r, engaged_since: null }));
+      }
+    }
+  }
 
   if (error) {
     const msg = error.message.toLowerCase();
-    if (msg.includes("relation") && msg.includes("does not exist")) return new Set();
+    if (msg.includes("relation") && msg.includes("does not exist")) return new Map();
     throw new Error(`Erro ao ler cadernos engajados do usuario: ${error.message}`);
   }
 
   const userKey = jidComparableKeyShared(userJid);
-  const out = new Set<number>();
+  const out = new Map<number, string | null>();
   for (const row of rows ?? []) {
     const cid = Number(row.caderno_id);
     if (!Number.isFinite(cid)) continue;
     const rowJid = row.user_jid ? String(row.user_jid) : "";
     if (rowJid && jidComparableKeyShared(rowJid) === userKey) {
-      out.add(cid);
+      const since =
+        row.engaged_since != null && String(row.engaged_since).trim()
+          ? String(row.engaged_since)
+          : null;
+      out.set(cid, since);
     }
   }
   return out;
+}
+
+/**
+ * IDs de questões do caderno publicadas no dia `fromDayIso` (TZ) ou depois.
+ */
+export async function listCadernoQuestionIdsPublishedFromDay(
+  cadernoId: number,
+  fromDayIso: string,
+  timeZone: string
+): Promise<number[]> {
+  const { data, error } = await supabase
+    .from("caderno_questions")
+    .select("published_question_id, published_at")
+    .eq("caderno_id", cadernoId)
+    .not("published_question_id", "is", null);
+
+  if (error) {
+    throw new Error(`Erro ao listar publicações desde o dia: ${error.message}`);
+  }
+
+  const out: number[] = [];
+  for (const row of data ?? []) {
+    const pubAt = row.published_at ? String(row.published_at) : null;
+    const pubId = row.published_question_id != null ? Number(row.published_question_id) : null;
+    if (!pubAt || !pubId || !Number.isFinite(pubId)) continue;
+    const isoDay = formatDateInTimezone(new Date(pubAt), timeZone);
+    if (isoDay >= fromDayIso) out.push(pubId);
+  }
+  return out;
+}
+
+export async function getCadernoQuestionPublishedAt(
+  shortId: string
+): Promise<string | null> {
+  const cadernoId = await getCadernoIdForQuestion(shortId);
+  if (cadernoId == null) return null;
+
+  const normalizedId = shortId.toUpperCase();
+  const { data: question, error } = await supabase
+    .from("questions")
+    .select("id, created_at")
+    .eq("short_id", normalizedId)
+    .maybeSingle();
+  if (error || !question) return null;
+
+  const qid = Number(question.id);
+  const { data: cq } = await supabase
+    .from("caderno_questions")
+    .select("published_at")
+    .eq("caderno_id", cadernoId)
+    .eq("published_question_id", qid)
+    .maybeSingle();
+
+  if (cq?.published_at) return String(cq.published_at);
+  if (question.created_at) return String(question.created_at);
+  return null;
 }
 
 export async function isUserGloballyEngaged(userJid: string, groupJid: string): Promise<boolean> {
@@ -3118,7 +3206,8 @@ export async function listUnansweredShortIdsForUser(
     ...publishedCadernoIds,
     ...queuedVisibleIds
   ]);
-  const engagedCadernoIds = await getEngagedCadernoIdsForUser(userJid, groupJid);
+  const engagedSinceMap = await getEngagedCadernoSinceMapForUser(userJid, groupJid);
+  const engagedCadernoIds = new Set(engagedSinceMap.keys());
   const passiveCadernoIds = await getPassiveCadernoIdsForUser(userJid, groupJid);
   const globallyEngaged = await isUserGloballyEngaged(userJid, groupJid);
 
@@ -3131,6 +3220,21 @@ export async function listUnansweredShortIdsForUser(
     const todayIso = dateIsoInTimezone(new Date(), tz);
     const pubs = await listCadernoQuestionsPublishedOnDate(cadernoId, todayIso, tz);
     for (const p of pubs) passiveTodayDbIds.add(p.publishedQuestionId);
+  }
+
+  /** Questões de caderno elegíveis para engajados com `engaged_since` (dia de entrada → frente). */
+  const engagedSinceAllowedDbIds = new Set<number>();
+  /** Cadernos engajados que restringem por data (têm engaged_since). */
+  const engagedRestrictedCadernos = new Set<number>();
+  for (const [cadernoId, sinceIso] of engagedSinceMap) {
+    if (!sinceIso) continue;
+    engagedRestrictedCadernos.add(cadernoId);
+    const caderno = await getCadernoById(cadernoId);
+    if (!caderno) continue;
+    const tz = caderno.timezone || "America/Sao_Paulo";
+    const fromDay = formatDateInTimezone(new Date(sinceIso), tz);
+    const ids = await listCadernoQuestionIdsPublishedFromDay(cadernoId, fromDay, tz);
+    for (const id of ids) engagedSinceAllowedDbIds.add(id);
   }
 
   const { data: questions, error: qErr } = await supabase
@@ -3172,6 +3276,9 @@ export async function listUnansweredShortIdsForUser(
       const isPassiveToday = passiveTodayDbIds.has(qid);
       if (!isEngaged && !isPassiveToday) continue;
       if (isEngaged && isOrphanCadernoGroupQuestion(qid, creatorJid, visibleCadernoQuestionIds)) {
+        continue;
+      }
+      if (isEngaged && engagedRestrictedCadernos.has(cadernoId) && !engagedSinceAllowedDbIds.has(qid)) {
         continue;
       }
       if (!isEngaged && isPassiveToday) {
