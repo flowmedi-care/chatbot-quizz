@@ -43,8 +43,9 @@ import {
   getQuestionResult,
   getQaStatsForGroup,
   getQuestionForRepeat,
-  getEngagedUserJidsForGroup,
   getEngagedUserJidsForCaderno,
+  getEngagedUserJidsForMateria,
+  listMateriasForGroup,
   getCadernoIdForQuestion,
   getQuestionCreatorAndGroup,
   getQuestionTargetGroupJid,
@@ -125,8 +126,12 @@ function resolveActorJid(remoteJid: string, key: WAMessage["key"]): string {
 
 type CreationSession =
   | { stage: "awaiting_type" }
-  | { stage: "awaiting_statement"; questionType: QuestionType }
-  | { stage: "awaiting_answer_key"; draft: Omit<QuestionDraft, "answerKey" | "explanationText" | "explanationMedia"> }
+  | { stage: "awaiting_materia"; questionType: QuestionType }
+  | { stage: "awaiting_statement"; questionType: QuestionType; materiaId: number }
+  | {
+      stage: "awaiting_answer_key";
+      draft: Omit<QuestionDraft, "answerKey" | "explanationText" | "explanationMedia">;
+    }
   | { stage: "awaiting_explanation"; draft: Omit<QuestionDraft, "explanationText" | "explanationMedia"> };
 
 const creationSessions = new Map<string, CreationSession>();
@@ -217,14 +222,22 @@ async function maybePostAutoGabaritoToGroup(sock: WASocket, rawShortId: string):
     }
 
     const cadernoId = await getCadernoIdForQuestion(shortUp);
-    const engaged = cadernoId != null
-      ? await getEngagedUserJidsForCaderno(cadernoId)
-      : await getEngagedUserJidsForGroup(groupJid);
+    let engaged: string[] = [];
+    if (cadernoId != null) {
+      engaged = await getEngagedUserJidsForCaderno(cadernoId);
+    } else if (meta.materiaId != null) {
+      engaged = await getEngagedUserJidsForMateria(meta.materiaId);
+    } else {
+      console.log(
+        "[auto-gabarito] Questão manual sem matéria. Cadastre matérias no site e escolha no wizard."
+      );
+      return;
+    }
     if (engaged.length === 0) {
       console.log(
         cadernoId != null
           ? "[auto-gabarito] Nenhum membro engajado neste caderno. Marque engajados na edição do caderno no site."
-          : "[auto-gabarito] Nenhum membro engajado no grupo. Rode /sync-membros no grupo e marque engajados no site."
+          : "[auto-gabarito] Nenhum engajado nesta matéria. Marque engajados no modal Engajamento (por matéria)."
       );
       return;
     }
@@ -1290,9 +1303,56 @@ async function startBot(): Promise<void> {
               await sock.sendMessage(remoteJid, { text: "Resposta invalida. Envie 1 ou 2." });
               continue;
             }
-            creationSessions.set(sender, { stage: "awaiting_statement", questionType: selectedType });
+
+            const quizGroupJid = getQuizTargetGroupJid();
+            const materias = await listMateriasForGroup(quizGroupJid);
+            if (!materias.length) {
+              await sock.sendMessage(remoteJid, {
+                text: [
+                  "Nenhuma matéria cadastrada ainda.",
+                  "No site, abra *Engajamento*, crie as matérias e marque os engajados de cada uma.",
+                  'Depois envie "nova questao" de novo.'
+                ].join("\n")
+              });
+              creationSessions.delete(sender);
+              continue;
+            }
+
+            creationSessions.set(sender, { stage: "awaiting_materia", questionType: selectedType });
+            const lines = materias.map((m, i) => `${i + 1}. ${m.name}`);
+            await sock.sendMessage(remoteJid, {
+              text: ["Escolha a matéria (envie o número):", "", ...lines].join("\n")
+            });
+            continue;
+          }
+
+          if (activeSession?.stage === "awaiting_materia") {
+            const quizGroupJid = getQuizTargetGroupJid();
+            const materias = await listMateriasForGroup(quizGroupJid);
+            if (!materias.length) {
+              await sock.sendMessage(remoteJid, {
+                text: "Nenhuma matéria cadastrada. Crie no site (Engajamento) e tente de novo."
+              });
+              creationSessions.delete(sender);
+              continue;
+            }
+            const n = Number(String(text || "").trim());
+            if (!Number.isInteger(n) || n < 1 || n > materias.length) {
+              await sock.sendMessage(remoteJid, {
+                text: `Envie um número de 1 a ${materias.length}.`
+              });
+              continue;
+            }
+            const chosen = materias[n - 1];
+            creationSessions.set(sender, {
+              stage: "awaiting_statement",
+              questionType: activeSession.questionType,
+              materiaId: chosen.id
+            });
             await sock.sendMessage(remoteJid, {
               text: [
+                `Matéria: *${chosen.name}*`,
+                "",
                 "Envie o enunciado da questao.",
                 "Pode ser texto, imagem, print ou PDF."
               ].join("\n")
@@ -1316,6 +1376,7 @@ async function startBot(): Promise<void> {
                 creatorJid: sender,
                 creatorName: getDisplayName(msg, sender),
                 questionType: activeSession.questionType,
+                materiaId: activeSession.materiaId,
                 statementText,
                 statementMedia
               }
@@ -1385,6 +1446,7 @@ async function startBot(): Promise<void> {
                 creatorJid: draft.creatorJid,
                 creatorName: draft.creatorName,
                 questionType: draft.questionType,
+                materiaId: draft.materiaId,
                 statementText: draft.statementText,
                 statementMedia: draft.statementMedia,
                 answerKey: draft.answerKey,

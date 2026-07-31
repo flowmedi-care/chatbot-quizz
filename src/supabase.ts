@@ -165,32 +165,50 @@ export async function createQuestion(input: CreateQuestionInput): Promise<{ shor
   const statementUpload = await uploadMedia("statement", input.statementMedia);
   const explanationUpload = await uploadMedia("explanation", input.explanationMedia);
 
-  const { data, error } = await supabase
+  const insertRow: Record<string, unknown> = {
+    // Campos novos (fluxo wizard)
+    creator_jid: input.creatorJid,
+    creator_name: input.creatorName,
+    target_group_jid: input.targetGroupJid,
+    question_type: input.questionType,
+    statement_text: input.statementText,
+    statement_media_url: statementUpload?.url ?? null,
+    statement_media_mime_type: statementUpload?.mimeType ?? null,
+    answer_key: input.answerKey.toUpperCase(),
+    explanation_text: input.explanationText,
+    explanation_media_url: explanationUpload?.url ?? null,
+    explanation_media_mime_type: explanationUpload?.mimeType ?? null,
+    // Compatibilidade com schema legado
+    group_jid: input.targetGroupJid,
+    sender_jid: input.creatorJid,
+    message_type: input.statementMedia ? "media" : "text",
+    text_content: input.statementText,
+    media_mime_type: statementUpload?.mimeType ?? null,
+    wa_message_id: `wizard-${Date.now()}-${crypto.randomUUID()}`,
+    sent_at: new Date().toISOString()
+  };
+  if (input.materiaId != null && Number.isFinite(Number(input.materiaId))) {
+    insertRow.materia_id = Number(input.materiaId);
+  }
+
+  let { data, error } = await supabase
     .from("questions")
-    .insert({
-      // Campos novos (fluxo wizard)
-      creator_jid: input.creatorJid,
-      creator_name: input.creatorName,
-      target_group_jid: input.targetGroupJid,
-      question_type: input.questionType,
-      statement_text: input.statementText,
-      statement_media_url: statementUpload?.url ?? null,
-      statement_media_mime_type: statementUpload?.mimeType ?? null,
-      answer_key: input.answerKey.toUpperCase(),
-      explanation_text: input.explanationText,
-      explanation_media_url: explanationUpload?.url ?? null,
-      explanation_media_mime_type: explanationUpload?.mimeType ?? null,
-      // Compatibilidade com schema legado
-      group_jid: input.targetGroupJid,
-      sender_jid: input.creatorJid,
-      message_type: input.statementMedia ? "media" : "text",
-      text_content: input.statementText,
-      media_mime_type: statementUpload?.mimeType ?? null,
-      wa_message_id: `wizard-${Date.now()}-${crypto.randomUUID()}`,
-      sent_at: new Date().toISOString()
-    })
+    .insert(insertRow)
     .select("id")
     .single();
+
+  if (
+    error &&
+    insertRow.materia_id != null &&
+    String(error.message || "")
+      .toLowerCase()
+      .includes("materia_id")
+  ) {
+    delete insertRow.materia_id;
+    const retry = await supabase.from("questions").insert(insertRow).select("id").single();
+    data = retry.data;
+    error = retry.error;
+  }
 
   if (error || !data) {
     throw new Error(`Erro ao criar questao: ${error?.message ?? "sem dados"}`);
@@ -885,22 +903,84 @@ export type GroupMemberEngagementRow = {
 
 export async function getQuestionCreatorAndGroup(
   shortId: string
-): Promise<{ creatorJid: string; targetGroupJid: string } | null> {
+): Promise<{ creatorJid: string; targetGroupJid: string; materiaId: number | null } | null> {
   const id = shortId.toUpperCase();
   const { data, error } = await supabase
     .from("questions")
-    .select("creator_jid, target_group_jid")
+    .select("creator_jid, target_group_jid, materia_id")
     .eq("short_id", id)
     .maybeSingle();
 
   if (error) {
+    const msg = error.message.toLowerCase();
+    if (msg.includes("column") && msg.includes("materia_id")) {
+      const fb = await supabase
+        .from("questions")
+        .select("creator_jid, target_group_jid")
+        .eq("short_id", id)
+        .maybeSingle();
+      if (fb.error) throw new Error(`Erro ao buscar criador da questao: ${fb.error.message}`);
+      if (!fb.data?.creator_jid || !fb.data?.target_group_jid) return null;
+      return {
+        creatorJid: String(fb.data.creator_jid),
+        targetGroupJid: String(fb.data.target_group_jid),
+        materiaId: null
+      };
+    }
     throw new Error(`Erro ao buscar criador da questao: ${error.message}`);
   }
   if (!data?.creator_jid || !data?.target_group_jid) return null;
+  const mid = data.materia_id != null ? Number(data.materia_id) : null;
   return {
     creatorJid: String(data.creator_jid),
-    targetGroupJid: String(data.target_group_jid)
+    targetGroupJid: String(data.target_group_jid),
+    materiaId: Number.isFinite(mid) && mid != null && mid > 0 ? mid : null
   };
+}
+
+export type MateriaRow = {
+  id: number;
+  name: string;
+  sortOrder: number;
+};
+
+export async function listMateriasForGroup(groupJid: string): Promise<MateriaRow[]> {
+  const { data, error } = await supabase
+    .from("materias")
+    .select("id, name, sort_order")
+    .eq("group_jid", groupJid)
+    .order("sort_order", { ascending: true })
+    .order("id", { ascending: true });
+
+  if (error) {
+    const msg = error.message.toLowerCase();
+    if (msg.includes("relation") && msg.includes("does not exist")) return [];
+    throw new Error(`Erro ao listar matérias: ${error.message}`);
+  }
+
+  return (data || [])
+    .map((r) => ({
+      id: Number(r.id),
+      name: String(r.name || "").trim(),
+      sortOrder: Number(r.sort_order) || 0
+    }))
+    .filter((r) => Number.isFinite(r.id) && r.id > 0 && r.name);
+}
+
+export async function getEngagedUserJidsForMateria(materiaId: number): Promise<string[]> {
+  const { data, error } = await supabase
+    .from("materia_engagement")
+    .select("user_jid")
+    .eq("materia_id", materiaId)
+    .eq("engaged", true);
+
+  if (error) {
+    const msg = error.message.toLowerCase();
+    if (msg.includes("relation") && msg.includes("does not exist")) return [];
+    throw new Error(`Erro ao ler engajamento da matéria: ${error.message}`);
+  }
+
+  return [...new Set((data ?? []).map((r) => String(r.user_jid)).filter(Boolean))];
 }
 
 export async function getEngagedUserJidsForGroup(groupJid: string): Promise<string[]> {

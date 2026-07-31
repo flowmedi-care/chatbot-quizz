@@ -112,19 +112,35 @@
       <div class="modal modal-report" role="dialog" aria-modal="true" aria-labelledby="engagement-title">
         <div class="modal-header">
           <div>
-            <h3 id="engagement-title">Engajamento</h3>
+            <h3 id="engagement-title">Engajamento por matéria</h3>
             <p class="report-sub">
-              Marque quem entra no fechamento automático do gabarito para <strong>questões manuais</strong>
-              (criadas com <code>nova questao</code> no privado). Para cadernos, configure os engajados em
+              Cadastre matérias e marque quem fecha o gabarito automático em questões manuais
+              (<code>nova questao</code>). Para cadernos, configure engajados em
               <strong>Cadernos → Editar</strong>.
             </p>
             <p class="report-sub engagement-hint">
-              A lista vem do WhatsApp: no grupo, envie <code>/sync-membros</code> para atualizar participantes.
-              O nome exibido usa o que já foi gravado nas respostas ou ao criar questões; passe o mouse no nome para
-              ver o ID completo.
+              No grupo, envie <code>/sync-membros</code> para atualizar a lista de participantes.
+              No WhatsApp, ao criar uma questão, a pessoa escolhe a matéria pelo número.
             </p>
           </div>
           <button type="button" id="engagement-close" class="btn-close" aria-label="Fechar">×</button>
+        </div>
+        <div class="materias-toolbar">
+          <label class="report-field materias-add-field">
+            <span>Nova matéria</span>
+            <input type="text" id="materia-new-name" maxlength="80" placeholder="ex: Direito Constitucional" aria-label="Nome da nova matéria" />
+          </label>
+          <button type="button" id="btn-materia-add" class="btn-reveal">Adicionar</button>
+        </div>
+        <div class="materias-select-row">
+          <label class="report-field">
+            <span>Matéria</span>
+            <select id="materia-select" aria-label="Selecionar matéria">
+              <option value="">— Nenhuma —</option>
+            </select>
+          </label>
+          <button type="button" id="btn-materia-rename" class="btn-tutorial" disabled>Renomear</button>
+          <button type="button" id="btn-materia-delete" class="btn-tutorial btn-caderno-danger" disabled>Excluir</button>
         </div>
         <p id="engagement-status" class="report-status" role="status" aria-live="polite"></p>
         <ul id="engagement-list" class="engagement-list"></ul>
@@ -173,6 +189,15 @@
             <input type="text" id="report-qid-to" placeholder="ex: 50" aria-label="Número da questão final" />
           </label>
         </div>
+        <label class="report-field">
+          <span>Resultado (esta pessoa)</span>
+          <select id="report-outcome" aria-label="Filtrar por acerto ou erro">
+            <option value="all">Todas</option>
+            <option value="correct">Certas</option>
+            <option value="wrong">Erradas</option>
+            <option value="unanswered">Sem resposta</option>
+          </select>
+        </label>
         <p id="report-status" class="report-status" role="status" aria-live="polite"></p>
         <button type="button" id="report-generate" class="btn-reveal">Baixar ZIP</button>
       </div>

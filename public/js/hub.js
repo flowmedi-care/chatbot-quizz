@@ -768,7 +768,7 @@
       <ul>
         <li>Acertar questão: <strong>+2</strong></li>
         <li>Errar questão: <strong>+1</strong> (participação conta)</li>
-        <li>1º a zerar omissas: <strong>+4</strong></li>
+        <li>Zerar omissas (1º abre janela 1h): <strong>+4</strong></li>
         <li>Manter streak diário: <strong>+1</strong></li>
         <li>Criar questão: <strong>+1</strong></li>
         <li>Marcos de streak (3/7/15/30) e conquistas de carreira</li>
@@ -783,7 +783,7 @@
       <h2>Créditos Orçamentários</h2>
       <p>Moeda de <strong>gasto</strong>. Ganha junto com a prática; gasta no Portal de compras, em Mandados e em Aplicações.</p>
       <ul>
-        <li>Acerto +2 · Erro +1 · Omissas first +4 · Streak diário +1</li>
+        <li>Acerto +2 · Erro +1 · Omissas (janela 1h) +4 · Streak diário +1</li>
         <li>Disponível = saldo − escrow (mandados/aplicações)</li>
         <li>Compras no site só debitam após <code>sim</code> no WhatsApp</li>
       </ul>
@@ -887,7 +887,7 @@
     ["Acertar questão", "Resposta correta via WhatsApp", "+2", "—", "+2", "+2", "—", "Sem limite diário rígido"],
     ["Errar questão", "Resposta incorreta", "+1", "—", "+1", "+1", "—", "Ainda recompensa esforço"],
     ["Criar questão", "nova questao publicada", "+1", "—", "+1", "+1", "—", "—"],
-    ["1º zerar omissas", "Primeiro do dia", "+4", "—", "+4", "+4", "1×/dia", "Flag diária"],
+    ["Zerar omissas (janela 1h)", "1º abre 1h; todos na janela", "+4", "—", "+4", "+4", "por janela", "Flag + ledger"],
     ["Manter streak", "Participou no dia", "+1", "—", "+1", "+1", "1×/dia", "—"],
     ["Marco streak 3/7/15/30", "Atingiu marco", "bônus", "—", "2–30", "5–50", "por marco", "Ver tabela de marcos"],
     ["Conquista carreira", "Atingiu N respostas", "título", "—", "5–1000", "10–1000", "1×", "Calouro→Nazli"],
@@ -1013,7 +1013,7 @@ Agora responder questão gera *Aura* (prestígio) e *Créditos Orçamentários* 
 • Acertar: +2 Aura / +2 Créditos
 • Errar: +1 / +1 (ainda conta esforço)
 • Manter sequência no dia: +1 / +1
-• 1º a zerar omissas: +4 / +4
+• Zerar omissas (1º abre janela 1h): +4 / +4
 • Marcos de streak (3, 7, 15, 30) e títulos (Calouro → Nazli)
 
 *Comandos úteis*
@@ -1033,7 +1033,7 @@ https://papa-vagas.vercel.app/hub
 Praça dos perfis, Diário Oficial, loja, manual da economia e tabela de ações.
 Compras no site só debitam depois do *sim* no WhatsApp.
 
-Bora farmar Aura. Quem zerar omissas primeiro leva bônus 👀`;
+Bora farmar Aura. Quem zerar omissas primeiro abre a janela de 1h 👀`;
 
   function loadAtualizacao() {
     const pre = $("#update-copy-text");

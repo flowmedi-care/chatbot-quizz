@@ -104,7 +104,7 @@ function ledgerReasonLabel(reason, meta) {
     case "shop_purchase":
       return `${name} empenhou despesa: ${item} (−${meta?.price ?? "?"})`;
     case "first_omissas":
-      return `${name} foi o primeiro a zerar as omissas do dia`;
+      return `${name} zerou as omissas (janela 1h)`;
     case "achievement":
       return `${name} desbloqueou: ${meta?.title || "conquista"}`;
     case "streak_daily":

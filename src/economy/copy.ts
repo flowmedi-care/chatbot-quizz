@@ -43,7 +43,7 @@ export function ledgerReasonLabel(reason: string, meta?: Record<string, unknown>
     case "create_question":
       return `${name} criou uma questão · +1 Aura · +1 Crédito`;
     case "first_omissas":
-      return `${name} foi o primeiro a zerar as omissas do dia · +4 Aura · +4 Créditos`;
+      return `${name} zerou as omissas (janela 1h) · +4 Aura · +4 Créditos`;
     case "streak_daily":
       return `${name} manteve sequência · Crédito aprovado +1 · +1 Aura`;
     case "streak_milestone":

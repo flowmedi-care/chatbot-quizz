@@ -268,44 +268,87 @@ async function maybeFirstOmissasClear(
   groupJid: string,
   effects: RewardSideEffects
 ): Promise<void> {
-  // Lightweight: if user has no unanswered published questions for engaged cadernos today — claim first
+  // First to zero open omissas opens a 1h window; anyone who clears within it also gets the bonus.
   try {
     const { listUnansweredShortIdsForUser } = await import("../supabase");
     const open = await listUnansweredShortIdsForUser(userJid, groupJid, 50);
     if (open.length > 0) return;
+
     const day = todayIso();
-    const claimed = await setDayFlag({
-      groupJid,
-      dayIso: day,
-      flagKey: "first_omissas",
-      userJid,
-      meta: { label: userName }
-    });
-    if (!claimed) return;
+    const aura = REWARDS.firstOmissasClear.aura;
+    const credits = REWARDS.firstOmissasClear.credits;
+    const refId = `${groupJid}:${day}:${userJid}`;
+    const WINDOW_MS = 60 * 60 * 1000;
+    const now = Date.now();
+
+    let flag = await getDayFlag(groupJid, day, "first_omissas");
+    let isOpener = false;
+
+    if (!flag) {
+      const startedAt = new Date(now).toISOString();
+      const claimed = await setDayFlag({
+        groupJid,
+        dayIso: day,
+        flagKey: "first_omissas",
+        userJid,
+        meta: { label: userName, startedAt }
+      });
+      if (claimed) {
+        isOpener = true;
+        flag = { user_jid: userJid, meta: { label: userName, startedAt } };
+      } else {
+        flag = await getDayFlag(groupJid, day, "first_omissas");
+      }
+    }
+
+    if (!flag) return;
+
+    if (!isOpener) {
+      const meta = (flag.meta || {}) as { startedAt?: string };
+      const startedMs = meta.startedAt ? Date.parse(meta.startedAt) : NaN;
+      if (!Number.isFinite(startedMs) || now - startedMs > WINDOW_MS) return;
+    }
+
     const r = await applyLedger({
       userJid,
-      deltaAura: REWARDS.firstOmissasClear.aura,
-      deltaCredits: REWARDS.firstOmissasClear.credits,
+      deltaAura: aura,
+      deltaCredits: credits,
       reason: "first_omissas",
       refType: "day",
-      refId: `${groupJid}:${day}`,
+      refId,
       displayName: userName || undefined,
-      meta: { actorLabel: userName }
+      meta: { actorLabel: userName, windowOpener: isOpener }
     });
+    if (!r.applied) return;
     effects.economy = r.economy;
-    effects.announces.push({
-      groupJid,
-      text: [
-        "⚡ Omissas",
-        "",
-        `${userName || "Alguém"} foi o primeiro a zerar as omissas do dia e farmou *+${REWARDS.firstOmissasClear.aura} Aura · +${REWARDS.firstOmissasClear.credits} Créditos*.`
-      ].join("\n")
-    });
+
+    if (isOpener) {
+      effects.announces.push({
+        groupJid,
+        text: [
+          "⚡ Omissas",
+          "",
+          `${userName || "Alguém"} completou suas omissas · *+${aura} Aura* e *+${credits} Créditos*!`,
+          `Complete em até *1h* para ganhar o bônus também!!`
+        ].join("\n")
+      });
+    } else {
+      effects.announces.push({
+        groupJid,
+        text: [
+          "⚡ Omissas",
+          "",
+          `${userName || "Alguém"} completou as omissas na janela de 1h · *+${aura} Aura* e *+${credits} Créditos*!`
+        ].join("\n")
+      });
+    }
+
     await insertDiarioEvent({
       groupJid,
       eventType: "first_omissas",
       actorJid: userJid,
-      actorLabel: userName
+      actorLabel: userName,
+      payload: { windowOpener: isOpener }
     });
   } catch (e) {
     console.warn("[economy] first omissas:", (e as Error).message);

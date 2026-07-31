@@ -10,6 +10,7 @@ export type QuestionDraft = {
   creatorJid: string;
   creatorName: string;
   questionType: QuestionType;
+  materiaId: number | null;
   statementText: string | null;
   statementMedia: MediaPayload | null;
   answerKey: string;
@@ -21,6 +22,7 @@ export type CreateQuestionInput = {
   creatorJid: string;
   creatorName: string;
   questionType: QuestionType;
+  materiaId?: number | null;
   statementText: string | null;
   statementMedia: MediaPayload | null;
   answerKey: string;
