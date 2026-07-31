@@ -4,11 +4,17 @@ const {
   handleCadernoEngagementGet,
   handleCadernoEngagementPatch
 } = require("./_caderno-engagement.js");
+const { handleMateriasRequest } = require("./_materias.js");
 
 function parseCadernoId(req) {
   const raw = req.query?.cadernoId ?? (req.body && req.body.cadernoId);
   const id = Number(raw);
   return Number.isFinite(id) && id > 0 ? id : null;
+}
+
+function isMateriasView(req) {
+  const view = String(req.query?.view || "").toLowerCase();
+  return view === "materias" || view === "materia";
 }
 
 module.exports = async (req, res) => {
@@ -19,6 +25,14 @@ module.exports = async (req, res) => {
   const cadernoId = parseCadernoId(req);
 
   if (!groupJid) {
+    if (isMateriasView(req)) {
+      return res.status(200).json({
+        materias: [],
+        members: [],
+        groupJid: null,
+        warning: "TARGET_GROUP_JIDS nao configurado no Vercel."
+      });
+    }
     return res.status(200).json({
       members: [],
       groupJid: null,
@@ -29,6 +43,10 @@ module.exports = async (req, res) => {
 
   try {
     const supabase = getClient();
+
+    if (isMateriasView(req)) {
+      return handleMateriasRequest(req, res, supabase, groupJid);
+    }
 
     if (cadernoId != null) {
       if (req.method === "GET") {

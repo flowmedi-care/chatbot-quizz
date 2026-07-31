@@ -4,6 +4,7 @@
   "outputDirectory": "public",
   "installCommand": "npm install",
   "rewrites": [
+    { "source": "/api/materias", "destination": "/api/engagement?view=materias" },
     { "source": "/api/flashcards-whatsapp-users", "destination": "/api/flashcards-inbound?fc=users" },
     { "source": "/api/flashcards-link-request", "destination": "/api/flashcards-inbound?fc=link" },
     { "source": "/api/flashcards-unlink-request", "destination": "/api/flashcards-inbound?fc=unlink" },
