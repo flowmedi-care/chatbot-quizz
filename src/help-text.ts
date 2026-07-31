@@ -32,7 +32,7 @@ export function buildQuizFullGuide(): string {
     "",
     "No **grupo**, envie **/sync-membros** uma vez (ou quando entrar gente nova) para o bot salvar a lista de participantes.",
     "No **site** Papa Vagas:",
-    "- **Engajamento** (por matéria): cadastre matérias e marque engajados de cada uma — vale para questoes manuais (nova questao).",
+    "- **Engajamento** (por matéria): no site, abra **/engajamento** — escolha quem você é e entre nas matérias com um clique.",
     "- **Cadernos > Editar**: marque engajados e/ou passivos de cada caderno.",
     "  Engajados: fecham o gabarito automatico e o ritmo (esperar resposta).",
     "  Passivos: recebem no /omissas so as questoes do dia (nao influenciam o ritmo).",

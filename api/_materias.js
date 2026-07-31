@@ -35,6 +35,102 @@ async function listMaterias(supabase, groupJid) {
   return { materias: (data || []).map(mapMateria) };
 }
 
+/** Lista matérias com contagens + flag de participação do usuário (opcional). */
+async function listMateriasCatalog(supabase, groupJid, userJid) {
+  const { materias, warning } = await listMaterias(supabase, groupJid);
+  if (!materias.length) {
+    const { members, warning: memWarn } = await getMembersForGroup(supabase, groupJid);
+    return { materias: [], members: members || [], warning: warning || memWarn };
+  }
+
+  const ids = materias.map((m) => m.id);
+
+  const engagedByMateria = new Map();
+  const activityByMateria = new Map();
+  for (const id of ids) {
+    engagedByMateria.set(id, 0);
+    activityByMateria.set(id, { questionCount: 0, lastActivityAt: null });
+  }
+
+  const { data: engRows, error: engErr } = await supabase
+    .from("materia_engagement")
+    .select("materia_id, user_jid, engaged, updated_at")
+    .in("materia_id", ids)
+    .eq("engaged", true);
+
+  if (engErr) {
+    const msg = String(engErr.message || "").toLowerCase();
+    if (!(msg.includes("relation") && msg.includes("does not exist"))) throw engErr;
+  } else {
+    for (const row of engRows || []) {
+      const mid = Number(row.materia_id);
+      if (!engagedByMateria.has(mid)) continue;
+      engagedByMateria.set(mid, (engagedByMateria.get(mid) || 0) + 1);
+      const act = activityByMateria.get(mid);
+      const upd = row.updated_at ? String(row.updated_at) : null;
+      if (act && upd && (!act.lastActivityAt || upd > act.lastActivityAt)) {
+        act.lastActivityAt = upd;
+      }
+    }
+  }
+
+  const participatingIds = new Set();
+  if (userJid) {
+    const userKey = String(userJid).trim();
+    for (const row of engRows || []) {
+      if (!row.engaged) continue;
+      if (String(row.user_jid) === userKey) {
+        participatingIds.add(Number(row.materia_id));
+      }
+    }
+  }
+
+  const { data: qRows, error: qErr } = await supabase
+    .from("questions")
+    .select("materia_id, created_at")
+    .eq("target_group_jid", groupJid)
+    .in("materia_id", ids);
+
+  if (qErr) {
+    const msg = String(qErr.message || "").toLowerCase();
+    if (!(msg.includes("column") && msg.includes("materia_id")) &&
+        !(msg.includes("relation") && msg.includes("does not exist"))) {
+      // coluna pode não existir ainda — ignora atividade por questão
+      if (!msg.includes("materia_id")) throw qErr;
+    }
+  } else {
+    for (const row of qRows || []) {
+      const mid = Number(row.materia_id);
+      const act = activityByMateria.get(mid);
+      if (!act) continue;
+      act.questionCount += 1;
+      const created = row.created_at ? String(row.created_at) : null;
+      if (created && (!act.lastActivityAt || created > act.lastActivityAt)) {
+        act.lastActivityAt = created;
+      }
+    }
+  }
+
+  const { members, warning: memWarn } = await getMembersForGroup(supabase, groupJid);
+
+  const enriched = materias.map((m) => {
+    const act = activityByMateria.get(m.id) || { questionCount: 0, lastActivityAt: null };
+    return {
+      ...m,
+      engagedCount: engagedByMateria.get(m.id) || 0,
+      questionCount: act.questionCount,
+      lastActivityAt: act.lastActivityAt || m.createdAt,
+      participating: userJid ? participatingIds.has(m.id) : false
+    };
+  });
+
+  return {
+    materias: enriched,
+    members: members || [],
+    warning: warning || memWarn || undefined
+  };
+}
+
 async function assertMateriaInGroup(supabase, materiaId, groupJid) {
   const { data, error } = await supabase
     .from("materias")
@@ -129,8 +225,17 @@ async function handleMateriasRequest(req, res, supabase, groupJid) {
         warning: warning || undefined
       });
     }
-    const { materias, warning } = await listMaterias(supabase, groupJid);
-    return res.status(200).json({ groupJid, materias, warning: warning || undefined });
+    const userJid =
+      req.query?.userJid != null && String(req.query.userJid).trim()
+        ? String(req.query.userJid).trim()
+        : null;
+    const catalog = await listMateriasCatalog(supabase, groupJid, userJid);
+    return res.status(200).json({
+      groupJid,
+      materias: catalog.materias,
+      members: catalog.members,
+      warning: catalog.warning || undefined
+    });
   }
 
   if (req.method === "POST") {

@@ -19,9 +19,7 @@
           <a href="/hub" class="btn-tutorial btn-hub">Hub gamificação</a>
           <a href="/tutorial" class="btn-tutorial">Como usar</a>
           <a href="/hub#comandos" class="btn-tutorial">Comandos WhatsApp</a>
-          <button type="button" id="btn-engagement-open" class="btn-tutorial btn-engagement">
-            Engajamento
-          </button>
+          <a href="/engajamento" class="btn-tutorial btn-engagement">Engajamento</a>
           <a href="/cadernos" class="btn-tutorial">Cadernos</a>
           <button type="button" id="btn-report-open" class="btn-tutorial">Relatório</button>
         </div>
@@ -105,45 +103,6 @@
           <div id="modal-comment" class="comment"></div>
           <div id="modal-comment-media"></div>
         </div>
-      </div>
-    </div>
-
-    <div id="engagement-overlay" class="modal-overlay" aria-hidden="true">
-      <div class="modal modal-report" role="dialog" aria-modal="true" aria-labelledby="engagement-title">
-        <div class="modal-header">
-          <div>
-            <h3 id="engagement-title">Engajamento por matéria</h3>
-            <p class="report-sub">
-              Cadastre matérias e marque quem fecha o gabarito automático em questões manuais
-              (<code>nova questao</code>). Para cadernos, configure engajados em
-              <strong>Cadernos → Editar</strong>.
-            </p>
-            <p class="report-sub engagement-hint">
-              No grupo, envie <code>/sync-membros</code> para atualizar a lista de participantes.
-              No WhatsApp, ao criar uma questão, a pessoa escolhe a matéria pelo número.
-            </p>
-          </div>
-          <button type="button" id="engagement-close" class="btn-close" aria-label="Fechar">×</button>
-        </div>
-        <div class="materias-toolbar">
-          <label class="report-field materias-add-field">
-            <span>Nova matéria</span>
-            <input type="text" id="materia-new-name" maxlength="80" placeholder="ex: Direito Constitucional" aria-label="Nome da nova matéria" />
-          </label>
-          <button type="button" id="btn-materia-add" class="btn-reveal">Adicionar</button>
-        </div>
-        <div class="materias-select-row">
-          <label class="report-field">
-            <span>Matéria</span>
-            <select id="materia-select" aria-label="Selecionar matéria">
-              <option value="">— Nenhuma —</option>
-            </select>
-          </label>
-          <button type="button" id="btn-materia-rename" class="btn-tutorial" disabled>Renomear</button>
-          <button type="button" id="btn-materia-delete" class="btn-tutorial btn-caderno-danger" disabled>Excluir</button>
-        </div>
-        <p id="engagement-status" class="report-status" role="status" aria-live="polite"></p>
-        <ul id="engagement-list" class="engagement-list"></ul>
       </div>
     </div>
 

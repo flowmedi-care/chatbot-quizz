@@ -8,9 +8,6 @@
     detail: (id) => `/api/question-detail?shortId=${encodeURIComponent(id)}`,
     submit: "/api/question-submit",
     engagement: "/api/engagement",
-    materias: "/api/materias",
-    materiaEngagement: (materiaId) =>
-      `/api/materias?materiaId=${encodeURIComponent(materiaId)}`,
     cadernoEngagement: (cadernoId) =>
       `/api/engagement?cadernoId=${encodeURIComponent(cadernoId)}`,
     cadernos: "/api/cadernos",
@@ -58,16 +55,6 @@
     reportOutcome: document.getElementById("report-outcome"),
     reportGenerate: document.getElementById("report-generate"),
     btnReportOpen: document.getElementById("btn-report-open"),
-    engagementOverlay: document.getElementById("engagement-overlay"),
-    engagementClose: document.getElementById("engagement-close"),
-    engagementStatus: document.getElementById("engagement-status"),
-    engagementList: document.getElementById("engagement-list"),
-    btnEngagementOpen: document.getElementById("btn-engagement-open"),
-    materiaNewName: document.getElementById("materia-new-name"),
-    btnMateriaAdd: document.getElementById("btn-materia-add"),
-    materiaSelect: document.getElementById("materia-select"),
-    btnMateriaRename: document.getElementById("btn-materia-rename"),
-    btnMateriaDelete: document.getElementById("btn-materia-delete"),
     btnCadernosOpen: document.getElementById("btn-cadernos-open"),
     cadernosOverlay: document.getElementById("cadernos-overlay"),
     cadernosClose: document.getElementById("cadernos-close"),
@@ -148,9 +135,6 @@
   let submitPayload = null;
   /** @type {{ userJid: string, userLabel: string | null, displayLabel?: string | null, engaged: boolean, passive?: boolean }[]} */
   let engagementMembersCache = [];
-  /** @type {{ id: number, name: string, sortOrder: number }[]} */
-  let materiasCache = [];
-  let selectedMateriaId = null;
   /** @type {{ userJid: string, userLabel: string | null, displayLabel?: string | null, engaged: boolean, passive?: boolean }[]} */
   let cadernoEngagementCache = [];
   let cadernoEngagementEditId = null;
@@ -866,244 +850,6 @@
     if (/^\d{8,}$/.test(t) || /^\+?\d{8,20}$/.test(t)) return "Participante";
     if (t.includes("@")) return "Participante";
     return t;
-  }
-
-  function renderEngagementList() {
-    if (!els.engagementList) return;
-    if (!selectedMateriaId) {
-      els.engagementList.innerHTML =
-        '<li class="engagement-empty">Selecione ou crie uma matéria acima para marcar engajados.</li>';
-      return;
-    }
-    const members = engagementMembersCache;
-    if (!members.length) {
-      els.engagementList.innerHTML =
-        '<li class="engagement-empty">Nenhum membro na lista. No grupo do WhatsApp envie <code>/sync-membros</code>.</li>';
-      return;
-    }
-    els.engagementList.innerHTML = members
-      .map(
-        (m) => `
-      <li class="engagement-row" data-jid="${escAttr(m.userJid)}">
-        <label class="engagement-label">
-          <input type="checkbox" class="engagement-cb" ${m.engaged ? "checked" : ""} aria-label="Engajado nesta matéria" />
-          <span class="engagement-name" title="${escAttr(m.userJid)}">${esc(friendlyPersonLabel(m))}</span>
-        </label>
-      </li>`
-      )
-      .join("");
-  }
-
-  function syncMateriaSelectUi() {
-    if (!els.materiaSelect) return;
-    const opts = ['<option value="">— Selecione —</option>'].concat(
-      materiasCache.map(
-        (m, i) =>
-          `<option value="${escAttr(String(m.id))}">${i + 1}. ${esc(m.name)}</option>`
-      )
-    );
-    els.materiaSelect.innerHTML = opts.join("");
-    if (selectedMateriaId && materiasCache.some((m) => m.id === selectedMateriaId)) {
-      els.materiaSelect.value = String(selectedMateriaId);
-    } else {
-      selectedMateriaId = null;
-      els.materiaSelect.value = "";
-    }
-    const has = Boolean(selectedMateriaId);
-    if (els.btnMateriaRename) els.btnMateriaRename.disabled = !has;
-    if (els.btnMateriaDelete) els.btnMateriaDelete.disabled = !has;
-  }
-
-  async function loadMateriasList() {
-    const data = await fetchJson(API.materias);
-    materiasCache = (data.materias || []).map((m) => ({
-      id: Number(m.id),
-      name: String(m.name || "").trim(),
-      sortOrder: Number(m.sortOrder) || 0
-    }));
-    return data.warning || null;
-  }
-
-  async function loadMateriaMembers(materiaId) {
-    const data = await fetchJson(API.materiaEngagement(materiaId));
-    engagementMembersCache = data.members || [];
-    return data.warning || null;
-  }
-
-  async function openEngagementModal() {
-    if (!els.engagementOverlay || !els.engagementStatus) return;
-    els.engagementStatus.textContent = "Carregando…";
-    engagementMembersCache = [];
-    materiasCache = [];
-    selectedMateriaId = null;
-    syncMateriaSelectUi();
-    renderEngagementList();
-    els.engagementOverlay.classList.add("open");
-    els.engagementOverlay.setAttribute("aria-hidden", "false");
-    try {
-      const warning = await loadMateriasList();
-      syncMateriaSelectUi();
-      if (warning) {
-        els.engagementStatus.textContent = warning;
-      } else if (!materiasCache.length) {
-        els.engagementStatus.textContent =
-          "Nenhuma matéria ainda. Digite um nome e clique em Adicionar.";
-      } else {
-        els.engagementStatus.textContent = `${materiasCache.length} matéria(s). Selecione uma para marcar engajados.`;
-      }
-      renderEngagementList();
-    } catch (e) {
-      els.engagementStatus.textContent = e.message || "Não foi possível carregar.";
-      materiasCache = [];
-      engagementMembersCache = [];
-      syncMateriaSelectUi();
-      renderEngagementList();
-    }
-  }
-
-  function closeEngagementModal() {
-    if (!els.engagementOverlay) return;
-    els.engagementOverlay.classList.remove("open");
-    els.engagementOverlay.setAttribute("aria-hidden", "true");
-  }
-
-  async function onMateriaSelectChange() {
-    if (!els.materiaSelect) return;
-    const raw = els.materiaSelect.value;
-    selectedMateriaId = raw ? Number(raw) : null;
-    if (els.btnMateriaRename) els.btnMateriaRename.disabled = !selectedMateriaId;
-    if (els.btnMateriaDelete) els.btnMateriaDelete.disabled = !selectedMateriaId;
-    if (!selectedMateriaId) {
-      engagementMembersCache = [];
-      renderEngagementList();
-      if (els.engagementStatus) {
-        els.engagementStatus.textContent = materiasCache.length
-          ? `${materiasCache.length} matéria(s). Selecione uma para marcar engajados.`
-          : "Nenhuma matéria ainda.";
-      }
-      return;
-    }
-    if (els.engagementStatus) els.engagementStatus.textContent = "Carregando engajados…";
-    try {
-      const warning = await loadMateriaMembers(selectedMateriaId);
-      const mat = materiasCache.find((m) => m.id === selectedMateriaId);
-      const n = engagementMembersCache.filter((x) => x.engaged).length;
-      if (els.engagementStatus) {
-        els.engagementStatus.textContent = warning
-          ? warning
-          : `${mat ? mat.name + " — " : ""}${engagementMembersCache.length} participante(s), ${n} engajado(s).`;
-      }
-      renderEngagementList();
-    } catch (e) {
-      if (els.engagementStatus) els.engagementStatus.textContent = e.message || "Erro ao carregar.";
-      engagementMembersCache = [];
-      renderEngagementList();
-    }
-  }
-
-  async function onMateriaAdd() {
-    const name = els.materiaNewName ? els.materiaNewName.value.trim() : "";
-    if (!name) {
-      if (els.engagementStatus) els.engagementStatus.textContent = "Digite o nome da matéria.";
-      return;
-    }
-    if (els.btnMateriaAdd) els.btnMateriaAdd.disabled = true;
-    try {
-      const res = await fetchJson(API.materias, {
-        method: "POST",
-        body: JSON.stringify({ name })
-      });
-      if (els.materiaNewName) els.materiaNewName.value = "";
-      await loadMateriasList();
-      if (res.materia && res.materia.id) {
-        selectedMateriaId = Number(res.materia.id);
-      }
-      syncMateriaSelectUi();
-      await onMateriaSelectChange();
-    } catch (e) {
-      if (els.engagementStatus) els.engagementStatus.textContent = e.message || "Erro ao criar matéria.";
-    } finally {
-      if (els.btnMateriaAdd) els.btnMateriaAdd.disabled = false;
-    }
-  }
-
-  async function onMateriaRename() {
-    if (!selectedMateriaId) return;
-    const mat = materiasCache.find((m) => m.id === selectedMateriaId);
-    const next = window.prompt("Novo nome da matéria:", mat ? mat.name : "");
-    if (next == null) return;
-    const name = String(next).trim();
-    if (!name) return;
-    try {
-      await fetchJson(API.materias, {
-        method: "PATCH",
-        body: JSON.stringify({ id: selectedMateriaId, name })
-      });
-      await loadMateriasList();
-      syncMateriaSelectUi();
-      if (els.engagementStatus) {
-        const n = engagementMembersCache.filter((x) => x.engaged).length;
-        els.engagementStatus.textContent = `${name} — ${engagementMembersCache.length} participante(s), ${n} engajado(s).`;
-      }
-    } catch (e) {
-      if (els.engagementStatus) els.engagementStatus.textContent = e.message || "Erro ao renomear.";
-    }
-  }
-
-  async function onMateriaDelete() {
-    if (!selectedMateriaId) return;
-    const mat = materiasCache.find((m) => m.id === selectedMateriaId);
-    const ok = window.confirm(
-      `Excluir a matéria "${mat ? mat.name : selectedMateriaId}"? Questões já criadas ficam sem matéria.`
-    );
-    if (!ok) return;
-    try {
-      await fetchJson(`${API.materias}?id=${encodeURIComponent(String(selectedMateriaId))}`, {
-        method: "DELETE"
-      });
-      selectedMateriaId = null;
-      engagementMembersCache = [];
-      await loadMateriasList();
-      syncMateriaSelectUi();
-      renderEngagementList();
-      if (els.engagementStatus) {
-        els.engagementStatus.textContent = materiasCache.length
-          ? `${materiasCache.length} matéria(s). Selecione uma para marcar engajados.`
-          : "Nenhuma matéria ainda. Digite um nome e clique em Adicionar.";
-      }
-    } catch (e) {
-      if (els.engagementStatus) els.engagementStatus.textContent = e.message || "Erro ao excluir.";
-    }
-  }
-
-  async function onEngagementToggle(ev) {
-    const cb = ev.target;
-    if (!cb.classList || !cb.classList.contains("engagement-cb")) return;
-    const row = cb.closest(".engagement-row");
-    const jid = row && row.dataset.jid;
-    if (!jid || !selectedMateriaId) return;
-    const want = cb.checked;
-    cb.disabled = true;
-    try {
-      await fetchJson(API.materias, {
-        method: "PATCH",
-        body: JSON.stringify({ materiaId: selectedMateriaId, userJid: jid, engaged: want })
-      });
-      const m = engagementMembersCache.find((x) => x.userJid === jid);
-      if (m) m.engaged = want;
-      if (els.engagementStatus && !els.engagementStatus.textContent.startsWith("Carregando")) {
-        const mat = materiasCache.find((x) => x.id === selectedMateriaId);
-        const n = engagementMembersCache.filter((x) => x.engaged).length;
-        els.engagementStatus.textContent = `${mat ? mat.name + " — " : ""}${engagementMembersCache.length} participante(s), ${n} engajado(s).`;
-      }
-    } catch (err) {
-      cb.checked = !want;
-      if (els.engagementStatus) {
-        els.engagementStatus.textContent = err.message || "Erro ao salvar.";
-      }
-    } finally {
-      cb.disabled = false;
-    }
   }
 
   function formatStatusLabel(status) {
@@ -2667,27 +2413,6 @@
     });
   }
   if (els.reportGenerate) els.reportGenerate.addEventListener("click", onGenerateReport);
-
-  if (els.btnEngagementOpen) els.btnEngagementOpen.addEventListener("click", openEngagementModal);
-  if (els.engagementClose) els.engagementClose.addEventListener("click", closeEngagementModal);
-  if (els.engagementOverlay) {
-    els.engagementOverlay.addEventListener("click", (ev) => {
-      if (ev.target === els.engagementOverlay) closeEngagementModal();
-    });
-  }
-  if (els.engagementList) els.engagementList.addEventListener("change", onEngagementToggle);
-  if (els.materiaSelect) els.materiaSelect.addEventListener("change", onMateriaSelectChange);
-  if (els.btnMateriaAdd) els.btnMateriaAdd.addEventListener("click", onMateriaAdd);
-  if (els.btnMateriaRename) els.btnMateriaRename.addEventListener("click", onMateriaRename);
-  if (els.btnMateriaDelete) els.btnMateriaDelete.addEventListener("click", onMateriaDelete);
-  if (els.materiaNewName) {
-    els.materiaNewName.addEventListener("keydown", (ev) => {
-      if (ev.key === "Enter") {
-        ev.preventDefault();
-        onMateriaAdd();
-      }
-    });
-  }
 
   if (els.btnCadernosOpen) els.btnCadernosOpen.addEventListener("click", openCadernosModal);
   if (els.cadernosClose) els.cadernosClose.addEventListener("click", closeCadernosModal);

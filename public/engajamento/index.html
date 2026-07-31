@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Engajamento — Papa Vagas</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/css/site.css" />
+    <link rel="stylesheet" href="/css/engajamento.css" />
+  </head>
+  <body data-page="engajamento">
+    <div class="eg-shell">
+      <header class="eg-topbar">
+        <div class="eg-brand-row">
+          <a class="eg-back" href="/">← Quiz</a>
+          <a class="eg-brand" href="/engajamento">
+            <strong>Papa Vagas</strong>
+            <span>Engajamento</span>
+          </a>
+        </div>
+        <nav class="eg-top-links" aria-label="Atalhos">
+          <a class="btn-tutorial" href="/hub">Hub</a>
+          <a class="btn-tutorial" href="/cadernos">Cadernos</a>
+          <a class="btn-tutorial" href="/tutorial">Como usar</a>
+        </nav>
+      </header>
+
+      <section class="eg-hero">
+        <div>
+          <h1>Matérias</h1>
+          <p>
+            Escolha em quais matérias você entra no fechamento automático do gabarito das questões
+            manuais (<code>nova questao</code>). Um clique para entrar ou sair — sem salvar no final.
+          </p>
+        </div>
+        <div class="eg-hero-stats" id="eg-summary" aria-live="polite">
+          <div class="eg-stat">
+            <span>Participando</span>
+            <strong id="eg-stat-mine">—</strong>
+          </div>
+          <div class="eg-stat">
+            <span>Matérias</span>
+            <strong id="eg-stat-total">—</strong>
+          </div>
+        </div>
+      </section>
+
+      <div class="eg-who">
+        <label class="eg-who-field">
+          <span>Quem sou eu</span>
+          <select id="eg-user" aria-label="Selecionar participante">
+            <option value="">— Selecione —</option>
+          </select>
+        </label>
+        <p class="eg-who-hint">
+          A lista vem do WhatsApp (<code>/sync-membros</code>). Sua participação vale para o auto-gabarito
+          da matéria.
+        </p>
+      </div>
+
+      <div class="eg-toolbar" id="eg-toolbar">
+        <label class="eg-search">
+          <span class="visually-hidden">Pesquisar matéria</span>
+          <input
+            type="search"
+            id="eg-search"
+            placeholder="Pesquisar por nome…"
+            autocomplete="off"
+          />
+        </label>
+        <label class="eg-filter">
+          Disciplina
+          <select id="eg-filter-disciplina" aria-label="Filtrar por disciplina">
+            <option value="all">Todas</option>
+          </select>
+        </label>
+        <label class="eg-filter">
+          Situação
+          <select id="eg-filter-status" aria-label="Filtrar por situação">
+            <option value="all">Todas</option>
+            <option value="in">Participando</option>
+            <option value="out">Não participando</option>
+          </select>
+        </label>
+        <label class="eg-filter">
+          Ordenar
+          <select id="eg-sort" aria-label="Ordenar matérias">
+            <option value="alpha">Ordem alfabética</option>
+            <option value="popular">Mais populares</option>
+            <option value="recent">Mais recentes</option>
+            <option value="activity">Maior atividade</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="eg-create" id="eg-create">
+        <label class="eg-create-field">
+          <span>Nova matéria</span>
+          <input
+            type="text"
+            id="eg-new-name"
+            maxlength="80"
+            placeholder="ex: Direito Constitucional"
+            aria-label="Nome da nova matéria"
+          />
+        </label>
+        <button type="button" id="eg-btn-add" class="btn-reveal">Adicionar</button>
+      </div>
+
+      <p id="eg-status" class="eg-status" role="status" aria-live="polite"></p>
+
+      <ul id="eg-list" class="eg-list" aria-live="polite"></ul>
+    </div>
+
+    <script src="/js/engajamento.js"></script>
+  </body>
+</html>
