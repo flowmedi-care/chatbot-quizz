@@ -8,9 +8,10 @@ import { config } from "../config";
 import {
   listActiveGroupCadernos,
   listUnansweredShortIdsForUser,
-  getEngagedUserJidsForCaderno,
   isCadernoDayCompleteForEngaged,
-  getCadernoProgress
+  listEngagedJidsMissingCadernoDayAnswers,
+  getCadernoProgress,
+  getEngagedUserJidsForCaderno
 } from "../supabase";
 import { ECONOMY_TZ } from "./constants";
 import { evaluateMissesForUsers } from "./streak";
@@ -66,7 +67,7 @@ export async function runDailyEconomyMaintenance(sock: WASocket): Promise<void> 
       for (const [jid, row] of userMap) {
         try {
           const open = await listUnansweredShortIdsForUser(jid, groupJid, 80);
-          row.hadDueYesterday = open.length > 0 || true;
+          row.hadDueYesterday = open.length > 0;
           row.completedYesterday = open.length === 0;
           const { data: ans } = await economyDb()
             .from("economy_ledger")
@@ -76,8 +77,6 @@ export async function runDailyEconomyMaintenance(sock: WASocket): Promise<void> 
             .in("reason", ["answer_correct", "answer_wrong"])
             .limit(1);
           row.answeredAnythingYesterday = (ans || []).length > 0;
-          // Se tinha omissas ontem: se ainda tem open, não completou; se open=0, completou
-          row.hadDueYesterday = true;
           const { data: eco } = await economyDb()
             .from("user_economy")
             .select("display_name")
@@ -125,20 +124,22 @@ export async function runDailyEconomyMaintenance(sock: WASocket): Promise<void> 
       const nPerDay = Math.max(1, c.questionsPerDay);
       if (c.currentDaySent < nPerDay) continue;
 
-      const complete = await isCadernoDayCompleteForEngaged(
-        c.id,
-        c.currentDayDate,
-        c.timezone || ECONOMY_TZ,
-        new Set()
-      );
+      const tz = c.timezone || ECONOMY_TZ;
+      const complete = await isCadernoDayCompleteForEngaged(c.id, c.currentDayDate, tz, new Set());
       if (complete) continue;
 
-      const engaged = await getEngagedUserJidsForCaderno(c.id);
-      for (const jid of engaged) {
-        const open = await listUnansweredShortIdsForUser(jid, groupJid, 30);
-        if (open.length === 0) continue;
+      // Só quem faltou questões DESTE caderno/dia — não omissas globais
+      // (ao virar o dia outros cadernos criam pendências novas em todo mundo).
+      const missing = await listEngagedJidsMissingCadernoDayAnswers(
+        c.id,
+        c.currentDayDate,
+        tz,
+        new Set()
+      );
+      for (const jid of missing) {
         try {
-          await applyPenaltyLocking(jid, c.id, c.currentDayDate);
+          const { applied } = await applyPenaltyLocking(jid, c.id, c.currentDayDate);
+          if (!applied) continue;
           await sock.sendMessage(jid, {
             text: `⚠️ Penalidade: −50 Aura por travar o caderno #${c.id} (${c.name}). Responda suas omissas.`
           });

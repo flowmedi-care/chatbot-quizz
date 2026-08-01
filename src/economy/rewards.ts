@@ -404,8 +404,12 @@ export async function onCadernoCompleted(input: {
   return effects;
 }
 
-export async function applyPenaltyLocking(userJid: string, cadernoId: number, dayIso: string): Promise<void> {
-  await applyLedger({
+export async function applyPenaltyLocking(
+  userJid: string,
+  cadernoId: number,
+  dayIso: string
+): Promise<{ applied: boolean; skippedDuplicate?: boolean }> {
+  const r = await applyLedger({
     userJid,
     deltaAura: PENALTIES.lockingCaderno.aura,
     reason: "penalty_lock",
@@ -413,6 +417,7 @@ export async function applyPenaltyLocking(userJid: string, cadernoId: number, da
     refId: `${cadernoId}:${dayIso}`,
     meta: { cadernoId }
   });
+  return { applied: r.applied, skippedDuplicate: r.skippedDuplicate };
 }
 
 export { getDayFlag, ensureEconomy, ensureStreak };

@@ -2315,6 +2315,42 @@ export async function isCadernoDayCompleteForEngaged(
   return true;
 }
 
+/**
+ * Engajados elegíveis que ainda não responderam alguma questão publicada
+ * em `cadernoId` + `dayIso` (mesma noção de `isCadernoDayCompleteForEngaged`).
+ * Usado para penalidade de travamento — não misturar com omissas de outros cadernos/dias.
+ */
+export async function listEngagedJidsMissingCadernoDayAnswers(
+  cadernoId: number,
+  dayIso: string,
+  timeZone: string,
+  excludeComparableKeys?: Set<string>
+): Promise<string[]> {
+  const publishedToday = await listCadernoQuestionsPublishedOnDate(cadernoId, dayIso, timeZone);
+  if (publishedToday.length === 0) return [];
+
+  const questionIds = publishedToday.map((p) => p.publishedQuestionId);
+  const answersByQ = await listAnswersForQuestionIds(questionIds);
+  const creatorKey = jidComparableKeyShared(`caderno:${cadernoId}@bot`);
+  const missingByKey = new Map<string, string>();
+
+  for (const pub of publishedToday) {
+    const eligible = await getEngagedEligibleUserJidsForCadernoAt(cadernoId, pub.publishedAt);
+    if (eligible.length === 0) continue;
+
+    const answeredSet = answersByQ.get(pub.publishedQuestionId) ?? new Set<string>();
+    for (const jid of eligible) {
+      const jc = jidComparableKeyShared(jid);
+      if (excludeComparableKeys?.has(jc)) continue;
+      if (jc === creatorKey) continue;
+      if (!answeredSet.has(jc)) {
+        missingByKey.set(jc, jid);
+      }
+    }
+  }
+  return [...missingByKey.values()];
+}
+
 export async function setCadernoStatus(
   cadernoId: number,
   status: CadernoRow["status"],
