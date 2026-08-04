@@ -1255,7 +1255,7 @@ async function startBot(): Promise<void> {
                     : []),
                   "",
                   "Deseja receber os enunciados agora? Responda sim ou nao.",
-                  "(Elas entram em /omissas no dia em que forem liberadas; ate la podem aparecer em /atrasadas se ja publicadas.)"
+                  "(Entram em /omissas só no dia em que forem liberadas — não contam como omissa antes disso.)"
                 ].join("\n")
               });
             } catch (adErr) {

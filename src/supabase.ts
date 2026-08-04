@@ -2254,23 +2254,36 @@ export async function listAnswersForQuestionIds(
 ): Promise<Map<number, Set<string>>> {
   const out = new Map<number, Set<string>>();
   if (questionIds.length === 0) return out;
-  const { data, error } = await supabase
-    .from("answers")
-    .select("question_id, user_jid")
-    .in("question_id", questionIds);
 
-  if (error) throw new Error(`Erro ao listar respostas: ${error.message}`);
-
-  for (const row of data ?? []) {
-    const qid = Number(row.question_id);
-    const jid = row.user_jid ? String(row.user_jid) : "";
-    if (!Number.isFinite(qid) || !jid) continue;
-    let set = out.get(qid);
-    if (!set) {
-      set = new Set<string>();
-      out.set(qid, set);
+  // PostgREST limita URL/`.in` e retorna no máx. ~1000 linhas por request —
+  // sem chunk a omissa “esquece” respostas e relista questão já respondida.
+  const CHUNK = 80;
+  for (let i = 0; i < questionIds.length; i += CHUNK) {
+    const chunk = questionIds.slice(i, i + CHUNK);
+    let from = 0;
+    const PAGE = 1000;
+    for (;;) {
+      const { data, error } = await supabase
+        .from("answers")
+        .select("question_id, user_jid")
+        .in("question_id", chunk)
+        .range(from, from + PAGE - 1);
+      if (error) throw new Error(`Erro ao listar respostas: ${error.message}`);
+      const rows = data ?? [];
+      for (const row of rows) {
+        const qid = Number(row.question_id);
+        const jid = row.user_jid ? String(row.user_jid) : "";
+        if (!Number.isFinite(qid) || !jid) continue;
+        let set = out.get(qid);
+        if (!set) {
+          set = new Set<string>();
+          out.set(qid, set);
+        }
+        set.add(jidComparableKeyShared(jid));
+      }
+      if (rows.length < PAGE) break;
+      from += PAGE;
     }
-    set.add(jidComparableKeyShared(jid));
   }
   return out;
 }
@@ -3301,6 +3314,7 @@ export async function listUnansweredOmissasForUser(
   }
 
   const pubDayByQuestionId = await mapPublishedDayByQuestionIdForGroup(groupJid);
+  const unreleasedPlannedDay = await mapUnreleasedQueuePlannedDayByQuestionId(groupJid);
 
   const { data: questions, error: qErr } = await supabase
     .from("questions")
@@ -3326,6 +3340,12 @@ export async function listUnansweredOmissasForUser(
       continue;
     }
 
+    // Adiantadas ainda não liberadas: não entram em /omissas nem /atrasadas.
+    const plannedFuture = unreleasedPlannedDay.get(qid);
+    if (plannedFuture && plannedFuture > dayIso) {
+      continue;
+    }
+
     if (isBotCreatorJid(creatorJid)) {
       const cadernoId = parseCadernoIdFromCreatorJid(creatorJid);
       if (cadernoId == null) continue;
@@ -3343,10 +3363,13 @@ export async function listUnansweredOmissasForUser(
     }
 
     let pubDay = pubDayByQuestionId.get(qid);
+    if (!pubDay && plannedFuture) pubDay = plannedFuture;
     if (!pubDay && q.created_at) {
       pubDay = formatDateInTimezone(new Date(String(q.created_at)), "America/Sao_Paulo");
     }
     if (!pubDay) continue;
+    // Futuro (ainda não “do dia”) — não lista.
+    if (pubDay > dayIso) continue;
 
     candidates.push({ sid, qid, pubDay });
   }
@@ -3449,6 +3472,11 @@ async function mapPublishedDayByQuestionIdForGroup(
   return out;
 }
 
+/**
+ * IDs de questions já liberadas via fila (released_at preenchido).
+ * Itens só adiantados (ainda não liberados) NÃO entram — senão /omissas
+ * trata created_at como “hoje” e lista omissas prematuras.
+ */
 async function listQueuedPublishedQuestionIdsForGroup(groupJid: string): Promise<Set<number>> {
   const { data: cadernos, error: cErr } = await supabase
     .from("cadernos")
@@ -3463,13 +3491,16 @@ async function listQueuedPublishedQuestionIdsForGroup(groupJid: string): Promise
 
   const { data: rows, error } = await supabase
     .from("caderno_send_queue")
-    .select("published_question_id")
+    .select("published_question_id, released_at")
     .in("caderno_id", cadernoIds)
-    .not("published_question_id", "is", null);
+    .not("published_question_id", "is", null)
+    .not("released_at", "is", null);
 
   if (error) {
     const msg = error.message.toLowerCase();
     if (msg.includes("relation") && msg.includes("does not exist")) return new Set();
+    // Coluna released_at pode faltar em bases antigas — fallback: não usar a fila.
+    if (msg.includes("released_at") && msg.includes("does not exist")) return new Set();
     throw new Error(`Erro ao listar questoes da fila: ${error.message}`);
   }
 
@@ -3477,6 +3508,36 @@ async function listQueuedPublishedQuestionIdsForGroup(groupJid: string): Promise
   for (const row of rows ?? []) {
     const id = row.published_question_id != null ? Number(row.published_question_id) : NaN;
     if (Number.isFinite(id)) out.add(id);
+  }
+  return out;
+}
+
+/** planned_day_iso de itens ainda não liberados → evita fallback created_at=hoje. */
+async function mapUnreleasedQueuePlannedDayByQuestionId(
+  groupJid: string
+): Promise<Map<number, string>> {
+  const { data: cadernos, error: cErr } = await supabase
+    .from("cadernos")
+    .select("id")
+    .eq("target_group_jid", groupJid);
+  if (cErr) return new Map();
+  const cadernoIds = (cadernos ?? []).map((c) => Number(c.id)).filter((id) => Number.isFinite(id));
+  if (cadernoIds.length === 0) return new Map();
+
+  const { data: rows, error } = await supabase
+    .from("caderno_send_queue")
+    .select("published_question_id, planned_day_iso, released_at")
+    .in("caderno_id", cadernoIds)
+    .not("published_question_id", "is", null)
+    .is("released_at", null);
+
+  if (error) return new Map();
+
+  const out = new Map<number, string>();
+  for (const row of rows ?? []) {
+    const id = row.published_question_id != null ? Number(row.published_question_id) : NaN;
+    const day = row.planned_day_iso ? String(row.planned_day_iso) : "";
+    if (Number.isFinite(id) && /^\d{4}-\d{2}-\d{2}$/.test(day)) out.set(id, day);
   }
   return out;
 }
