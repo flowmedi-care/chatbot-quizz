@@ -79,7 +79,7 @@ No primeiro start:
 | **Grupo** | Mostra o **mesmo guia** no chat do grupo. |
 | **Privado** (modo ligado) | Guia completo. |
 
-Com o modo **desligado**, no privado o bot so le comandos **neutros**: `/quiz`, `/ajuda`, `/gabarito`, `ranking`, `quem respondeu …` e **`/omissas`**. No grupo, `/gabarito`, `ranking` e `/ajuda` estao sempre disponiveis.
+Com o modo **desligado**, no privado o bot so le comandos **neutros**: `/quiz`, `/ajuda`, `/gabarito`, `ranking`, `quem respondeu …`, **`/omissas`** e **`/atrasadas`**. No grupo, `/gabarito`, `ranking` e `/ajuda` estao sempre disponiveis.
 
 ### Criar questao (privado, com modo quiz ativo)
 
@@ -107,7 +107,7 @@ Com o modo **desligado**, no privado o bot so le comandos **neutros**: `/quiz`, 
 
 **Auto-gabarito por engajamento:** no grupo, envie **`/sync-membros`** para o bot gravar os participantes no Supabase. No site Papa Vagas, abra **Engajamento** e marque quem participa do fechamento. Quando **todos os engajados** (exceto quem **criou** a questao) tiverem resposta gravada, o bot envia no grupo o mesmo texto de `/gabarito` (uma vez por questao). Quem nao esta engajado pode responder antes ou depois; nao bloqueia. Se ninguem estiver engajado na base, o auto-gabarito nao dispara por esse criterio. Para desligar: `AUTO_GABARITO_WHEN_ALL=false`.
 
-**Omissas (privado):** envie **`/omissas`** para listar questoes em aberto; responda **sim** ou **nao** para receber os enunciados repetidos no privado. Engajados de caderno so veem questoes a partir do dia em que entraram (`engaged_since`); passivos so as do dia.
+**Omissas (privado):** **`/omissas`** lista só as do **dia** (valem para streak/bônus) e avisa se você está travando algum caderno; **`/atrasadas`** é o backlog. Responda **sim** ou **nao** para receber enunciados. Avisos às 19h e 21h; à meia-noite quem trava leva −50 e o caderno faz soft-unlock (avança mesmo assim). Engajados só veem desde `engaged_since`; passivos só o dia.
 
 ### Ranking (grupo ou privado)
 

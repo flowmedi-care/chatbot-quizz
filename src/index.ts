@@ -22,6 +22,7 @@ import {
   parsePrivateCommand,
   parseGabaritoCommand,
   parseOmissasCommand,
+  parseAtrasadasCommand,
   parseAdiantarCommand,
   parseEconomyCommand,
   parseProgressoCommand,
@@ -57,7 +58,6 @@ import {
   getUserAnswer,
   listAnswerUserJidsForQuestion,
   listCadernosForOwner,
-  listUnansweredShortIdsForUser,
   listEngagedGroupCadernosForUser,
   adiantarCadernoQuestions,
   resetCadernoPublishedQuestions,
@@ -1015,7 +1015,7 @@ async function startBot(): Promise<void> {
                   "",
                   "/quiz",
                   "",
-                  "Sem modo quiz, só lemos aqui comandos neutros: gabarito, /q&a, quem respondeu, /omissas e adiantar N."
+                  "Sem modo quiz, só lemos aqui comandos neutros: gabarito, /q&a, quem respondeu, /omissas, /atrasadas e adiantar N."
                 ].join("\n")
               });
               continue;
@@ -1122,25 +1122,36 @@ async function startBot(): Promise<void> {
             }
           }
 
-          if (fromPrivate && parseOmissasCommand(text)) {
+          if (fromPrivate && (parseOmissasCommand(text) || parseAtrasadasCommand(text))) {
             try {
               const gj = getQuizTargetGroupJid();
-              const openIds = await listUnansweredShortIdsForUser(sender, gj, 30);
-              if (openIds.length === 0) {
-                await sock.sendMessage(remoteJid, {
-                  text: "Voce nao tem questoes em aberto (engajado/passivo) ou ja respondeu a todas. Passivos so veem as do dia; questoes suas nao entram na lista."
-                });
+              const mode = parseAtrasadasCommand(text) ? "atrasadas" : "hoje";
+              const { loadOmissasContext, buildOmissasPrivateMessage } = await import(
+                "./economy/omissas"
+              );
+              const { buckets, locking } = await loadOmissasContext(sender, gj, {
+                todayLimit: 30,
+                atrasadasLimit: 30
+              });
+              const offerIds = mode === "hoje" ? buckets.today : buckets.atrasadas;
+              if (offerIds.length === 0 && locking.length === 0) {
+                const emptyMsg =
+                  mode === "hoje"
+                    ? buckets.atrasadas.length > 0
+                      ? `Sem omissas de hoje. Há ${buckets.atrasadas.length} atrasada(s) — use /atrasadas.`
+                      : "Voce nao tem omissas de hoje (engajado/passivo) ou ja respondeu a todas."
+                    : buckets.today.length > 0
+                      ? `Sem atrasadas. Hoje ainda faltam ${buckets.today.length} — use /omissas.`
+                      : "Nenhuma omissa atrasada.";
+                await sock.sendMessage(remoteJid, { text: emptyMsg });
                 continue;
               }
-              omissasOfferByUser.set(sender, openIds);
-              const lines = [
-                "Questoes que voce ainda nao respondeu:",
-                "",
-                ...openIds.map((id, i) => `${i + 1}. #${id}`),
-                "",
-                "Deseja receber os enunciados aqui? Responda sim ou nao."
-              ];
-              await sock.sendMessage(remoteJid, { text: lines.join("\n") });
+              if (offerIds.length > 0) {
+                omissasOfferByUser.set(sender, offerIds);
+              }
+              await sock.sendMessage(remoteJid, {
+                text: buildOmissasPrivateMessage({ buckets, locking, mode })
+              });
             } catch (omErr) {
               await sock.sendMessage(remoteJid, {
                 text: `Erro ao listar omissas: ${(omErr as Error).message}`
@@ -1192,7 +1203,7 @@ async function startBot(): Promise<void> {
                   ...allShortIds.map((id, i) => `${i + 1}. #${id}`),
                   "",
                   "Deseja receber os enunciados agora? Responda sim ou nao.",
-                  "(Elas tambem entram no /omissas.)"
+                  "(Elas entram em /omissas no dia em que forem liberadas; ate la podem aparecer em /atrasadas se ja publicadas.)"
                 ].join("\n")
               });
             } catch (adErr) {

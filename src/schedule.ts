@@ -6,7 +6,7 @@
  *    `intervalDays` dias; senão se já passou hoje, joga para amanhã.
  */
 
-function getZonedParts(date: Date, timeZone: string): {
+export function getZonedParts(date: Date, timeZone: string): {
   year: number;
   month: number;
   day: number;
@@ -93,6 +93,22 @@ export function dateIsoInTimezone(date: Date, timeZone: string): string {
   const mm = z.month < 10 ? `0${z.month}` : String(z.month);
   const dd = z.day < 10 ? `0${z.day}` : String(z.day);
   return `${z.year}-${mm}-${dd}`;
+}
+
+/** Minutos desde 00:00 no fuso (0–1439). */
+export function minutesInTimezone(date: Date, timeZone: string): number {
+  const z = getZonedParts(date, timeZone);
+  return z.hour * 60 + z.minute;
+}
+
+/** True se o horário local no fuso já passou de hour:minute (inclusive). */
+export function isAtOrAfterLocalTime(
+  date: Date,
+  timeZone: string,
+  hour: number,
+  minute: number
+): boolean {
+  return minutesInTimezone(date, timeZone) >= hour * 60 + minute;
 }
 
 /** Soma `n` dias a uma data ISO (YYYY-MM-DD). Não envolve fuso porque a data é puro calendário. */

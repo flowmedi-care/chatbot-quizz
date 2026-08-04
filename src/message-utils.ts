@@ -105,6 +105,12 @@ export function parseOmissasCommand(text: string): boolean {
   return t === "/omissas" || t === "omissas";
 }
 
+/** Backlog antigo (não conta no streak). */
+export function parseAtrasadasCommand(text: string): boolean {
+  const t = normalizeInput(text.trim());
+  return t === "/atrasadas" || t === "atrasadas";
+}
+
 /** Adiantar questões dos próximos N dias: adiantar 2, /adiantar 2 */
 export function parseAdiantarCommand(text: string): { days: number } | null {
   const t = normalizeInput(text.trim());

@@ -247,7 +247,7 @@ export async function buildDiarioOficialDigest(input: {
     lines.push(`✨ ${name} — Aura ${e.aura} (${auraInfo.shortLabel}) · 🔥 ${st}`);
   }
 
-  lines.push("", "/omissas · /aura · /auras · /ranking");
+  lines.push("", "/omissas · /atrasadas · /aura · /auras · /ranking");
   return lines.join("\n");
 }
 

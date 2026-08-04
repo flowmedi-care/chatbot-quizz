@@ -268,7 +268,7 @@ async function maybeFirstOmissasClear(
   groupJid: string,
   effects: RewardSideEffects
 ): Promise<void> {
-  // First to zero open omissas opens a 1h window; anyone who clears within it also gets the bonus.
+    // First to zero today's omissas opens a 1h window; anyone who clears within it also gets the bonus.
   try {
     const { listUnansweredShortIdsForUser } = await import("../supabase");
     const open = await listUnansweredShortIdsForUser(userJid, groupJid, 50);

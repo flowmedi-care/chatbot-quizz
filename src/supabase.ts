@@ -3231,11 +3231,41 @@ export async function isUserGloballyEngaged(userJid: string, groupJid: string): 
   return engaged.some((jid) => jidComparableKeyShared(jid) === userKey);
 }
 
-export async function listUnansweredShortIdsForUser(
+export type UnansweredOmissasBuckets = {
+  /** Publicadas no dia civil `dayIso` (ECONOMY_TZ) e ainda sem resposta. */
+  today: string[];
+  /** Publicadas antes de `dayIso` e ainda sem resposta. */
+  atrasadas: string[];
+  /** Quantas questões elegíveis foram publicadas em `dayIso` (respondidas ou não). */
+  dueOnDayCount: number;
+  /** Quantas de `dueOnDayCount` ainda estão abertas. */
+  openOnDayCount: number;
+};
+
+export type ListOmissasOptions = {
+  /** Dia civil de referência (default: hoje em ECONOMY_TZ). */
+  dayIso?: string;
+  todayLimit?: number;
+  atrasadasLimit?: number;
+  /** Inclui bucket atrasadas (default true). */
+  includeAtrasadas?: boolean;
+};
+
+/**
+ * Questões em aberto do usuário, separadas em “do dia” vs atrasadas.
+ * Streak / bônus de zerar / miss eval usam só `today`.
+ * `/omissas` mostra `today`; `/atrasadas` mostra o backlog.
+ */
+export async function listUnansweredOmissasForUser(
   userJid: string,
   groupJid: string,
-  limit = 25
-): Promise<string[]> {
+  opts: ListOmissasOptions = {}
+): Promise<UnansweredOmissasBuckets> {
+  const dayIso = opts.dayIso || dateIsoInTimezone(new Date(), "America/Sao_Paulo");
+  const todayLimit = Math.max(1, opts.todayLimit ?? 40);
+  const atrasadasLimit = Math.max(0, opts.atrasadasLimit ?? 40);
+  const includeAtrasadas = opts.includeAtrasadas !== false;
+
   const publishedCadernoIds = await fetchPublishedCadernoQuestionIdsForGroup(groupJid);
   const queuedVisibleIds = await listQueuedPublishedQuestionIdsForGroup(groupJid);
   const visibleCadernoQuestionIds = new Set<number>([
@@ -3253,14 +3283,11 @@ export async function listUnansweredShortIdsForUser(
     const caderno = await getCadernoById(cadernoId);
     if (!caderno) continue;
     const tz = caderno.timezone || "America/Sao_Paulo";
-    const todayIso = dateIsoInTimezone(new Date(), tz);
-    const pubs = await listCadernoQuestionsPublishedOnDate(cadernoId, todayIso, tz);
+    const pubs = await listCadernoQuestionsPublishedOnDate(cadernoId, dayIso, tz);
     for (const p of pubs) passiveTodayDbIds.add(p.publishedQuestionId);
   }
 
-  /** Questões de caderno elegíveis para engajados com `engaged_since` (dia de entrada → frente). */
   const engagedSinceAllowedDbIds = new Set<number>();
-  /** Cadernos engajados que restringem por data (têm engaged_since). */
   const engagedRestrictedCadernos = new Set<number>();
   for (const [cadernoId, sinceIso] of engagedSinceMap) {
     if (!sinceIso) continue;
@@ -3273,28 +3300,22 @@ export async function listUnansweredShortIdsForUser(
     for (const id of ids) engagedSinceAllowedDbIds.add(id);
   }
 
+  const pubDayByQuestionId = await mapPublishedDayByQuestionIdForGroup(groupJid);
+
   const { data: questions, error: qErr } = await supabase
     .from("questions")
-    .select("id, short_id, creator_jid")
+    .select("id, short_id, creator_jid, created_at")
     .eq("target_group_jid", groupJid)
     .order("created_at", { ascending: false })
-    .limit(300);
+    .limit(400);
 
   if (qErr) {
     throw new Error(`Erro ao listar questoes: ${qErr.message}`);
   }
 
-  const { data: answered, error: aErr } = await supabase
-    .from("answers")
-    .select("question_id")
-    .eq("user_jid", userJid);
+  type Candidate = { sid: string; qid: number; pubDay: string };
+  const candidates: Candidate[] = [];
 
-  if (aErr) {
-    throw new Error(`Erro ao listar respostas do usuario: ${aErr.message}`);
-  }
-
-  const answeredIds = new Set((answered ?? []).map((r) => r.question_id as number));
-  const out: string[] = [];
   for (const q of questions ?? []) {
     if (!q.short_id) continue;
     const sid = String(q.short_id).toUpperCase();
@@ -3317,16 +3338,113 @@ export async function listUnansweredShortIdsForUser(
       if (isEngaged && engagedRestrictedCadernos.has(cadernoId) && !engagedSinceAllowedDbIds.has(qid)) {
         continue;
       }
-      if (!isEngaged && isPassiveToday) {
-        // passivo: só as do dia (já filtradas em passiveTodayDbIds)
-      }
     } else if (!globallyEngaged) {
       continue;
     }
 
-    if (answeredIds.has(qid)) continue;
-    out.push(sid);
-    if (out.length >= limit) break;
+    let pubDay = pubDayByQuestionId.get(qid);
+    if (!pubDay && q.created_at) {
+      pubDay = formatDateInTimezone(new Date(String(q.created_at)), "America/Sao_Paulo");
+    }
+    if (!pubDay) continue;
+
+    candidates.push({ sid, qid, pubDay });
+  }
+
+  const questionIds = candidates.map((c) => c.qid);
+  const answersByQ = await listAnswersForQuestionIds(questionIds);
+  const userKey = jidComparableKeyShared(userJid);
+
+  const today: string[] = [];
+  const atrasadas: string[] = [];
+  let dueOnDayCount = 0;
+  let openOnDayCount = 0;
+
+  for (const c of candidates) {
+    const answered = answersByQ.get(c.qid)?.has(userKey) ?? false;
+    if (c.pubDay === dayIso) {
+      dueOnDayCount += 1;
+      if (!answered) {
+        openOnDayCount += 1;
+        if (today.length < todayLimit) today.push(c.sid);
+      }
+      continue;
+    }
+    if (!includeAtrasadas || answered) continue;
+    if (c.pubDay < dayIso && atrasadas.length < atrasadasLimit) {
+      atrasadas.push(c.sid);
+    }
+  }
+
+  return { today, atrasadas, dueOnDayCount, openOnDayCount };
+}
+
+/** Compat: só omissas do dia (streak / bônus / miss). */
+export async function listUnansweredShortIdsForUser(
+  userJid: string,
+  groupJid: string,
+  limit = 25
+): Promise<string[]> {
+  const buckets = await listUnansweredOmissasForUser(userJid, groupJid, {
+    todayLimit: limit,
+    atrasadasLimit: 0,
+    includeAtrasadas: false
+  });
+  return buckets.today;
+}
+
+/** Todas as omissas abertas (hoje + atrasadas), para oferta de enunciados. */
+export async function listAllUnansweredShortIdsForUser(
+  userJid: string,
+  groupJid: string,
+  limit = 50
+): Promise<string[]> {
+  const half = Math.max(1, Math.floor(limit / 2));
+  const buckets = await listUnansweredOmissasForUser(userJid, groupJid, {
+    todayLimit: half,
+    atrasadasLimit: limit - half
+  });
+  return [...buckets.today, ...buckets.atrasadas].slice(0, limit);
+}
+
+/** published_question_id → dia ISO (America/Sao_Paulo) da publicação do caderno. */
+async function mapPublishedDayByQuestionIdForGroup(
+  groupJid: string
+): Promise<Map<number, string>> {
+  const { data: cadernos, error: cErr } = await supabase
+    .from("cadernos")
+    .select("id, timezone")
+    .eq("target_group_jid", groupJid);
+
+  if (cErr) {
+    throw new Error(`Erro ao listar cadernos do grupo: ${cErr.message}`);
+  }
+
+  const cadernoIds: number[] = [];
+  for (const c of cadernos ?? []) {
+    const id = Number(c.id);
+    if (!Number.isFinite(id)) continue;
+    cadernoIds.push(id);
+  }
+  if (cadernoIds.length === 0) return new Map();
+
+  const { data: rows, error } = await supabase
+    .from("caderno_questions")
+    .select("published_question_id, published_at")
+    .in("caderno_id", cadernoIds)
+    .not("published_question_id", "is", null);
+
+  if (error) {
+    throw new Error(`Erro ao mapear publicações: ${error.message}`);
+  }
+
+  const out = new Map<number, string>();
+  for (const row of rows ?? []) {
+    const qid = row.published_question_id != null ? Number(row.published_question_id) : NaN;
+    const pubAt = row.published_at ? String(row.published_at) : null;
+    if (!Number.isFinite(qid) || !pubAt) continue;
+    // Dia civil unificado na economia (streak/cutoff) — America/Sao_Paulo
+    out.set(qid, formatDateInTimezone(new Date(pubAt), "America/Sao_Paulo"));
   }
   return out;
 }

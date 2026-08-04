@@ -353,7 +353,10 @@ async function runCaderno(sock: WASocket, caderno: CadernoRow): Promise<void> {
     const botComp = botComparableFromSock(sock);
     if (botComp) exclude.add(botComp);
     const ok = await isDayAnsweredByEngaged(caderno, decision.previousDayIso, exclude);
-    if (!ok) {
+    const tzToday = dateIsoInTimezone(now, caderno.timezone);
+    // Soft-unlock: se o dia civil já passou, avança mesmo com faltosos (penalidade roda antes no tick).
+    const softUnlock = !ok && decision.previousDayIso < tzToday;
+    if (!ok && !softUnlock) {
       const retryIso = new Date(Date.now() + WAIT_RETRY_MS).toISOString();
       await updateCadernoDayState(caderno.id, { nextRunAtIso: retryIso });
       console.log(
@@ -363,9 +366,13 @@ async function runCaderno(sock: WASocket, caderno: CadernoRow): Promise<void> {
       );
       return;
     }
+    if (softUnlock) {
+      console.log(
+        `[caderno-scheduler] caderno ${caderno.id}: soft-unlock do dia ${decision.previousDayIso} (faltosos não bloqueiam mais).`
+      );
+    }
 
     let newDayIso = addDaysIso(decision.previousDayIso, 1);
-    const tzToday = dateIsoInTimezone(now, caderno.timezone);
     if (tzToday > newDayIso) newDayIso = tzToday;
     const firstSlot = resolveDailySlotUtc(
       newDayIso,
@@ -496,7 +503,9 @@ async function runPrivateRecipient(
       decision.previousDayIso,
       eff.timezone
     );
-    if (!ok) {
+    const tzToday = dateIsoInTimezone(now, eff.timezone);
+    const softUnlock = !ok && decision.previousDayIso < tzToday;
+    if (!ok && !softUnlock) {
       const retryIso = new Date(Date.now() + WAIT_RETRY_MS).toISOString();
       await updatePrivateRecipientDayState(recipient.id, { nextRunAtIso: retryIso });
       console.log(
@@ -504,9 +513,13 @@ async function runPrivateRecipient(
       );
       return;
     }
+    if (softUnlock) {
+      console.log(
+        `[caderno-scheduler] privado caderno ${caderno.id} user ${recipient.userJid}: soft-unlock dia ${decision.previousDayIso}.`
+      );
+    }
 
     let newDayIso = addDaysIso(decision.previousDayIso, 1);
-    const tzToday = dateIsoInTimezone(now, eff.timezone);
     if (tzToday > newDayIso) newDayIso = tzToday;
     const firstSlot = resolveDailySlotUtc(newDayIso, 0, eff.timezone, {
       sendTimes: eff.sendTimes,
@@ -603,6 +616,15 @@ async function tick(sock: WASocket): Promise<void> {
   if (running) return;
   running = true;
   try {
+    // Penalidades / avisos ANTES dos envios, para −50 rodar com o dia ainda “preso”
+    // e só depois o soft-unlock avançar o caderno.
+    try {
+      const { runDailyEconomyMaintenance } = await import("./economy/daily");
+      await runDailyEconomyMaintenance(sock);
+    } catch (e) {
+      console.warn("[caderno-scheduler] economy daily:", (e as Error).message);
+    }
+
     const due = await listCadernosDueForRun();
     for (const caderno of due) {
       try {
@@ -642,12 +664,6 @@ async function tick(sock: WASocket): Promise<void> {
       await flushEconomyOutbox(sock);
     } catch (e) {
       console.warn("[caderno-scheduler] economy outbox:", (e as Error).message);
-    }
-    try {
-      const { runDailyEconomyMaintenance } = await import("./economy/daily");
-      await runDailyEconomyMaintenance(sock);
-    } catch (e) {
-      console.warn("[caderno-scheduler] economy daily:", (e as Error).message);
     }
   } catch (e) {
     console.error("[caderno-scheduler] tick:", (e as Error).message);

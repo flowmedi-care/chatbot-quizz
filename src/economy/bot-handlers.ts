@@ -87,7 +87,7 @@ export async function processEconomyAfterAnswer(
       }
     }
 
-    // Streak: se zerou omissas, marca dia
+    // Streak: se zerou omissas de hoje, marca dia
     const gj = input.groupJid || quizGroupJid();
     if (gj) {
       const open = await listUnansweredShortIdsForUser(input.userJid, gj, 50);

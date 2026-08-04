@@ -768,7 +768,7 @@
       <ul>
         <li>Acertar questão: <strong>+2</strong></li>
         <li>Errar questão: <strong>+1</strong> (participação conta)</li>
-        <li>Zerar omissas (1º abre janela 1h): <strong>+4</strong></li>
+        <li>Zerar omissas de <strong>hoje</strong> (1º abre janela 1h): <strong>+4</strong></li>
         <li>Manter streak diário: <strong>+1</strong></li>
         <li>Criar questão: <strong>+1</strong></li>
         <li>Marcos de streak (3/7/15/30) e conquistas de carreira</li>
@@ -783,7 +783,7 @@
       <h2>Créditos Orçamentários</h2>
       <p>Moeda de <strong>gasto</strong>. Ganha junto com a prática; gasta no Portal de compras, em Mandados e em Aplicações.</p>
       <ul>
-        <li>Acerto +2 · Erro +1 · Omissas (janela 1h) +4 · Streak diário +1</li>
+        <li>Acerto +2 · Erro +1 · Omissas de hoje (janela 1h) +4 · Streak diário +1</li>
         <li>Disponível = saldo − escrow (mandados/aplicações)</li>
         <li>Compras no site só debitam após <code>sim</code> no WhatsApp</li>
       </ul>
@@ -871,9 +871,10 @@
       <ul>
         <li>Quebra de streak: −4 Aura</li>
         <li>Dia com zero respostas: −1 Aura</li>
-        <li>Trancar caderno: −50 Aura</li>
+        <li>Trancar caderno (wait_for_answers): −50 Aura — avisos às 19h e 21h; aplica à meia-noite + soft-unlock</li>
         <li>Derrota em Mandado (defensor): −2 Aura</li>
       </ul>
+      <p><strong>Omissas de hoje</strong> valem para streak e bônus. <strong>Atrasadas</strong> (/atrasadas) não. Soft-unlock: o caderno avança à meia-noite mesmo com faltosos.</p>
       <p>Sem “punição obscura”: cada perda aparece no Diário e no Portal da Transparência — clareza aumenta justiça percebida.</p>
     `
   };
@@ -887,8 +888,8 @@
     ["Acertar questão", "Resposta correta via WhatsApp", "+2", "—", "+2", "+2", "—", "Sem limite diário rígido"],
     ["Errar questão", "Resposta incorreta", "+1", "—", "+1", "+1", "—", "Ainda recompensa esforço"],
     ["Criar questão", "nova questao publicada", "+1", "—", "+1", "+1", "—", "—"],
-    ["Zerar omissas (janela 1h)", "1º abre 1h; todos na janela", "+4", "—", "+4", "+4", "por janela", "Flag + ledger"],
-    ["Manter streak", "Participou no dia", "+1", "—", "+1", "+1", "1×/dia", "—"],
+    ["Zerar omissas de hoje (janela 1h)", "1º abre 1h; todos na janela", "+4", "—", "+4", "+4", "por janela", "Só omissas do dia"],
+    ["Manter streak", "Zerou omissas de hoje", "+1", "—", "+1", "+1", "1×/dia", "—"],
     ["Marco streak 3/7/15/30", "Atingiu marco", "bônus", "—", "2–30", "5–50", "por marco", "Ver tabela de marcos"],
     ["Conquista carreira", "Atingiu N respostas", "título", "—", "5–1000", "10–1000", "1×", "Calouro→Nazli"],
     ["Completar caderno", "Fator 0,25×Q (5–40)", "créditos", "—", "0", "5–40", "por caderno", "Capado"],
@@ -899,7 +900,7 @@
     ["Intimar", "/intimar …", "duelo", "stake+taxa", "var", "escrow", "24h · máx 2", "Taxa 10% burn"],
     ["Quebrar streak", "Dia perdido", "—", "−4 Aura", "−4", "0", "—", "Loss aversion"],
     ["Dia zerado", "0 respostas", "—", "−1 Aura", "−1", "0", "1×/dia", "—"],
-    ["Trancar caderno", "Admin/fluxo", "—", "−50 Aura", "−50", "0", "—", "Grave"]
+    ["Trancar caderno", "Faltou no dia com wait_for_answers", "—", "−50 Aura", "−50", "0", "1×/dia caderno", "Aviso 19h/21h · soft-unlock 00h"]
   ];
 
   function loadAcoes() {
@@ -930,7 +931,8 @@
       ["quem respondeu 5", "Lista de respondentes"]
     ],
     cadernos: [
-      ["/omissas", "Lista o que falta (engajado/passivo)"],
+      ["/omissas", "Omissas de hoje (streak) + se trava caderno"],
+      ["/atrasadas", "Backlog antigo (não conta no streak)"],
       ["sim / nao", "Confirma recebimento de enunciados"],
       ["adiantar 2", "Reserva próximos 2 dias (máx. 7)"],
       ["/sync-membros", "Atualiza lista do grupo (no grupo)"]
@@ -1013,7 +1015,9 @@ Agora responder questão gera *Aura* (prestígio) e *Créditos Orçamentários* 
 • Acertar: +2 Aura / +2 Créditos
 • Errar: +1 / +1 (ainda conta esforço)
 • Manter sequência no dia: +1 / +1
-• Zerar omissas (1º abre janela 1h): +4 / +4
+• Zerar omissas de *hoje* (1º abre janela 1h): +4 / +4
+• Atrasadas (/atrasadas) não contam no streak
+• Avisos 19h/21h se faltar; −50 + soft-unlock à meia-noite se travar caderno
 • Marcos de streak (3, 7, 15, 30) e títulos (Calouro → Nazli)
 
 *Comandos úteis*
@@ -1033,7 +1037,7 @@ https://papa-vagas.vercel.app/hub
 Praça dos perfis, Diário Oficial, loja, manual da economia e tabela de ações.
 Compras no site só debitam depois do *sim* no WhatsApp.
 
-Bora farmar Aura. Quem zerar omissas primeiro abre a janela de 1h 👀`;
+Bora farmar Aura. Quem zerar as omissas de *hoje* primeiro abre a janela de 1h 👀`;
 
   function loadAtualizacao() {
     const pre = $("#update-copy-text");
