@@ -18,6 +18,8 @@
     { "source": "/engajamento", "destination": "/engajamento/index.html" },
     { "source": "/engajamento/", "destination": "/engajamento/index.html" },
     { "source": "/cadernos", "destination": "/cadernos/index.html" },
-    { "source": "/cadernos/", "destination": "/cadernos/index.html" }
+    { "source": "/cadernos/", "destination": "/cadernos/index.html" },
+    { "source": "/omissas", "destination": "/omissas/index.html" },
+    { "source": "/omissas/", "destination": "/omissas/index.html" }
   ]
 }

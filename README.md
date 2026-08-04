@@ -43,6 +43,8 @@ npm install
 SUPABASE_URL=https://SEU-PROJETO.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=COLE_AQUI_A_SERVICE_ROLE_KEY
 TARGET_GROUP_JIDS=1203630XXXXXXXXX@g.us
+# opcional — base do link pessoal de omissas (sem barra final)
+PUBLIC_SITE_URL=https://papa-vagas.vercel.app
 ```
 
 Notas:
@@ -52,6 +54,7 @@ Notas:
 - Opcional: `AUTO_GABARITO_WHEN_ALL=false` desliga o envio **automatico** do `/gabarito` no grupo quando o fechamento por **engajamento** aconteceria (ver abaixo).
 - Tabela `group_member_engagement` no Supabase: rode o SQL em `supabase-migration-engagement.sql` se ainda nao existir.
 - Depois rode `supabase-migration-engagement-quiz-display-name.sql` para a coluna `quiz_display_name` (nome gravado ao responder/criar questao).
+- Para omissas no site: rode `supabase-migration-omissas-web-sessions.sql` (tabelas `omissas_web_sessions` e `bot_pending_events`).
 
 ## 5) Rodar em desenvolvimento
 
@@ -107,7 +110,7 @@ Com o modo **desligado**, no privado o bot so le comandos **neutros**: `/quiz`, 
 
 **Auto-gabarito por engajamento:** no grupo, envie **`/sync-membros`** para o bot gravar os participantes no Supabase. No site Papa Vagas, abra **Engajamento** e marque quem participa do fechamento. Quando **todos os engajados** (exceto quem **criou** a questao) tiverem resposta gravada, o bot envia no grupo o mesmo texto de `/gabarito` (uma vez por questao). Quem nao esta engajado pode responder antes ou depois; nao bloqueia. Se ninguem estiver engajado na base, o auto-gabarito nao dispara por esse criterio. Para desligar: `AUTO_GABARITO_WHEN_ALL=false`.
 
-**Omissas (privado):** **`/omissas`** lista só as do **dia** (valem para streak/bônus) e avisa se você está travando algum caderno; **`/atrasadas`** é o backlog. Responda **sim** ou **nao** para receber enunciados. Avisos às 19h e 21h; à meia-noite quem trava leva −50 e o caderno faz soft-unlock (avança mesmo assim). Engajados só veem desde `engaged_since`; passivos só o dia.
+**Omissas (privado):** **`/omissas`** lista só as do **dia** (valem para streak/bônus) e avisa se você está travando algum caderno; **`/atrasadas`** é o backlog. A mensagem inclui um **link pessoal** (`/omissas?t=…`) para resolver no site (com comentário; resultado só no final). Responda **sim** ou **nao** para receber enunciados no WhatsApp. Avisos às 19h e 21h; à meia-noite quem trava leva −50 e o caderno faz soft-unlock (avança mesmo assim). Engajados só veem desde `engaged_since`; passivos só o dia.
 
 ### Ranking (grupo ou privado)
 

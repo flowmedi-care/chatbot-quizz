@@ -31,13 +31,37 @@ import {
   ensureStreak,
   type RewardSideEffects
 } from "./index";
-import { listUnansweredShortIdsForUser } from "../supabase";
+import {
+  listUnansweredShortIdsForUser,
+  listUnprocessedBotPendingEvents,
+  markBotPendingEventProcessed,
+  getCadernoIdForQuestion
+} from "../supabase";
+import { tryAdvanceCadernoAfterAnswer } from "../caderno-scheduler";
 import { todayIso } from "./db";
 
 function quizGroupJid(): string | null {
   if (config.targetGroupJids.length === 0) return null;
   if (config.targetGroupJids.length >= 2) return config.targetGroupJids[1];
   return config.targetGroupJids[0];
+}
+
+/** Hook opcional (auto-gabarito no grupo) — registrado em index.ts para evitar ciclo. */
+let webAnswerExtraSideEffect:
+  | ((sock: WASocket, questionShortId: string) => Promise<void>)
+  | null = null;
+
+export function registerWebAnswerSideEffect(
+  fn: (sock: WASocket, questionShortId: string) => Promise<void>
+): void {
+  webAnswerExtraSideEffect = fn;
+}
+
+function getBotJidComparable(sock: WASocket): string | null {
+  const id = sock.user?.id;
+  if (!id) return null;
+  const bare = id.includes(":") ? id.split(":")[0] : id.split("@")[0];
+  return `${bare}@s.whatsapp.net`.toLowerCase();
 }
 
 export async function dispatchRewardEffects(sock: WASocket, effects: RewardSideEffects | null | undefined): Promise<void> {
@@ -313,5 +337,55 @@ export async function flushEconomyOutbox(sock: WASocket): Promise<void> {
     }
   } catch (e) {
     console.warn("[economy] expire mandados:", (e as Error).message);
+  }
+
+  try {
+    const events = await listUnprocessedBotPendingEvents(40);
+    for (const ev of events) {
+      try {
+        if (ev.kind === "web_answer") {
+          const p = ev.payload;
+          const userJid = String(p.userJid || "");
+          const shortId = String(p.questionShortId || "").toUpperCase();
+          if (!userJid || !shortId) {
+            await markBotPendingEventProcessed(ev.id);
+            continue;
+          }
+          await processEconomyAfterAnswer(sock, {
+            userJid,
+            userName: p.userName != null ? String(p.userName) : "",
+            questionShortId: shortId,
+            questionId: (p.questionId as string | number) ?? shortId,
+            answerLetter: String(p.answerLetter || ""),
+            answerKey: p.answerKey != null ? String(p.answerKey) : null,
+            groupJid: p.groupJid != null ? String(p.groupJid) : quizGroupJid(),
+            wasUpdate: Boolean(p.wasUpdate),
+            previousLetter: p.previousLetter != null ? String(p.previousLetter) : null
+          });
+
+          try {
+            const cadernoId = await getCadernoIdForQuestion(shortId);
+            if (cadernoId != null) {
+              await tryAdvanceCadernoAfterAnswer(sock, cadernoId, getBotJidComparable(sock));
+            }
+          } catch (wakeErr) {
+            console.warn("[economy] web_answer wake:", (wakeErr as Error).message);
+          }
+
+          if (webAnswerExtraSideEffect) {
+            try {
+              await webAnswerExtraSideEffect(sock, shortId);
+            } catch (extraErr) {
+              console.warn("[economy] web_answer extra:", (extraErr as Error).message);
+            }
+          }
+        }
+        await markBotPendingEventProcessed(ev.id);
+      } catch (evErr) {
+        console.warn(`[economy] pending event ${ev.id}:`, (evErr as Error).message);
+      }
+    }
+  } catch (e) {
+    console.warn("[economy] bot_pending_events:", (e as Error).message);
   }
 }

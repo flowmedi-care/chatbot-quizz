@@ -62,6 +62,8 @@ export function buildOmissasPrivateMessage(input: {
   buckets: UnansweredOmissasBuckets;
   locking: LockingStatus[];
   mode: "hoje" | "atrasadas";
+  /** Link pessoal /omissas?t=… (só deste usuário). */
+  webLink?: string | null;
 }): string {
   const lines: string[] = [];
   if (input.mode === "hoje") {
@@ -112,6 +114,13 @@ export function buildOmissasPrivateMessage(input: {
   const offerIds =
     input.mode === "hoje" ? input.buckets.today : input.buckets.atrasadas;
   if (offerIds.length > 0) {
+    if (input.webLink) {
+      lines.push(
+        "",
+        "🌐 Resolver no site (seu link pessoal — só as suas omissas):",
+        input.webLink
+      );
+    }
     lines.push("", "Deseja receber os enunciados aqui? Responda *sim* ou *nao*.");
   }
   return lines.join("\n");

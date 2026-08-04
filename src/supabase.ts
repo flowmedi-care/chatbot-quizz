@@ -3480,3 +3480,169 @@ async function listQueuedPublishedQuestionIdsForGroup(groupJid: string): Promise
   }
   return out;
 }
+
+/* ——— Omissas web sessions + bot pending events ——— */
+
+export type OmissasWebSessionMode = "hoje" | "atrasadas" | "adiantar";
+
+export type OmissasWebSession = {
+  token: string;
+  userJid: string;
+  userName: string | null;
+  groupJid: string;
+  mode: OmissasWebSessionMode;
+  shortIds: string[];
+  createdAt: string;
+  expiresAt: string;
+  completedAt: string | null;
+};
+
+function mapOmissasWebSession(row: Record<string, unknown>): OmissasWebSession {
+  const shortIds = Array.isArray(row.short_ids)
+    ? (row.short_ids as unknown[]).map((s) => String(s).toUpperCase())
+    : [];
+  return {
+    token: String(row.token),
+    userJid: String(row.user_jid),
+    userName: row.user_name != null ? String(row.user_name) : null,
+    groupJid: String(row.group_jid),
+    mode: String(row.mode) as OmissasWebSessionMode,
+    shortIds,
+    createdAt: String(row.created_at),
+    expiresAt: String(row.expires_at),
+    completedAt: row.completed_at != null ? String(row.completed_at) : null
+  };
+}
+
+function newOmissasWebToken(): string {
+  return crypto.randomBytes(24).toString("base64url");
+}
+
+export async function createOmissasWebSession(input: {
+  userJid: string;
+  userName?: string | null;
+  groupJid: string;
+  mode: OmissasWebSessionMode;
+  shortIds: string[];
+  expiresInHours?: number;
+}): Promise<OmissasWebSession> {
+  const token = newOmissasWebToken();
+  const hours = input.expiresInHours ?? 24;
+  const expiresAt = new Date(Date.now() + hours * 60 * 60 * 1000).toISOString();
+  const shortIds = [...new Set(input.shortIds.map((s) => String(s).trim().toUpperCase()).filter(Boolean))];
+
+  const { data, error } = await supabase
+    .from("omissas_web_sessions")
+    .insert({
+      token,
+      user_jid: input.userJid,
+      user_name: input.userName?.trim() || null,
+      group_jid: input.groupJid,
+      mode: input.mode,
+      short_ids: shortIds,
+      expires_at: expiresAt
+    })
+    .select("token, user_jid, user_name, group_jid, mode, short_ids, created_at, expires_at, completed_at")
+    .single();
+
+  if (error) {
+    const msg = error.message.toLowerCase();
+    if (msg.includes("relation") && msg.includes("does not exist")) {
+      throw new Error(
+        "Tabela omissas_web_sessions inexistente. Rode supabase-migration-omissas-web-sessions.sql"
+      );
+    }
+    throw new Error(`Erro ao criar sessao omissas web: ${error.message}`);
+  }
+  return mapOmissasWebSession(data as Record<string, unknown>);
+}
+
+export async function getOmissasWebSessionByToken(token: string): Promise<OmissasWebSession | null> {
+  const t = String(token || "").trim();
+  if (!t) return null;
+  const { data, error } = await supabase
+    .from("omissas_web_sessions")
+    .select("token, user_jid, user_name, group_jid, mode, short_ids, created_at, expires_at, completed_at")
+    .eq("token", t)
+    .maybeSingle();
+  if (error) {
+    const msg = error.message.toLowerCase();
+    if (msg.includes("relation") && msg.includes("does not exist")) {
+      throw new Error(
+        "Tabela omissas_web_sessions inexistente. Rode supabase-migration-omissas-web-sessions.sql"
+      );
+    }
+    throw new Error(`Erro ao buscar sessao omissas web: ${error.message}`);
+  }
+  return data ? mapOmissasWebSession(data as Record<string, unknown>) : null;
+}
+
+export async function markOmissasWebSessionCompleted(token: string): Promise<void> {
+  const { error } = await supabase
+    .from("omissas_web_sessions")
+    .update({ completed_at: new Date().toISOString() })
+    .eq("token", token)
+    .is("completed_at", null);
+  if (error) {
+    console.warn("[omissas-web] mark completed:", error.message);
+  }
+}
+
+export type BotPendingEvent = {
+  id: number;
+  kind: string;
+  payload: Record<string, unknown>;
+  createdAt: string;
+};
+
+export async function enqueueBotPendingEvent(
+  kind: string,
+  payload: Record<string, unknown>
+): Promise<void> {
+  const { error } = await supabase.from("bot_pending_events").insert({
+    kind,
+    payload
+  });
+  if (error) {
+    const msg = error.message.toLowerCase();
+    if (msg.includes("relation") && msg.includes("does not exist")) {
+      throw new Error(
+        "Tabela bot_pending_events inexistente. Rode supabase-migration-omissas-web-sessions.sql"
+      );
+    }
+    throw new Error(`Erro ao enfileirar evento bot: ${error.message}`);
+  }
+}
+
+export async function listUnprocessedBotPendingEvents(limit = 40): Promise<BotPendingEvent[]> {
+  const { data, error } = await supabase
+    .from("bot_pending_events")
+    .select("id, kind, payload, created_at")
+    .is("processed_at", null)
+    .order("created_at", { ascending: true })
+    .limit(limit);
+  if (error) {
+    const msg = error.message.toLowerCase();
+    if (msg.includes("relation") && msg.includes("does not exist")) return [];
+    throw new Error(`Erro ao listar bot_pending_events: ${error.message}`);
+  }
+  return (data || []).map((row) => ({
+    id: Number(row.id),
+    kind: String(row.kind),
+    payload: (row.payload && typeof row.payload === "object" ? row.payload : {}) as Record<
+      string,
+      unknown
+    >,
+    createdAt: String(row.created_at)
+  }));
+}
+
+export async function markBotPendingEventProcessed(id: number): Promise<void> {
+  const { error } = await supabase
+    .from("bot_pending_events")
+    .update({ processed_at: new Date().toISOString() })
+    .eq("id", id);
+  if (error) {
+    console.warn("[bot-pending] mark processed:", error.message);
+  }
+}

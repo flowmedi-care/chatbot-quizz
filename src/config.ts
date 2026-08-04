@@ -27,6 +27,10 @@ export const config = {
     .split(",")
     .map((item) => item.trim())
     .filter(Boolean),
+  /** Base do site (link pessoal de omissas). Sem barra final. */
+  publicSiteUrl: String(process.env.PUBLIC_SITE_URL ?? "https://papa-vagas.vercel.app")
+    .trim()
+    .replace(/\/+$/, "") || "https://papa-vagas.vercel.app",
   /**
    * Quando todos os **engajados** (exceto o criador da questao e o bot) tiverem respondido, posta gabarito no grupo.
    * Requer tabela `group_member_engagement` e pelo menos um `engaged=true` apos /sync-membros.

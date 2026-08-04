@@ -427,6 +427,16 @@ table.ranking-table th {
   gap: 1rem;
 }
 
+.questions-more-wrap {
+  display: flex;
+  justify-content: center;
+  margin-top: 1.25rem;
+}
+
+.questions-more-wrap.hidden {
+  display: none;
+}
+
 .q-card {
   background: var(--bg-card);
   border: 1px solid var(--border);
@@ -1623,3 +1633,187 @@ table.tutorial-table code {
     grid-template-columns: 1fr;
   }
 }
+
+/* ——— Omissas web (sessão pessoal) ——— */
+.omissas-page .omissas-wrap {
+  max-width: 720px;
+}
+
+.omissas-top {
+  margin-bottom: 1.25rem;
+}
+
+.omissas-brand {
+  font-family: var(--display);
+  font-size: 1.75rem;
+  font-weight: 700;
+  color: var(--navy);
+  text-decoration: none;
+}
+
+.omissas-kicker {
+  margin: 0.35rem 0 0;
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
+.omissas-loading {
+  padding: 1.5rem;
+  color: var(--muted);
+}
+
+.omissas-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) + 4px);
+  box-shadow: var(--shadow);
+  padding: 1.25rem 1.35rem 1.5rem;
+}
+
+.omissas-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  margin-bottom: 0.85rem;
+}
+
+.omissas-q-title {
+  font-family: var(--display);
+  font-size: 1.35rem;
+  margin: 0;
+  color: var(--text);
+}
+
+.omissas-q-meta {
+  margin: 0.25rem 0 0;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.omissas-progress {
+  margin: 0;
+  font-weight: 700;
+  color: var(--navy);
+  white-space: nowrap;
+}
+
+.omissas-comment-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-bottom: 1rem;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.omissas-comment-field textarea {
+  width: 100%;
+  resize: vertical;
+  min-height: 4.5rem;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  padding: 0.65rem 0.75rem;
+  font: inherit;
+  color: var(--text);
+  background: #fff;
+}
+
+.omissas-status {
+  margin: 0.5rem 0 0;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.omissas-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin: 1rem 0 1.25rem;
+}
+
+.omissas-stat {
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 0.75rem 1rem;
+  min-width: 6.5rem;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.omissas-stat span {
+  display: block;
+  font-size: 1.5rem;
+  font-weight: 800;
+  color: var(--text);
+  line-height: 1.2;
+}
+
+.omissas-stat.ok span {
+  color: var(--success);
+}
+
+.omissas-stat.bad span {
+  color: var(--danger);
+}
+
+.omissas-results-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.omissas-result-item {
+  border-top: 1px solid var(--border);
+  padding-top: 1rem;
+}
+
+.omissas-result-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+}
+
+.omissas-result-head h3 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.omissas-badge {
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 0.25rem 0.55rem;
+  border-radius: 999px;
+  background: var(--bg-soft);
+  color: var(--muted);
+}
+
+.omissas-badge.ok {
+  background: rgba(4, 120, 87, 0.12);
+  color: var(--success);
+}
+
+.omissas-badge.bad {
+  background: rgba(190, 18, 60, 0.1);
+  color: var(--danger);
+}
+
+.omissas-your-comment {
+  margin: 0.5rem 0;
+}
+
+.omissas-footnote {
+  margin: 1.5rem 0 0;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.omissas-result-item .reveal-box {
+  margin-top: 0.75rem;
+}
+

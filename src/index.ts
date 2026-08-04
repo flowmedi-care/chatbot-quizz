@@ -64,7 +64,8 @@ import {
   setCadernoStatus,
   setQuizModePrivate,
   updateUserAnswer,
-  upsertGroupMembersFromSync
+  upsertGroupMembersFromSync,
+  createOmissasWebSession
 } from "./supabase";
 import { computeNextRunAt, formatNextRunPretty } from "./schedule";
 import { forceRunCaderno, startCadernoScheduler, stopCadernoScheduler, tryAdvanceCadernoAfterAnswer } from "./caderno-scheduler";
@@ -78,7 +79,8 @@ import {
   handleEconomyCommand,
   processEconomyAfterAnswer,
   processEconomyAfterCreateQuestion,
-  tryHandlePurchaseConfirm
+  tryHandlePurchaseConfirm,
+  registerWebAnswerSideEffect
 } from "./economy/bot-handlers";
 import { MediaPayload, QuestionDraft, QuestionType } from "./types";
 
@@ -339,6 +341,33 @@ function getQuizTargetGroupJid(): string {
     return config.targetGroupJids[1];
   }
   return config.targetGroupJids[0];
+}
+
+function buildOmissasWebLink(token: string): string {
+  return `${config.publicSiteUrl}/omissas?t=${encodeURIComponent(token)}`;
+}
+
+async function tryCreateOmissasWebLink(input: {
+  userJid: string;
+  userName?: string | null;
+  groupJid: string;
+  mode: "hoje" | "atrasadas" | "adiantar";
+  shortIds: string[];
+}): Promise<string | null> {
+  if (!input.shortIds.length) return null;
+  try {
+    const session = await createOmissasWebSession({
+      userJid: input.userJid,
+      userName: input.userName,
+      groupJid: input.groupJid,
+      mode: input.mode,
+      shortIds: input.shortIds
+    });
+    return buildOmissasWebLink(session.token);
+  } catch (e) {
+    console.warn("[omissas-web] create session:", (e as Error).message);
+    return null;
+  }
 }
 
 function extractFileExtension(mimeType: string): string {
@@ -864,6 +893,9 @@ async function startBot(): Promise<void> {
     if (connection === "open") {
       console.log(`Bot conectado no WhatsApp. (instancia ${instanceId})`);
       isStarting = false;
+      registerWebAnswerSideEffect(async (s, shortId) => {
+        await maybePostAutoGabaritoToGroup(s, shortId);
+      });
       startCadernoScheduler(sock);
       startFlashcardsBot(sock);
     }
@@ -1149,8 +1181,18 @@ async function startBot(): Promise<void> {
               if (offerIds.length > 0) {
                 omissasOfferByUser.set(sender, offerIds);
               }
+              const webLink =
+                offerIds.length > 0
+                  ? await tryCreateOmissasWebLink({
+                      userJid: sender,
+                      userName: getDisplayName(msg, sender),
+                      groupJid: gj,
+                      mode,
+                      shortIds: offerIds
+                    })
+                  : null;
               await sock.sendMessage(remoteJid, {
-                text: buildOmissasPrivateMessage({ buckets, locking, mode })
+                text: buildOmissasPrivateMessage({ buckets, locking, mode, webLink })
               });
             } catch (omErr) {
               await sock.sendMessage(remoteJid, {
@@ -1195,12 +1237,22 @@ async function startBot(): Promise<void> {
                 continue;
               }
               omissasOfferByUser.set(sender, allShortIds);
+              const webLink = await tryCreateOmissasWebLink({
+                userJid: sender,
+                userName: getDisplayName(msg, sender),
+                groupJid: gj,
+                mode: "adiantar",
+                shortIds: allShortIds
+              });
               await sock.sendMessage(remoteJid, {
                 text: [
                   ...summaries,
                   "",
                   "Questoes adiantadas:",
                   ...allShortIds.map((id, i) => `${i + 1}. #${id}`),
+                  ...(webLink
+                    ? ["", "🌐 Resolver no site (seu link pessoal):", webLink]
+                    : []),
                   "",
                   "Deseja receber os enunciados agora? Responda sim ou nao.",
                   "(Elas entram em /omissas no dia em que forem liberadas; ate la podem aparecer em /atrasadas se ja publicadas.)"

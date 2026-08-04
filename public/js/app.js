@@ -26,6 +26,8 @@
     qaStatsTableWrap: document.getElementById("qa-stats-table-wrap"),
     qaStatsWarning: document.getElementById("qa-stats-warning"),
     questionsGrid: document.getElementById("questions-grid"),
+    questionsMoreWrap: document.getElementById("questions-more-wrap"),
+    btnQuestionsMore: document.getElementById("btn-questions-more"),
     loadErr: document.getElementById("load-error"),
     modal: document.getElementById("modal-overlay"),
     modalTitle: document.getElementById("modal-title"),
@@ -128,6 +130,8 @@
   };
 
   let questionsList = [];
+  const QUESTIONS_PREVIEW_LIMIT = 9;
+  let questionsShowAll = false;
   /** @type {null | { questions: any[], answers: any[], participants: any[], warning?: string }} */
   let reportData = null;
 
@@ -289,14 +293,33 @@
 
   function applyFiltersAndRender() {
     const filtered = (questionsList || []).filter((q) => questionPasses(q.shortId));
-    renderQuestions(filtered);
+    const hasMore = filtered.length > QUESTIONS_PREVIEW_LIMIT;
+    const visible =
+      questionsShowAll || !hasMore ? filtered : filtered.slice(0, QUESTIONS_PREVIEW_LIMIT);
+    renderQuestions(visible);
+
+    if (els.questionsMoreWrap && els.btnQuestionsMore) {
+      if (hasMore) {
+        els.questionsMoreWrap.classList.remove("hidden");
+        els.btnQuestionsMore.textContent = questionsShowAll
+          ? "Mostrar menos"
+          : `Mostrar todas (${filtered.length})`;
+      } else {
+        els.questionsMoreWrap.classList.add("hidden");
+      }
+    }
+
     if (els.filtersHint) {
       if (!reportData || !questionsList.length) {
         els.filtersHint.textContent = "";
       } else if (els.filterPerson.value === "__all__") {
-        els.filtersHint.textContent = `${questionsList.length} questão(ões) no grupo.`;
+        els.filtersHint.textContent = questionsShowAll || !hasMore
+          ? `${questionsList.length} questão(ões) no grupo.`
+          : `Mostrando as ${QUESTIONS_PREVIEW_LIMIT} mais recentes de ${questionsList.length}.`;
       } else {
-        els.filtersHint.textContent = `Mostrando ${filtered.length} de ${questionsList.length} com os filtros atuais.`;
+        els.filtersHint.textContent = questionsShowAll || !hasMore
+          ? `Mostrando ${filtered.length} de ${questionsList.length} com os filtros atuais.`
+          : `Mostrando ${visible.length} de ${filtered.length} com os filtros atuais.`;
       }
     }
   }
@@ -2378,12 +2401,25 @@
 
       if (els.filterPerson) {
         els.filterPerson.addEventListener("change", () => {
+          questionsShowAll = false;
           updateOutcomeOptions();
           applyFiltersAndRender();
         });
       }
       if (els.filterOutcome) {
-        els.filterOutcome.addEventListener("change", applyFiltersAndRender);
+        els.filterOutcome.addEventListener("change", () => {
+          questionsShowAll = false;
+          applyFiltersAndRender();
+        });
+      }
+      if (els.btnQuestionsMore) {
+        els.btnQuestionsMore.addEventListener("click", () => {
+          questionsShowAll = !questionsShowAll;
+          applyFiltersAndRender();
+          if (!questionsShowAll && els.questionsMoreWrap) {
+            els.questionsMoreWrap.scrollIntoView({ behavior: "smooth", block: "nearest" });
+          }
+        });
       }
 
       applyFiltersAndRender();

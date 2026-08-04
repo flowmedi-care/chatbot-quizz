@@ -931,7 +931,7 @@
       ["quem respondeu 5", "Lista de respondentes"]
     ],
     cadernos: [
-      ["/omissas", "Omissas de hoje (streak) + se trava caderno"],
+      ["/omissas", "Omissas de hoje + link pessoal no site + se trava caderno"],
       ["/atrasadas", "Backlog antigo (não conta no streak)"],
       ["sim / nao", "Confirma recebimento de enunciados"],
       ["adiantar 2", "Reserva próximos 2 dias (máx. 7)"],
