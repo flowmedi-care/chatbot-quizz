@@ -206,6 +206,241 @@ async function upsertAnswer(supabase, input) {
   return { wasUpdate: false, previousLetter: null };
 }
 
+async function handleOmissasSession(req, res) {
+  if (req.method !== "GET") return res.status(405).json({ error: "Method not allowed" });
+
+  const token = String(req.query.t || req.query.token || "").trim();
+
+  try {
+    const supabase = getClient();
+    const loaded = await loadSession(supabase, token);
+    if (loaded.error) return res.status(loaded.status).json({ error: loaded.error });
+
+    const { session } = loaded;
+    const questions = await fetchQuestionsByShortIds(supabase, session.shortIds);
+    const answers = await fetchUserAnswersForShortIds(supabase, session.userJid, session.shortIds);
+
+    const list = session.shortIds.map((sid) => {
+      const q = questions.find((x) => String(x.short_id).toUpperCase() === sid);
+      const ans = answers.get(sid) || null;
+      if (!q) {
+        return {
+          shortId: sid,
+          missing: true,
+          alreadyAnswered: Boolean(ans),
+          yourLetter: ans ? ans.letter : null
+        };
+      }
+      return {
+        shortId: sid,
+        creatorName: q.creator_name || "Autor",
+        questionType: q.question_type,
+        statementText: q.statement_text || "",
+        statementMediaUrl: q.statement_media_url || null,
+        statementMediaMimeType: q.statement_media_mime_type || null,
+        alreadyAnswered: Boolean(ans),
+        yourLetter: ans ? ans.letter : null,
+        yourComment: ans ? ans.comment : null,
+        missing: false
+      };
+    });
+
+    const pending = list.filter((q) => !q.missing && !q.alreadyAnswered);
+    const answeredCount = list.filter((q) => q.alreadyAnswered).length;
+
+    return res.status(200).json({
+      mode: session.mode,
+      expiresAt: session.expiresAt,
+      completedAt: session.completedAt,
+      total: list.length,
+      answeredCount,
+      pendingCount: pending.length,
+      questions: list
+    });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ error: e.message || "Erro ao carregar sessão" });
+  }
+}
+
+async function handleOmissasAnswer(req, res) {
+  if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
+
+  let body = {};
+  try {
+    body = typeof req.body === "string" ? JSON.parse(req.body || "{}") : req.body || {};
+  } catch {
+    return res.status(400).json({ error: "JSON inválido" });
+  }
+
+  const token = String(body.t || body.token || "").trim();
+  const shortId = String(body.shortId || "")
+    .trim()
+    .toUpperCase();
+  const comment = body.comment != null ? String(body.comment) : "";
+
+  try {
+    const supabase = getClient();
+    const loaded = await loadSession(supabase, token);
+    if (loaded.error) return res.status(loaded.status).json({ error: loaded.error });
+
+    const { session } = loaded;
+    if (!session.shortIds.includes(shortId)) {
+      return res.status(403).json({ error: "Esta questão não faz parte da sua sessão." });
+    }
+
+    const questions = await fetchQuestionsByShortIds(supabase, [shortId]);
+    const q = questions[0];
+    if (!q) return res.status(404).json({ error: "Questão não encontrada" });
+
+    const letter = normalizeLetter(body.letter, q.question_type);
+    if (!letter) {
+      return res.status(400).json({
+        error:
+          q.question_type === "true_false"
+            ? "Resposta inválida. Use C (certo) ou E (errado)."
+            : "Resposta inválida. Use A, B, C, D ou E."
+      });
+    }
+
+    let saveResult;
+    try {
+      saveResult = await upsertAnswer(supabase, {
+        questionId: q.id,
+        shortId,
+        userJid: session.userJid,
+        userName: session.userName,
+        letter,
+        comment,
+        creatorJid: q.creator_jid
+      });
+    } catch (e) {
+      if (e.code === "SELF_ANSWER") {
+        return res.status(403).json({ error: e.message });
+      }
+      throw e;
+    }
+
+    await enqueueBotEvent(supabase, "web_answer", {
+      userJid: session.userJid,
+      userName: session.userName,
+      questionShortId: shortId,
+      questionId: q.id,
+      answerLetter: letter,
+      answerKey: q.answer_key,
+      groupJid: session.groupJid,
+      wasUpdate: saveResult.wasUpdate,
+      previousLetter: saveResult.previousLetter,
+      sessionToken: session.token
+    });
+
+    const answers = await fetchUserAnswersForShortIds(supabase, session.userJid, session.shortIds);
+    const pendingIds = session.shortIds.filter((sid) => !answers.has(sid));
+    const allDone = pendingIds.length === 0;
+    if (allDone) {
+      await markSessionCompleted(supabase, session.token);
+    }
+
+    return res.status(200).json({
+      ok: true,
+      shortId,
+      answeredCount: session.shortIds.length - pendingIds.length,
+      pendingCount: pendingIds.length,
+      sessionComplete: allDone
+    });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ error: e.message || "Erro ao salvar resposta" });
+  }
+}
+
+async function handleOmissasResults(req, res) {
+  if (req.method !== "GET") return res.status(405).json({ error: "Method not allowed" });
+
+  const token = String(req.query.t || req.query.token || "").trim();
+
+  try {
+    const supabase = getClient();
+    const loaded = await loadSession(supabase, token);
+    if (loaded.error) return res.status(loaded.status).json({ error: loaded.error });
+
+    const { session } = loaded;
+    const questions = await fetchQuestionsByShortIds(supabase, session.shortIds);
+    const answers = await fetchUserAnswersForShortIds(supabase, session.userJid, session.shortIds);
+
+    const playable = session.shortIds.filter((sid) => {
+      const q = questions.find((x) => String(x.short_id).toUpperCase() === sid);
+      return Boolean(q);
+    });
+
+    const unanswered = playable.filter((sid) => !answers.has(sid));
+    if (unanswered.length > 0 && !session.completedAt) {
+      return res.status(409).json({
+        error: "Ainda há questões pendentes nesta sessão.",
+        pendingCount: unanswered.length
+      });
+    }
+
+    let correctCount = 0;
+    let wrongCount = 0;
+    const items = [];
+
+    for (const sid of session.shortIds) {
+      const q = questions.find((x) => String(x.short_id).toUpperCase() === sid);
+      const ans = answers.get(sid);
+      if (!q) {
+        items.push({
+          shortId: sid,
+          missing: true,
+          statementText: null,
+          yourLetter: ans ? ans.letter : null,
+          yourComment: ans ? ans.comment : null,
+          answerKey: null,
+          correct: null
+        });
+        continue;
+      }
+
+      const expected = String(q.answer_key || "")
+        .trim()
+        .toLowerCase()
+        .slice(0, 1);
+      const yours = ans ? String(ans.letter).toLowerCase().slice(0, 1) : null;
+      const correct = yours != null && expected ? yours === expected : null;
+      if (correct === true) correctCount += 1;
+      else if (correct === false) wrongCount += 1;
+
+      items.push({
+        shortId: sid,
+        missing: false,
+        creatorName: q.creator_name || "Autor",
+        questionType: q.question_type,
+        statementText: q.statement_text || "",
+        statementMediaUrl: q.statement_media_url || null,
+        statementMediaMimeType: q.statement_media_mime_type || null,
+        yourLetter: yours,
+        yourComment: ans ? ans.comment : null,
+        answerKey: expected ? expected.toUpperCase() : null,
+        correct,
+        explanationText: q.explanation_text || null,
+        explanationMediaUrl: q.explanation_media_url || null,
+        explanationMediaMimeType: q.explanation_media_mime_type || null
+      });
+    }
+
+    return res.status(200).json({
+      mode: session.mode,
+      correctCount,
+      wrongCount,
+      total: playable.length,
+      items
+    });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ error: e.message || "Erro ao carregar resultados" });
+  }
+}
+
 module.exports = {
   getClient,
   pickTargetGroupJid,
@@ -218,5 +453,8 @@ module.exports = {
   fetchUserAnswersForShortIds,
   enqueueBotEvent,
   markSessionCompleted,
-  upsertAnswer
+  upsertAnswer,
+  handleOmissasSession,
+  handleOmissasAnswer,
+  handleOmissasResults
 };
