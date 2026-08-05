@@ -7,11 +7,11 @@
   --paper-2: #f3eee6;
   --card: #fffdfb;
   --line: rgba(28, 25, 23, 0.1);
-  --accent: #c2410c;
-  --accent-2: #9a3412;
-  --accent-soft: #fff7ed;
-  --navy: #1e3a5f;
-  --navy-soft: rgba(30, 58, 95, 0.08);
+  --accent: #e85d04;
+  --accent-2: #c2410c;
+  --accent-soft: #fff4e8;
+  --navy: #101d33;
+  --navy-soft: rgba(16, 29, 51, 0.08);
   --gold: #b45309;
   --success: #047857;
   --danger: #be123c;
@@ -73,11 +73,25 @@ a {
 }
 
 .hub-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.65rem;
+  text-decoration: none;
+  color: inherit;
+}
+
+.hub-brand .brand-mark {
+  width: 40px;
+  height: 40px;
+  object-fit: contain;
+  display: block;
+  flex-shrink: 0;
+}
+
+.hub-brand-text {
   display: flex;
   align-items: baseline;
   gap: 0.55rem;
-  text-decoration: none;
-  color: inherit;
 }
 
 .hub-brand strong {

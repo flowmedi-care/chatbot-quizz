@@ -1,5 +1,5 @@
 :root {
-  /* Tema institucional + jogo: papel, navy, terracota */
+  /* Tema institucional + mascote: navy + laranja Aprovado */
   --bg: #faf8f5;
   --bg-soft: #f3eee6;
   --bg-card: #ffffff;
@@ -7,10 +7,10 @@
   --border: rgba(61, 48, 36, 0.12);
   --text: #292524;
   --muted: #78716c;
-  --accent: #c2410c;
-  --accent-dim: rgba(194, 65, 12, 0.12);
-  --accent-soft-bg: #fff7ed;
-  --navy: #1e3a5f;
+  --accent: #e85d04;
+  --accent-dim: rgba(232, 93, 4, 0.12);
+  --accent-soft-bg: #fff4e8;
+  --navy: #101d33;
   --success: #047857;
   --danger: #be123c;
   --radius: 14px;
@@ -51,7 +51,7 @@ a {
 body.home-page {
   background:
     radial-gradient(ellipse 1100px 520px at 50% -20%, rgba(30, 58, 95, 0.09), transparent 55%),
-    radial-gradient(ellipse 800px 400px at 100% 10%, rgba(194, 65, 12, 0.07), transparent 50%),
+    radial-gradient(ellipse 800px 400px at 100% 10%, rgba(232, 93, 4, 0.08), transparent 50%),
     linear-gradient(180deg, #f7f4ef 0%, var(--bg-soft) 42%, #ebe4d8 100%);
 }
 
@@ -81,6 +81,31 @@ body.home-page {
   font-weight: 700;
   letter-spacing: -0.02em;
   flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.brand-mark {
+  width: 40px;
+  height: 40px;
+  object-fit: contain;
+  flex-shrink: 0;
+  display: block;
+}
+
+.home-hero-logo-wrap {
+  display: flex;
+  justify-content: center;
+  margin: 0 0 0.75rem;
+}
+
+.home-hero-logo {
+  width: clamp(88px, 18vw, 120px);
+  height: auto;
+  display: block;
+  filter: drop-shadow(0 10px 24px rgba(16, 29, 51, 0.18));
+  animation: home-fade-up 0.55s ease both;
 }
 
 .site-nav-brand:hover {
@@ -206,13 +231,13 @@ body.home-page {
   background: var(--accent);
   color: #fff !important;
   border: 1px solid var(--accent);
-  box-shadow: 0 8px 24px rgba(194, 65, 12, 0.22);
+  box-shadow: 0 8px 24px rgba(232, 93, 4, 0.25);
   transition: transform 0.15s ease, background 0.15s ease;
 }
 
 .btn-primary:hover {
-  background: #9a3412;
-  border-color: #9a3412;
+  background: #c2410c;
+  border-color: #c2410c;
   transform: translateY(-1px);
 }
 
@@ -1996,10 +2021,21 @@ table.tutorial-table code {
 
 .omissas-brand {
   font-family: var(--display);
-  font-size: 1.75rem;
+  font-size: 1.5rem;
   font-weight: 700;
   color: var(--navy);
   text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.omissas-brand .brand-mark {
+  width: 36px;
+  height: 36px;
+  object-fit: contain;
+  display: block;
+  flex-shrink: 0;
 }
 
 .omissas-kicker {

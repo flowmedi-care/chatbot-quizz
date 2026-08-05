@@ -49,17 +49,31 @@ body[data-page="cadernos"] {
 }
 
 .cb-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  text-decoration: none;
+  color: inherit;
+}
+
+.cb-brand .brand-mark {
+  width: 40px;
+  height: 40px;
+  object-fit: contain;
+  display: block;
+  flex-shrink: 0;
+}
+
+.cb-brand-text {
   display: flex;
   align-items: baseline;
   gap: 0.5rem;
-  text-decoration: none;
-  color: inherit;
 }
 
 .cb-brand strong {
   font-family: var(--display, "Fraunces", Georgia, serif);
   font-size: 1.25rem;
-  color: var(--navy, #1e3a5f);
+  color: var(--navy, #101d33);
 }
 
 .cb-brand span {
@@ -67,8 +81,8 @@ body[data-page="cadernos"] {
   font-weight: 800;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--navy, #1e3a5f);
-  background: rgba(30, 58, 95, 0.08);
+  color: var(--navy, #101d33);
+  background: rgba(16, 29, 51, 0.08);
   padding: 0.2rem 0.5rem;
   border-radius: 999px;
 }

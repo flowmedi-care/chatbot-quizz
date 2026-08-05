@@ -7,8 +7,8 @@
   --paper-2: #f3eee6;
   --card: #fffdfb;
   --line: rgba(28, 25, 23, 0.1);
-  --accent: #c2410c;
-  --navy: #1e3a5f;
+  --accent: #e85d04;
+  --navy: #101d33;
   --success: #047857;
   --danger: #be123c;
   --warn: #b45309;
@@ -49,21 +49,38 @@ body.atv-page {
 .atv-brand {
   text-decoration: none;
   color: inherit;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.65rem;
+}
+
+.atv-brand .brand-mark {
+  width: 40px;
+  height: 40px;
+  object-fit: contain;
+  display: block;
+  flex-shrink: 0;
+}
+
+.atv-brand-text {
   display: flex;
   flex-direction: column;
-  gap: 0.1rem;
+  gap: 0.05rem;
+  line-height: 1.15;
 }
 
 .atv-brand strong {
   font-family: var(--display);
-  font-size: 1.35rem;
+  font-size: 1.2rem;
+  font-weight: 700;
 }
 
 .atv-brand span {
-  font-size: 0.78rem;
+  font-size: 0.72rem;
   color: var(--muted);
   letter-spacing: 0.04em;
   text-transform: uppercase;
+  font-weight: 700;
 }
 
 .atv-top-links {
