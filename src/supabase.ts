@@ -2,8 +2,18 @@ import { createClient } from "@supabase/supabase-js";
 import crypto from "node:crypto";
 import { config } from "./config";
 import type { SendTimeSlot } from "./schedule";
-import { addDaysIso, dateIsoInTimezone, parseSendTimesJson } from "./schedule";
+import {
+  addDaysIso,
+  dateIsoInTimezone,
+  formatDayLabelPt,
+  nextNDayIsosAfter,
+  omissaDayIsoForInstant,
+  parseSendTimesJson,
+  WEEKDAY_LABELS_PT,
+  weekDayIsos
+} from "./schedule";
 import { AnswerInput, CreateQuestionInput, QuestionType } from "./types";
+import { ECONOMY_TZ, OMISSAS_SCHEDULE } from "./economy/constants";
 
 const supabase = createClient(config.supabaseUrl, config.supabaseServiceRoleKey);
 const ASSETS_BUCKET = "question-assets";
@@ -161,9 +171,17 @@ async function uploadMedia(
   return { url: publicUrl, mimeType: media.mimeType };
 }
 
-export async function createQuestion(input: CreateQuestionInput): Promise<{ shortId: string }> {
+export async function createQuestion(
+  input: CreateQuestionInput
+): Promise<{ shortId: string; omissaDayIso: string }> {
   const statementUpload = await uploadMedia("statement", input.statementMedia);
   const explanationUpload = await uploadMedia("explanation", input.explanationMedia);
+  const omissaDayIso = omissaDayIsoForInstant(
+    new Date(),
+    ECONOMY_TZ,
+    OMISSAS_SCHEDULE.cutoffHour,
+    OMISSAS_SCHEDULE.cutoffMinute
+  );
 
   const insertRow: Record<string, unknown> = {
     // Campos novos (fluxo wizard)
@@ -178,6 +196,7 @@ export async function createQuestion(input: CreateQuestionInput): Promise<{ shor
     explanation_text: input.explanationText,
     explanation_media_url: explanationUpload?.url ?? null,
     explanation_media_mime_type: explanationUpload?.mimeType ?? null,
+    omissa_day_iso: omissaDayIso,
     // Compatibilidade com schema legado
     group_jid: input.targetGroupJid,
     sender_jid: input.creatorJid,
@@ -210,6 +229,19 @@ export async function createQuestion(input: CreateQuestionInput): Promise<{ shor
     error = retry.error;
   }
 
+  if (
+    error &&
+    insertRow.omissa_day_iso != null &&
+    String(error.message || "")
+      .toLowerCase()
+      .includes("omissa_day_iso")
+  ) {
+    delete insertRow.omissa_day_iso;
+    const retry = await supabase.from("questions").insert(insertRow).select("id").single();
+    data = retry.data;
+    error = retry.error;
+  }
+
   if (error || !data) {
     throw new Error(`Erro ao criar questao: ${error?.message ?? "sem dados"}`);
   }
@@ -233,7 +265,7 @@ export async function createQuestion(input: CreateQuestionInput): Promise<{ shor
     console.warn("[engagement] quiz_display_name (criador):", (e as Error).message);
   }
 
-  return { shortId };
+  return { shortId, omissaDayIso };
 }
 
 function looksLikeRawJidLabel(s: string): boolean {
@@ -2568,6 +2600,27 @@ export async function deleteCadernoSendQueue(cadernoId: number): Promise<void> {
   }
 }
 
+export async function listQueueItemsForDay(
+  cadernoId: number,
+  plannedDayIso: string
+): Promise<CadernoSendQueueRow[]> {
+  const { data, error } = await supabase
+    .from("caderno_send_queue")
+    .select(
+      "id, caderno_id, caderno_question_id, planned_day_iso, slot_index, published_question_id, released_at"
+    )
+    .eq("caderno_id", cadernoId)
+    .eq("planned_day_iso", plannedDayIso)
+    .order("slot_index", { ascending: true });
+
+  if (error) {
+    const msg = error.message.toLowerCase();
+    if (msg.includes("relation") && msg.includes("does not exist")) return [];
+    throw new Error(`Erro ao listar fila do dia: ${error.message}`);
+  }
+  return (data ?? []).map((row) => mapCadernoSendQueueRow(row as Record<string, unknown>));
+}
+
 export async function listFutureQueueDays(cadernoId: number): Promise<string[]> {
   const { data, error } = await supabase
     .from("caderno_send_queue")
@@ -2607,65 +2660,222 @@ export async function countUnreleasedQueueItems(cadernoId: number): Promise<numb
   return count || 0;
 }
 
-/**
- * Reserva e materializa questões para os próximos `days` dias (após o dia corrente
- * do caderno / hoje). Retorna short_ids criados/reutilizados.
- */
-export async function adiantarCadernoQuestions(
+export type DayActivityStatus =
+  | "feito"
+  | "pendente"
+  | "atrasado"
+  | "passou"
+  | "hoje";
+
+export type UserCadernoDayStatus = {
+  dayIso: string;
+  status: DayActivityStatus;
+  questionIds: number[];
+  shortIds: string[];
+  answeredCount: number;
+  totalCount: number;
+  label: string;
+};
+
+async function resolveQuestionIdsForCadernoDay(
   caderno: CadernoRow,
-  days: number
-): Promise<{ shortIds: string[]; daysFilled: number; plannedDays: string[]; message: string }> {
+  dayIso: string
+): Promise<{ questionIds: number[]; fromQueue: boolean }> {
+  const tz = caderno.timezone || "America/Sao_Paulo";
+  const queue = await listQueueItemsForDay(caderno.id, dayIso);
+  const fromQueueIds = queue
+    .map((q) => q.publishedQuestionId)
+    .filter((id): id is number => id != null && Number.isFinite(id));
+
+  if (fromQueueIds.length > 0) {
+    return { questionIds: [...new Set(fromQueueIds)], fromQueue: true };
+  }
+
+  const published = await listCadernoQuestionsPublishedOnDate(caderno.id, dayIso, tz);
+  return {
+    questionIds: published.map((p) => p.publishedQuestionId),
+    fromQueue: false
+  };
+}
+
+function weekdayLabelForIso(dayIso: string): string {
+  const [y, m, d] = dayIso.split("-").map(Number);
+  const utcDay = new Date(Date.UTC(y, m - 1, d, 12, 0, 0)).getUTCDay();
+  const idx = utcDay === 0 ? 6 : utcDay - 1;
+  return WEEKDAY_LABELS_PT[idx];
+}
+
+/**
+ * Status do usuário para um dia de um caderno (fila adiantada e/ou publicadas no dia).
+ */
+export async function getUserCadernoDayStatus(
+  caderno: CadernoRow,
+  userJid: string,
+  dayIso: string,
+  todayIso?: string
+): Promise<UserCadernoDayStatus> {
+  const tz = caderno.timezone || "America/Sao_Paulo";
+  const today = todayIso || dateIsoInTimezone(new Date(), tz);
+  const { questionIds } = await resolveQuestionIdsForCadernoDay(caderno, dayIso);
+  const shortIds: string[] = [];
+  for (const qid of questionIds) {
+    const sid = await getQuestionShortIdByDbId(qid);
+    if (sid) shortIds.push(sid);
+  }
+
+  const answersByQ = await listAnswersForQuestionIds(questionIds);
+  const userKey = jidComparableKeyShared(userJid);
+  let answeredCount = 0;
+  for (const qid of questionIds) {
+    if (answersByQ.get(qid)?.has(userKey)) answeredCount += 1;
+  }
+  const totalCount = questionIds.length;
+  const allDone = totalCount > 0 && answeredCount >= totalCount;
+
+  let status: DayActivityStatus;
+  if (dayIso === today) {
+    if (allDone) status = "feito";
+    else status = "hoje";
+  } else if (dayIso < today) {
+    if (totalCount === 0) status = "passou";
+    else if (allDone) status = "feito";
+    else status = "atrasado";
+  } else if (totalCount === 0) {
+    status = "pendente";
+  } else if (allDone) {
+    status = "feito";
+  } else {
+    status = "pendente";
+  }
+
+  return {
+    dayIso,
+    status,
+    questionIds,
+    shortIds,
+    answeredCount,
+    totalCount,
+    label: `${weekdayLabelForIso(dayIso)} ${formatDayLabelPt(dayIso)}`
+  };
+}
+
+/** Agrega status do usuário em vários cadernos. */
+export function mergeDayStatuses(statuses: UserCadernoDayStatus[]): DayActivityStatus {
+  if (statuses.length === 0) return "passou";
+  if (statuses.some((s) => s.status === "atrasado")) return "atrasado";
+  if (statuses.some((s) => s.status === "hoje")) return "hoje";
+  const withQ = statuses.filter((s) => s.totalCount > 0);
+  if (withQ.length > 0 && withQ.every((s) => s.status === "feito")) return "feito";
+  if (statuses.some((s) => s.status === "pendente")) return "pendente";
+  if (statuses.every((s) => s.status === "feito")) return "feito";
+  if (statuses.every((s) => s.status === "passou")) return "passou";
+  return "pendente";
+}
+
+export type AdiantarDayResult = {
+  dayIso: string;
+  status: "feito" | "pendente" | "novo" | "skipped" | "error";
+  shortIds: string[];
+  message: string;
+  newlyReserved: boolean;
+};
+
+export type AdiantarCadernoResult = {
+  shortIds: string[];
+  daysFilled: number;
+  plannedDays: string[];
+  newlyPlannedDays: string[];
+  dayResults: AdiantarDayResult[];
+  message: string;
+};
+
+/**
+ * Adianta dias explícitos: não pula dias já na fila.
+ * - fila existe + user respondeu tudo → "já feito"
+ * - fila existe + falta responder → reoferece short_ids
+ * - sem fila → materializa
+ */
+export async function adiantarCadernoDays(
+  caderno: CadernoRow,
+  dayIsos: string[],
+  userJid: string
+): Promise<AdiantarCadernoResult> {
   const N = Math.max(1, caderno.questionsPerDay);
   const tz = caderno.timezone || "America/Sao_Paulo";
   const todayIso = dateIsoInTimezone(new Date(), tz);
+  const uniqueDays = [...new Set(dayIsos.filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)))].sort();
 
-  let startDayIso: string;
-  if (caderno.currentDayDate) {
-    const nextAfterCurrent = addDaysIso(caderno.currentDayDate, 1);
-    startDayIso = nextAfterCurrent > todayIso ? nextAfterCurrent : addDaysIso(todayIso, 1);
-  } else {
-    startDayIso = addDaysIso(todayIso, 1);
-  }
-
-  const existingDays = await listFutureQueueDays(caderno.id);
-  const occupied = new Set(existingDays);
-  const daysToFill: string[] = [];
-  let cursor = startDayIso;
-  for (let guard = 0; guard < 60 && daysToFill.length < days; guard++) {
-    if (!occupied.has(cursor)) daysToFill.push(cursor);
-    cursor = addDaysIso(cursor, 1);
-  }
-
-  if (daysToFill.length === 0) {
-    return {
-      shortIds: [],
-      daysFilled: 0,
-      plannedDays: [],
-      message: `Caderno #${caderno.id} já tem os próximos dias reservados na fila.`
-    };
-  }
-
-  const need = daysToFill.length * N;
-  const pending = await listNextCadernoQuestionsToSend(caderno.id, need, caderno.randomOrder);
-  if (pending.length === 0) {
-    return {
-      shortIds: [],
-      daysFilled: 0,
-      plannedDays: [],
-      message: `Caderno #${caderno.id} sem questões pendentes para adiantar.`
-    };
-  }
-
-  const shortIds: string[] = [];
-  const filledDays: string[] = [];
-  let qi = 0;
+  const dayResults: AdiantarDayResult[] = [];
+  const offerShortIds: string[] = [];
+  const newlyPlannedDays: string[] = [];
   let daysFilled = 0;
 
-  for (const dayIso of daysToFill) {
+  for (const dayIso of uniqueDays) {
+    if (dayIso <= todayIso) {
+      dayResults.push({
+        dayIso,
+        status: "skipped",
+        shortIds: [],
+        message: `${formatDayLabelPt(dayIso)}: use /omissas para hoje (ou dia já passou).`,
+        newlyReserved: false
+      });
+      continue;
+    }
+
+    const queue = await listQueueItemsForDay(caderno.id, dayIso);
+    if (queue.length > 0) {
+      const questionIds = queue
+        .map((q) => q.publishedQuestionId)
+        .filter((id): id is number => id != null && Number.isFinite(id));
+      const shortIds: string[] = [];
+      for (const qid of questionIds) {
+        const sid = await getQuestionShortIdByDbId(qid);
+        if (sid) shortIds.push(sid);
+      }
+      const answersByQ = await listAnswersForQuestionIds(questionIds);
+      const userKey = jidComparableKeyShared(userJid);
+      const allDone =
+        questionIds.length > 0 &&
+        questionIds.every((qid) => answersByQ.get(qid)?.has(userKey));
+
+      if (allDone) {
+        dayResults.push({
+          dayIso,
+          status: "feito",
+          shortIds: [],
+          message: `${formatDayLabelPt(dayIso)}: já feito.`,
+          newlyReserved: false
+        });
+      } else {
+        dayResults.push({
+          dayIso,
+          status: "pendente",
+          shortIds,
+          message: `${formatDayLabelPt(dayIso)}: pendente (${shortIds.length} questão(ões)).`,
+          newlyReserved: false
+        });
+        offerShortIds.push(...shortIds);
+        daysFilled += 1;
+      }
+      continue;
+    }
+
+    const pending = await listNextCadernoQuestionsToSend(caderno.id, N, caderno.randomOrder);
+    if (pending.length === 0) {
+      dayResults.push({
+        dayIso,
+        status: "error",
+        shortIds: [],
+        message: `${formatDayLabelPt(dayIso)}: sem questões pendentes no caderno.`,
+        newlyReserved: false
+      });
+      continue;
+    }
+
+    const shortIds: string[] = [];
     let slotsThisDay = 0;
-    for (let slot = 0; slot < N; slot++) {
-      if (qi >= pending.length) break;
-      const question = pending[qi++];
+    for (let slot = 0; slot < N && slot < pending.length; slot++) {
+      const question = pending[slot];
       const { shortId, dbId } = await createQuestionFromCaderno({ caderno, question });
       const { error } = await supabase.from("caderno_send_queue").insert({
         caderno_id: caderno.id,
@@ -2680,19 +2890,109 @@ export async function adiantarCadernoQuestions(
       shortIds.push(shortId);
       slotsThisDay += 1;
     }
+
     if (slotsThisDay > 0) {
       daysFilled += 1;
-      filledDays.push(dayIso);
+      newlyPlannedDays.push(dayIso);
+      offerShortIds.push(...shortIds);
+      dayResults.push({
+        dayIso,
+        status: "novo",
+        shortIds,
+        message: `${formatDayLabelPt(dayIso)}: ${shortIds.length} questão(ões) reservada(s).`,
+        newlyReserved: true
+      });
     }
-    if (qi >= pending.length) break;
   }
 
+  const lines = dayResults.map((r) => r.message);
   return {
-    shortIds,
+    shortIds: [...new Set(offerShortIds)],
     daysFilled,
-    plannedDays: filledDays,
-    message: `Caderno #${caderno.id} "${caderno.name}": ${shortIds.length} questão(ões) adiantada(s) para ${daysFilled} dia(s).`
+    plannedDays: newlyPlannedDays,
+    newlyPlannedDays,
+    dayResults,
+    message: [`Caderno #${caderno.id} "${caderno.name}":`, ...lines].join("\n")
   };
+}
+
+/**
+ * Adianta os próximos `days` dias civis após hoje (sem pular dias já na fila).
+ */
+export async function adiantarCadernoQuestions(
+  caderno: CadernoRow,
+  days: number,
+  userJid: string
+): Promise<AdiantarCadernoResult> {
+  const tz = caderno.timezone || "America/Sao_Paulo";
+  const todayIso = dateIsoInTimezone(new Date(), tz);
+  const dayIsos = nextNDayIsosAfter(todayIso, days);
+  return adiantarCadernoDays(caderno, dayIsos, userJid);
+}
+
+export type SemanaCadernoReport = {
+  caderno: CadernoRow;
+  weekStart: string;
+  weekEnd: string;
+  todayIso: string;
+  days: UserCadernoDayStatus[];
+};
+
+export async function buildSemanaReportForUser(
+  userJid: string,
+  groupJid: string,
+  anchorIso?: string
+): Promise<SemanaCadernoReport[]> {
+  const cadernos = await listEngagedGroupCadernosForUser(userJid, groupJid);
+  const reports: SemanaCadernoReport[] = [];
+
+  for (const caderno of cadernos) {
+    const tz = caderno.timezone || "America/Sao_Paulo";
+    const todayIso = dateIsoInTimezone(new Date(), tz);
+    const anchor = anchorIso || todayIso;
+    const daysList = weekDayIsos(anchor);
+    const days: UserCadernoDayStatus[] = [];
+    for (const dayIso of daysList) {
+      days.push(await getUserCadernoDayStatus(caderno, userJid, dayIso, todayIso));
+    }
+    reports.push({
+      caderno,
+      weekStart: daysList[0],
+      weekEnd: daysList[6],
+      todayIso,
+      days
+    });
+  }
+  return reports;
+}
+
+export function formatSemanaReportText(reports: SemanaCadernoReport[]): string {
+  if (reports.length === 0) {
+    return "Voce nao esta engajado em nenhum caderno ativo deste grupo.";
+  }
+  const blocks: string[] = [];
+  for (const r of reports) {
+    const lines = [
+      `Semana ${formatDayLabelPt(r.weekStart)}–${formatDayLabelPt(r.weekEnd)} (caderno #${r.caderno.id} ${r.caderno.name}):`
+    ];
+    for (const d of r.days) {
+      let tag: string = d.status;
+      if (d.dayIso === r.todayIso) {
+        if (d.status === "feito") tag = "hoje · feito";
+        else if (d.totalCount > 0) tag = "hoje · pendente";
+        else tag = "hoje";
+      } else if (d.status === "passou") {
+        tag = "—";
+      }
+      const detail = d.totalCount > 0 ? ` (${d.answeredCount}/${d.totalCount})` : "";
+      lines.push(`${d.label}: ${tag}${detail}`);
+    }
+    lines.push("");
+    lines.push("Atalhos: adiantar 1 | adiantar sab + domingo");
+    lines.push("Site: /atividades");
+    blocks.push(lines.join("\n"));
+  }
+  return blocks.join("\n\n");
 }
 
 export async function listActiveGroupCadernos(groupJid: string): Promise<CadernoRow[]> {
@@ -3318,19 +3618,105 @@ export async function listUnansweredOmissasForUser(
 
   const { data: questions, error: qErr } = await supabase
     .from("questions")
-    .select("id, short_id, creator_jid, created_at")
+    .select("id, short_id, creator_jid, created_at, omissa_day_iso")
     .eq("target_group_jid", groupJid)
     .order("created_at", { ascending: false })
     .limit(400);
 
   if (qErr) {
+    // Coluna nova pode não existir ainda — fallback sem omissa_day_iso.
+    if (String(qErr.message || "").toLowerCase().includes("omissa_day_iso")) {
+      const retry = await supabase
+        .from("questions")
+        .select("id, short_id, creator_jid, created_at")
+        .eq("target_group_jid", groupJid)
+        .order("created_at", { ascending: false })
+        .limit(400);
+      if (retry.error) {
+        throw new Error(`Erro ao listar questoes: ${retry.error.message}`);
+      }
+      return listUnansweredOmissasForUserFromRows(
+        userJid,
+        groupJid,
+        opts,
+        dayIso,
+        todayLimit,
+        atrasadasLimit,
+        includeAtrasadas,
+        (retry.data ?? []) as {
+          id: number;
+          short_id: string | null;
+          creator_jid: string | null;
+          created_at: string | null;
+          omissa_day_iso?: string | null;
+        }[],
+        pubDayByQuestionId,
+        unreleasedPlannedDay,
+        engagedCadernoIds,
+        passiveTodayDbIds,
+        engagedRestrictedCadernos,
+        engagedSinceAllowedDbIds,
+        visibleCadernoQuestionIds,
+        globallyEngaged
+      );
+    }
     throw new Error(`Erro ao listar questoes: ${qErr.message}`);
   }
 
+  return listUnansweredOmissasForUserFromRows(
+    userJid,
+    groupJid,
+    opts,
+    dayIso,
+    todayLimit,
+    atrasadasLimit,
+    includeAtrasadas,
+    (questions ?? []) as {
+      id: number;
+      short_id: string | null;
+      creator_jid: string | null;
+      created_at: string | null;
+      omissa_day_iso?: string | null;
+    }[],
+    pubDayByQuestionId,
+    unreleasedPlannedDay,
+    engagedCadernoIds,
+    passiveTodayDbIds,
+    engagedRestrictedCadernos,
+    engagedSinceAllowedDbIds,
+    visibleCadernoQuestionIds,
+    globallyEngaged
+  );
+}
+
+async function listUnansweredOmissasForUserFromRows(
+  userJid: string,
+  groupJid: string,
+  _opts: ListOmissasOptions,
+  dayIso: string,
+  todayLimit: number,
+  atrasadasLimit: number,
+  includeAtrasadas: boolean,
+  questions: {
+    id: number;
+    short_id: string | null;
+    creator_jid: string | null;
+    created_at: string | null;
+    omissa_day_iso?: string | null;
+  }[],
+  pubDayByQuestionId: Map<number, string>,
+  unreleasedPlannedDay: Map<number, string>,
+  engagedCadernoIds: Set<number>,
+  passiveTodayDbIds: Set<number>,
+  engagedRestrictedCadernos: Set<number>,
+  engagedSinceAllowedDbIds: Set<number>,
+  visibleCadernoQuestionIds: Set<number>,
+  globallyEngaged: boolean
+): Promise<UnansweredOmissasBuckets> {
   type Candidate = { sid: string; qid: number; pubDay: string };
   const candidates: Candidate[] = [];
 
-  for (const q of questions ?? []) {
+  for (const q of questions) {
     if (!q.short_id) continue;
     const sid = String(q.short_id).toUpperCase();
     if (isPrivateCadernoShortId(sid)) continue;
@@ -3364,6 +3750,12 @@ export async function listUnansweredOmissasForUser(
 
     let pubDay = pubDayByQuestionId.get(qid);
     if (!pubDay && plannedFuture) pubDay = plannedFuture;
+    // Questões avulsas: omissa_day_iso (corte 15h) tem prioridade sobre created_at.
+    if (!isBotCreatorJid(creatorJid) && q.omissa_day_iso) {
+      pubDay = String(q.omissa_day_iso);
+    } else if (!pubDay && q.omissa_day_iso) {
+      pubDay = String(q.omissa_day_iso);
+    }
     if (!pubDay && q.created_at) {
       pubDay = formatDateInTimezone(new Date(String(q.created_at)), "America/Sao_Paulo");
     }

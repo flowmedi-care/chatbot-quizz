@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Atividades — Papa Vagas</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/css/site.css" />
+    <link rel="stylesheet" href="/css/atividades.css" />
+  </head>
+  <body class="atv-page">
+    <div class="atv-shell">
+      <header class="atv-topbar">
+        <a class="atv-brand" href="/atividades">
+          <strong>Papa Vagas</strong>
+          <span>Atividades</span>
+        </a>
+        <nav class="atv-top-links" aria-label="Atalhos">
+          <a class="atv-chip" href="/hub">Hub</a>
+          <a class="atv-chip" href="/engajamento">Engajamento</a>
+          <a class="atv-chip" href="/">Quiz</a>
+        </nav>
+      </header>
+
+      <div class="atv-who">
+        <label>
+          Quem sou eu
+          <select id="atv-user" aria-label="Selecionar participante"></select>
+        </label>
+        <p class="atv-who-hint">Escolha seu nome para ver omissas, semana e adiantar dias.</p>
+      </div>
+
+      <div id="atv-gate" class="atv-gate">
+        <p>Selecione quem você é para abrir o calendário de atividades.</p>
+      </div>
+
+      <div id="atv-main" class="atv-main hidden">
+        <div class="atv-tabs" role="tablist">
+          <button type="button" class="atv-tab active" data-view="day">Diária</button>
+          <button type="button" class="atv-tab" data-view="week">Semanal</button>
+          <button type="button" class="atv-tab" data-view="month">Mensal</button>
+        </div>
+
+        <div id="atv-status" class="atv-status hidden" role="status"></div>
+
+        <section id="panel-day" class="atv-panel">
+          <div class="atv-panel-head">
+            <h1>Omissas de hoje</h1>
+            <p id="day-subtitle" class="atv-muted"></p>
+          </div>
+          <div id="day-body" class="atv-day-body"></div>
+          <div class="atv-actions">
+            <button type="button" class="atv-btn primary" id="btn-responder-hoje">Responder agora</button>
+            <button type="button" class="atv-btn" id="btn-atrasadas">Abrir atrasadas</button>
+          </div>
+        </section>
+
+        <section id="panel-week" class="atv-panel hidden">
+          <div class="atv-panel-head atv-nav-head">
+            <button type="button" class="atv-btn ghost" id="week-prev" aria-label="Semana anterior">‹</button>
+            <div>
+              <h1>Semana</h1>
+              <p id="week-range" class="atv-muted"></p>
+            </div>
+            <button type="button" class="atv-btn ghost" id="week-next" aria-label="Próxima semana">›</button>
+          </div>
+          <div class="atv-legend">
+            <span data-s="feito">feito</span>
+            <span data-s="atrasado">atrasado</span>
+            <span data-s="pendente">a fazer</span>
+            <span data-s="hoje">hoje</span>
+          </div>
+          <div id="week-grid" class="atv-week-grid"></div>
+          <div class="atv-actions">
+            <button type="button" class="atv-btn primary" id="btn-adiantar-week" disabled>
+              Adiantar dia(s)
+            </button>
+            <span id="week-selected-label" class="atv-muted"></span>
+          </div>
+        </section>
+
+        <section id="panel-month" class="atv-panel hidden">
+          <div class="atv-panel-head atv-nav-head">
+            <button type="button" class="atv-btn ghost" id="month-prev" aria-label="Mês anterior">‹</button>
+            <div>
+              <h1 id="month-title">Mês</h1>
+              <p id="month-counts" class="atv-muted"></p>
+            </div>
+            <button type="button" class="atv-btn ghost" id="month-next" aria-label="Próximo mês">›</button>
+          </div>
+          <div class="atv-legend">
+            <span data-s="feito">feito</span>
+            <span data-s="atrasado">atrasado</span>
+            <span data-s="pendente">a fazer</span>
+            <span data-s="hoje">hoje</span>
+          </div>
+          <div id="month-grid" class="atv-month-grid"></div>
+          <div class="atv-actions">
+            <button type="button" class="atv-btn primary" id="btn-adiantar-month" disabled>
+              Adiantar dia(s)
+            </button>
+            <span id="month-selected-label" class="atv-muted"></span>
+          </div>
+        </section>
+      </div>
+
+      <section id="atv-quiz-wrap" class="atv-quiz-wrap hidden">
+        <button type="button" class="atv-btn ghost" id="btn-close-quiz">← Voltar ao calendário</button>
+        <div id="omissas-error" class="error-banner hidden" role="alert"></div>
+        <div id="omissas-loading" class="omissas-loading hidden">Carregando…</div>
+        <section id="omissas-quiz" class="omissas-card hidden" aria-live="polite">
+          <div class="omissas-card-head">
+            <div>
+              <h1 id="q-title" class="omissas-q-title">Questão</h1>
+              <p id="q-meta" class="omissas-q-meta"></p>
+            </div>
+            <p id="q-progress" class="omissas-progress"></p>
+          </div>
+          <div id="q-statement" class="statement-box"></div>
+          <label class="omissas-comment-field">
+            <span>Comentário (opcional)</span>
+            <textarea id="q-comment" rows="3" maxlength="2000" placeholder="Justificativa…"></textarea>
+          </label>
+          <div id="q-choices" class="choice-grid"></div>
+          <p id="q-status" class="omissas-status hidden"></p>
+        </section>
+        <section id="omissas-results" class="omissas-card hidden">
+          <h1 class="omissas-q-title">Resultado</h1>
+          <div id="results-summary" class="omissas-summary"></div>
+          <div id="results-list" class="omissas-results-list"></div>
+        </section>
+      </section>
+    </div>
+    <script src="/js/atividades.js" defer></script>
+  </body>
+</html>

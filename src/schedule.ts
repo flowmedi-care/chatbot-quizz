@@ -111,6 +111,33 @@ export function isAtOrAfterLocalTime(
   return minutesInTimezone(date, timeZone) >= hour * 60 + minute;
 }
 
+/**
+ * Dia ISO em que uma nova omissa deve contar, dado o instante e o corte diário.
+ * Antes do corte → dia civil; a partir do corte → dia seguinte.
+ */
+export function omissaDayIsoForInstant(
+  date: Date,
+  timeZone: string,
+  cutoffHour: number,
+  cutoffMinute: number
+): string {
+  const civil = dateIsoInTimezone(date, timeZone);
+  if (isAtOrAfterLocalTime(date, timeZone, cutoffHour, cutoffMinute)) {
+    return addDaysIso(civil, 1);
+  }
+  return civil;
+}
+
+/** True se ainda estamos antes do corte de omissas (exclusivo do horário de corte). */
+export function isBeforeOmissasCutoff(
+  date: Date,
+  timeZone: string,
+  cutoffHour: number,
+  cutoffMinute: number
+): boolean {
+  return !isAtOrAfterLocalTime(date, timeZone, cutoffHour, cutoffMinute);
+}
+
 /** Soma `n` dias a uma data ISO (YYYY-MM-DD). Não envolve fuso porque a data é puro calendário. */
 export function addDaysIso(isoDate: string, days: number): string {
   const [y, m, d] = isoDate.split("-").map((s) => Number(s));
@@ -265,4 +292,130 @@ export function formatNextRunPretty(iso: string | null, timeZone: string): strin
   } catch {
     return iso;
   }
+}
+
+/** 0=segunda … 6=domingo (calendário civil ISO YYYY-MM-DD). */
+export function weekdayIndexMondayFirst(isoDate: string): number {
+  const [y, m, d] = isoDate.split("-").map((s) => Number(s));
+  const dt = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
+  const utcDay = dt.getUTCDay(); // 0=dom … 6=sab
+  return utcDay === 0 ? 6 : utcDay - 1;
+}
+
+/** Segunda-feira da semana civil que contém `isoDate`. */
+export function startOfWeekMondayIso(isoDate: string): string {
+  const idx = weekdayIndexMondayFirst(isoDate);
+  return addDaysIso(isoDate, -idx);
+}
+
+/** Lista seg–dom da semana que contém `isoDate`. */
+export function weekDayIsos(isoDate: string): string[] {
+  const monday = startOfWeekMondayIso(isoDate);
+  return Array.from({ length: 7 }, (_, i) => addDaysIso(monday, i));
+}
+
+/** Primeiro dia do mês (YYYY-MM ou YYYY-MM-DD). */
+export function startOfMonthIso(yearMonthOrDay: string): string {
+  const raw = String(yearMonthOrDay || "").trim();
+  if (/^\d{4}-\d{2}$/.test(raw)) return `${raw}-01`;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return `${raw.slice(0, 7)}-01`;
+  throw new Error(`Mês inválido: ${yearMonthOrDay}`);
+}
+
+/** Todos os dias YYYY-MM-DD do mês. */
+export function monthDayIsos(yearMonthOrDay: string): string[] {
+  const first = startOfMonthIso(yearMonthOrDay);
+  const [y, m] = first.split("-").map((s) => Number(s));
+  const daysInMonth = new Date(Date.UTC(y, m, 0, 12, 0, 0)).getUTCDate();
+  return Array.from({ length: daysInMonth }, (_, i) => addDaysIso(first, i));
+}
+
+export const WEEKDAY_LABELS_PT = [
+  "segunda",
+  "terça",
+  "quarta",
+  "quinta",
+  "sexta",
+  "sábado",
+  "domingo"
+] as const;
+
+export const WEEKDAY_LABELS_SHORT_PT = [
+  "seg",
+  "ter",
+  "qua",
+  "qui",
+  "sex",
+  "sab",
+  "dom"
+] as const;
+
+/** Nome normalizado (sem acento) → índice 0–6 (seg–dom). */
+export function weekdayNameToIndex(name: string): number | null {
+  const n = String(name || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase();
+  const map: Record<string, number> = {
+    seg: 0,
+    segunda: 0,
+    "segunda-feira": 0,
+    ter: 1,
+    terca: 1,
+    "terca-feira": 1,
+    qua: 2,
+    quarta: 2,
+    "quarta-feira": 2,
+    qui: 3,
+    quinta: 3,
+    "quinta-feira": 3,
+    sex: 4,
+    sexta: 4,
+    "sexta-feira": 4,
+    sab: 5,
+    sabado: 5,
+    dom: 6,
+    domingo: 6
+  };
+  return map[n] ?? null;
+}
+
+/**
+ * Resolve nomes de dias (seg, quinta…) para ISOs da semana civil de `anchorIso`
+ * (default: semana que contém o anchor).
+ */
+export function resolveWeekdayNamesToIsos(
+  names: string[],
+  anchorIso: string
+): { dayIsos: string[]; unknown: string[] } {
+  const monday = startOfWeekMondayIso(anchorIso);
+  const dayIsos: string[] = [];
+  const unknown: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of names) {
+    const idx = weekdayNameToIndex(raw);
+    if (idx == null) {
+      unknown.push(raw);
+      continue;
+    }
+    const iso = addDaysIso(monday, idx);
+    if (seen.has(iso)) continue;
+    seen.add(iso);
+    dayIsos.push(iso);
+  }
+  dayIsos.sort();
+  return { dayIsos, unknown };
+}
+
+/** Próximos `n` dias civis após `todayIso` (amanhã …). */
+export function nextNDayIsosAfter(todayIso: string, n: number): string[] {
+  const count = Math.max(0, Math.min(31, Math.floor(n)));
+  return Array.from({ length: count }, (_, i) => addDaysIso(todayIso, i + 1));
+}
+
+/** Rótulo curto dd/mm. */
+export function formatDayLabelPt(isoDate: string): string {
+  const [, m, d] = isoDate.split("-");
+  return `${d}/${m}`;
 }

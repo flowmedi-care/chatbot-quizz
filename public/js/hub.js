@@ -933,8 +933,11 @@
     cadernos: [
       ["/omissas", "Omissas de hoje + link pessoal no site + se trava caderno"],
       ["/atrasadas", "Backlog antigo (não conta no streak)"],
+      ["/semana", "Auditoria seg–dom (feito/pendente/atrasado)"],
       ["sim / nao", "Confirma recebimento de enunciados"],
-      ["adiantar 2", "Reserva próximos 2 dias (máx. 7)"],
+      ["adiantar 2", "Próximos 2 dias (não pula; avisa se já feito)"],
+      ["adiantar sab + domingo", "Dias nomeados da semana atual"],
+      ["/atividades (site)", "Calendário diário/semanal/mensal + responder"],
       ["/sync-membros", "Atualiza lista do grupo (no grupo)"]
     ],
     grupo: [

@@ -4,7 +4,10 @@ export const ECONOMY_TZ = "America/Sao_Paulo";
 
 /** Avisos de omissas / travamento (fuso ECONOMY_TZ). Soft-unlock + −50 na virada do dia. */
 export const OMISSAS_SCHEDULE = {
-  warnHours: [19, 21] as const
+  warnHours: [19, 21] as const,
+  /** Questão avulsa / destravar após este horário entram na fila do dia seguinte. */
+  cutoffHour: 15,
+  cutoffMinute: 0
 } as const;
 
 export const REWARDS = {

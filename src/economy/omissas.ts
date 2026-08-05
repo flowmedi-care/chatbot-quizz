@@ -1,6 +1,7 @@
 /**
  * Omissas do dia vs atrasadas, status de travamento e textos de aviso.
  */
+import type { WASocket } from "@whiskeysockets/baileys";
 import {
   listActiveGroupCadernos,
   listEngagedJidsMissingCadernoDayAnswers,
@@ -8,7 +9,7 @@ import {
   isSameQuizParticipant,
   type UnansweredOmissasBuckets
 } from "../supabase";
-import { ECONOMY_TZ } from "./constants";
+import { ECONOMY_TZ, OMISSAS_SCHEDULE } from "./constants";
 import { todayIso } from "./db";
 
 export type LockingStatus = {
@@ -102,7 +103,8 @@ export function buildOmissasPrivateMessage(input: {
       lines.push(`• Caderno #${L.cadernoId} (${L.cadernoName}) · dia ${L.dayIso}`);
     }
     lines.push(
-      `Responda até 23:59 ou leva −50 Aura. Soft-unlock à meia-noite (o caderno avança mesmo assim).`
+      `Responda até 23:59 ou leva −50 Aura. Soft-unlock à meia-noite (o caderno avança mesmo assim).`,
+      `Corte ${OMISSAS_SCHEDULE.cutoffHour}h: nova questão avulsa ou destravar depois disso vai para amanhã.`
     );
   } else if (input.mode === "hoje" && input.buckets.today.length > 0) {
     lines.push(
@@ -150,8 +152,51 @@ export function buildOmissasWarnMessage(input: {
   } else if (input.todayIds.length > 0) {
     lines.push("", "Zere as de hoje para manter o streak.");
   }
-  lines.push("", "Use /omissas no privado.");
+  lines.push(
+    "",
+    `Corte ${OMISSAS_SCHEDULE.cutoffHour}h: questão avulsa ou destravar caderno depois disso entram amanhã.`,
+    "",
+    "Use /omissas no privado."
+  );
   return lines.join("\n");
+}
+
+/** Aviso no grupo quando algo entra como omissa do dia (antes do corte 15h). */
+export async function notifyGroupOmissasEntered(
+  sock: WASocket,
+  groupJid: string,
+  input: {
+    shortIds: string[];
+    source: "questao" | "caderno";
+    cadernoName?: string;
+  }
+): Promise<void> {
+  const ids = input.shortIds.map((id) => String(id).toUpperCase()).filter(Boolean);
+  if (!ids.length || !groupJid) return;
+
+  const idLine = formatOmissasIds(ids, 12);
+  const lines =
+    input.source === "caderno"
+      ? [
+          "📋 Nova omissa do dia",
+          input.cadernoName
+            ? `Caderno "${input.cadernoName}" destravou: ${idLine}`
+            : `Caderno destravou: ${idLine}`,
+          "",
+          "Enunciados: /omissas no privado."
+        ]
+      : [
+          "📋 Nova omissa do dia",
+          `Questão avulsa: ${idLine}`,
+          "",
+          "Enunciados: /omissas no privado."
+        ];
+
+  try {
+    await sock.sendMessage(groupJid, { text: lines.join("\n") });
+  } catch (e) {
+    console.warn("[omissas] falha aviso grupo:", (e as Error).message);
+  }
 }
 
 export async function loadOmissasContext(

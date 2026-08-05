@@ -236,6 +236,8 @@ export async function buildDiarioOficialDigest(input: {
     "",
     ...(input.cadernoLines.length ? input.cadernoLines : ["Sem cadernos ativos."]),
     "",
+    "⏱️ Corte 15h: questão avulsa ou destravar caderno depois disso entram nas omissas de amanhã.",
+    "",
     "🏛️ Quadro do dia"
   ];
 

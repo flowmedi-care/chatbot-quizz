@@ -24,6 +24,7 @@ import {
   parseOmissasCommand,
   parseAtrasadasCommand,
   parseAdiantarCommand,
+  parseSemanaCommand,
   parseEconomyCommand,
   parseProgressoCommand,
   parseQaCommand,
@@ -60,6 +61,9 @@ import {
   listCadernosForOwner,
   listEngagedGroupCadernosForUser,
   adiantarCadernoQuestions,
+  adiantarCadernoDays,
+  buildSemanaReportForUser,
+  formatSemanaReportText,
   resetCadernoPublishedQuestions,
   setCadernoStatus,
   setQuizModePrivate,
@@ -67,7 +71,12 @@ import {
   upsertGroupMembersFromSync,
   createOmissasWebSession
 } from "./supabase";
-import { computeNextRunAt, formatNextRunPretty } from "./schedule";
+import {
+  computeNextRunAt,
+  dateIsoInTimezone,
+  formatNextRunPretty,
+  resolveWeekdayNamesToIsos
+} from "./schedule";
 import { forceRunCaderno, startCadernoScheduler, stopCadernoScheduler, tryAdvanceCadernoAfterAnswer } from "./caderno-scheduler";
 import {
   handleFlashcardsPrivateMessage,
@@ -82,6 +91,8 @@ import {
   tryHandlePurchaseConfirm,
   registerWebAnswerSideEffect
 } from "./economy/bot-handlers";
+import { notifyGroupOmissasEntered } from "./economy/omissas";
+import { ECONOMY_TZ } from "./economy/constants";
 import { MediaPayload, QuestionDraft, QuestionType } from "./types";
 
 function toIsoTimestamp(value: unknown): string {
@@ -400,9 +411,13 @@ async function publishQuestionToGroup(
   sock: WASocket,
   groupJid: string,
   shortId: string,
-  draft: QuestionDraft
+  draft: QuestionDraft,
+  opts?: { deferredToTomorrow?: boolean }
 ): Promise<void> {
   const intro = `Nova questao #${shortId} enviada por ${draft.creatorName}`;
+  const deferNote = opts?.deferredToTomorrow
+    ? "\n⏳ Conta como omissa *amanhã* (corte 15h)."
+    : "";
   const options =
     draft.questionType === "true_false"
       ? `Responda no privado do bot:\nc ${shortId}\ne ${shortId}`
@@ -414,7 +429,7 @@ async function publishQuestionToGroup(
     if (draft.statementMedia.mimeType.startsWith("image/")) {
       await sock.sendMessage(groupJid, {
         image: draft.statementMedia.data,
-        caption: `${intro}${statementText}\n\n${options}`
+        caption: `${intro}${deferNote}${statementText}\n\n${options}`
       });
       return;
     }
@@ -423,13 +438,13 @@ async function publishQuestionToGroup(
       document: draft.statementMedia.data,
       mimetype: draft.statementMedia.mimeType,
       fileName: `questao-${shortId}.${draft.statementMedia.fileExt}`,
-      caption: `${intro}${statementText}\n\n${options}`
+      caption: `${intro}${deferNote}${statementText}\n\n${options}`
     });
     return;
   }
 
   await sock.sendMessage(groupJid, {
-    text: `${intro}${statementText}\n\n${options}`
+    text: `${intro}${deferNote}${statementText}\n\n${options}`
   });
 }
 
@@ -784,7 +799,10 @@ async function handleCadernoCommand(
     }
     case "next": {
       await sock.sendMessage(remoteJid, {
-        text: `Forçando envio agora do caderno #${caderno.id}…`
+        text: [
+          `Forçando envio agora do caderno #${caderno.id}…`,
+          `(Se já passou das 15h e for início de dia novo, agenda para amanhã.)`
+        ].join("\n")
       });
       const fresh = await getCadernoById(caderno.id);
       if (fresh) await forceRunCaderno(sock, fresh);
@@ -1068,6 +1086,7 @@ async function startBot(): Promise<void> {
               passiveProbe.kind === "answer_key" ||
               Boolean(respondentIdProbe) ||
               parseOmissasCommand(text) ||
+              parseSemanaCommand(text) ||
               Boolean(parseAdiantarCommand(text)) ||
               parseQaCommand(text) ||
               Boolean(ecoProbe);
@@ -1154,6 +1173,21 @@ async function startBot(): Promise<void> {
             }
           }
 
+          if (fromPrivate && parseSemanaCommand(text)) {
+            try {
+              const gj = getQuizTargetGroupJid();
+              const reports = await buildSemanaReportForUser(sender, gj);
+              await sock.sendMessage(remoteJid, {
+                text: formatSemanaReportText(reports)
+              });
+            } catch (semErr) {
+              await sock.sendMessage(remoteJid, {
+                text: `Erro ao montar /semana: ${(semErr as Error).message}`
+              });
+            }
+            continue;
+          }
+
           if (fromPrivate && (parseOmissasCommand(text) || parseAtrasadasCommand(text))) {
             try {
               const gj = getQuizTargetGroupJid();
@@ -1213,14 +1247,44 @@ async function startBot(): Promise<void> {
                 });
                 continue;
               }
+              const tz = cadernos[0]?.timezone || "America/Sao_Paulo";
+              const todayIso = dateIsoInTimezone(new Date(), tz);
+              let dayIsos: string[] | null = null;
+              if (adiantarCmd.kind === "weekdays") {
+                const { dayIsos: resolved, unknown } = resolveWeekdayNamesToIsos(
+                  adiantarCmd.names,
+                  todayIso
+                );
+                if (unknown.length) {
+                  await sock.sendMessage(remoteJid, {
+                    text: `Dia(s) nao reconhecido(s): ${unknown.join(", ")}. Use seg ter qua qui sex sab dom (ou nomes completos).`
+                  });
+                  continue;
+                }
+                dayIsos = resolved.filter((d) => d > todayIso);
+                if (dayIsos.length === 0) {
+                  await sock.sendMessage(remoteJid, {
+                    text: "Nenhum dia futuro na semana atual para adiantar (dias passados/hoje nao entram). Use /omissas para hoje."
+                  });
+                  continue;
+                }
+              }
+
               const allShortIds: string[] = [];
               const summaries: string[] = [];
               const prepaidDays: string[] = [];
               for (const c of cadernos) {
-                const result = await adiantarCadernoQuestions(c, adiantarCmd.days);
+                const result =
+                  dayIsos != null
+                    ? await adiantarCadernoDays(c, dayIsos, sender)
+                    : await adiantarCadernoQuestions(
+                        c,
+                        adiantarCmd.kind === "count" ? adiantarCmd.days : 1,
+                        sender
+                      );
                 summaries.push(result.message);
                 allShortIds.push(...result.shortIds);
-                prepaidDays.push(...(result.plannedDays || []));
+                prepaidDays.push(...(result.newlyPlannedDays || result.plannedDays || []));
               }
               if (prepaidDays.length) {
                 try {
@@ -1232,7 +1296,9 @@ async function startBot(): Promise<void> {
               }
               if (allShortIds.length === 0) {
                 await sock.sendMessage(remoteJid, {
-                  text: ["Nada a adiantar.", "", ...summaries].join("\n")
+                  text: ["Nada a adiantar (ja feito ou sem questoes).", "", ...summaries].join(
+                    "\n"
+                  )
                 });
                 continue;
               }
@@ -1523,12 +1589,30 @@ async function startBot(): Promise<void> {
                 targetGroupJid: quizGroupJid
               });
 
-              await publishQuestionToGroup(sock, quizGroupJid, created.shortId, draft);
+              const civilToday = dateIsoInTimezone(new Date(), ECONOMY_TZ);
+              const deferredToTomorrow = created.omissaDayIso > civilToday;
+
+              await publishQuestionToGroup(sock, quizGroupJid, created.shortId, draft, {
+                deferredToTomorrow
+              });
               creationSessions.delete(sender);
 
-              await sock.sendMessage(remoteJid, {
-                text: `Questao #${created.shortId} criada e publicada no grupo.`
-              });
+              if (deferredToTomorrow) {
+                await sock.sendMessage(remoteJid, {
+                  text: [
+                    `Questao #${created.shortId} criada e publicada no grupo.`,
+                    `Entrou na fila de *amanhã* (corte 15h) — não conta nas omissas de hoje.`
+                  ].join("\n")
+                });
+              } else {
+                await sock.sendMessage(remoteJid, {
+                  text: `Questao #${created.shortId} criada e publicada no grupo.`
+                });
+                await notifyGroupOmissasEntered(sock, quizGroupJid, {
+                  shortIds: [created.shortId],
+                  source: "questao"
+                });
+              }
               await processEconomyAfterCreateQuestion(sock, {
                 userJid: draft.creatorJid,
                 userName: draft.creatorName,

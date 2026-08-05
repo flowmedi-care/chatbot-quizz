@@ -41,9 +41,12 @@ import {
   DailyScheduleSlots,
   dateIsoInTimezone,
   formatNextRunPretty,
+  isBeforeOmissasCutoff,
   resolveDailySlotUtc
 } from "./schedule";
 import { config } from "./config";
+import { ECONOMY_TZ, OMISSAS_SCHEDULE } from "./economy/constants";
+import { notifyGroupOmissasEntered } from "./economy/omissas";
 
 const TICK_INTERVAL_MS = 60 * 1000;
 const WAIT_RETRY_MS = 15 * 60 * 1000;
@@ -337,9 +340,20 @@ function computeNextRunForDay(caderno: CadernoRow, dayIso: string, sentNow: numb
   return resolveDailySlotUtc(nextDay, 0, caderno.timezone, slots);
 }
 
-async function runCaderno(sock: WASocket, caderno: CadernoRow): Promise<void> {
+async function runCaderno(
+  sock: WASocket,
+  caderno: CadernoRow,
+  opts?: { force?: boolean }
+): Promise<void> {
   const now = new Date();
   const decision = decideAction(caderno, now);
+  const tzToday = dateIsoInTimezone(now, caderno.timezone || ECONOMY_TZ);
+  const beforeCutoff = isBeforeOmissasCutoff(
+    now,
+    ECONOMY_TZ,
+    OMISSAS_SCHEDULE.cutoffHour,
+    OMISSAS_SCHEDULE.cutoffMinute
+  );
 
   if (decision.kind === "wait_same_day") {
     if (caderno.nextRunAt !== decision.nextRunIso) {
@@ -353,7 +367,6 @@ async function runCaderno(sock: WASocket, caderno: CadernoRow): Promise<void> {
     const botComp = botComparableFromSock(sock);
     if (botComp) exclude.add(botComp);
     const ok = await isDayAnsweredByEngaged(caderno, decision.previousDayIso, exclude);
-    const tzToday = dateIsoInTimezone(now, caderno.timezone);
     // Soft-unlock: se o dia civil já passou, avança mesmo com faltosos (penalidade roda antes no tick).
     const softUnlock = !ok && decision.previousDayIso < tzToday;
     if (!ok && !softUnlock) {
@@ -372,8 +385,19 @@ async function runCaderno(sock: WASocket, caderno: CadernoRow): Promise<void> {
       );
     }
 
+    const earlyUnlock = ok && !softUnlock;
     let newDayIso = addDaysIso(decision.previousDayIso, 1);
     if (tzToday > newDayIso) newDayIso = tzToday;
+
+    // Corte 15h: destravar antecipado (todos responderam) após o corte não
+    // joga omissas no dia civil corrente — agenda amanhã.
+    if (earlyUnlock && !beforeCutoff && newDayIso === tzToday) {
+      newDayIso = addDaysIso(tzToday, 1);
+      console.log(
+        `[caderno-scheduler] caderno ${caderno.id}: destravar após corte ${OMISSAS_SCHEDULE.cutoffHour}h — dia ${newDayIso}.`
+      );
+    }
+
     const firstSlot = resolveDailySlotUtc(
       newDayIso,
       0,
@@ -388,11 +412,62 @@ async function runCaderno(sock: WASocket, caderno: CadernoRow): Promise<void> {
       });
       return;
     }
-    await sendOneGroupAndAdvance(sock, caderno, newDayIso, 0);
+    const published = await sendOneGroupAndAdvance(sock, caderno, newDayIso, 0);
+    if (earlyUnlock && beforeCutoff && published?.shortId && caderno.targetGroupJid) {
+      await notifyGroupOmissasEntered(sock, caderno.targetGroupJid, {
+        shortIds: [published.shortId],
+        source: "caderno",
+        cadernoName: caderno.name
+      });
+    }
     return;
   }
 
-  await sendOneGroupAndAdvance(sock, caderno, decision.dayIso, decision.sentBefore);
+  // /caderno next forçando início de dia novo após o corte → fila de amanhã.
+  if (
+    opts?.force &&
+    decision.kind === "send" &&
+    decision.sentBefore === 0 &&
+    !beforeCutoff &&
+    decision.dayIso === tzToday
+  ) {
+    const tomorrow = addDaysIso(tzToday, 1);
+    const firstSlot = resolveDailySlotUtc(
+      tomorrow,
+      0,
+      caderno.timezone,
+      scheduleSlotsFromCaderno(caderno)
+    );
+    await updateCadernoDayState(caderno.id, {
+      currentDayDate: tomorrow,
+      currentDaySent: 0,
+      nextRunAtIso: firstSlot.toISOString()
+    });
+    console.log(
+      `[caderno-scheduler] caderno ${caderno.id}: force após corte ${OMISSAS_SCHEDULE.cutoffHour}h — agendado ${tomorrow}.`
+    );
+    return;
+  }
+
+  const published = await sendOneGroupAndAdvance(
+    sock,
+    caderno,
+    decision.dayIso,
+    decision.sentBefore
+  );
+  if (
+    opts?.force &&
+    beforeCutoff &&
+    decision.sentBefore === 0 &&
+    published?.shortId &&
+    caderno.targetGroupJid
+  ) {
+    await notifyGroupOmissasEntered(sock, caderno.targetGroupJid, {
+      shortIds: [published.shortId],
+      source: "caderno",
+      cadernoName: caderno.name
+    });
+  }
 }
 
 async function sendOneGroupAndAdvance(
@@ -400,7 +475,7 @@ async function sendOneGroupAndAdvance(
   caderno: CadernoRow,
   dayIso: string,
   sentBefore: number
-): Promise<void> {
+): Promise<{ shortId: string; dbId: number } | null> {
   let question: CadernoQuestionRow | null = null;
   let preResolved: { shortId: string; dbId: number } | null = null;
   let queueId: number | null = null;
@@ -430,7 +505,7 @@ async function sendOneGroupAndAdvance(
         console.log(
           `[caderno-scheduler] caderno ${caderno.id}: sem pendentes livres, mas há ${queuedLeft} na fila — aguardando.`
         );
-        return;
+        return null;
       }
       await updateCadernoDayState(caderno.id, { nextRunAtIso: null, updateLastRun: true });
       await setCadernoStatus(caderno.id, "paused_waiting_decision", { nextRunAt: null });
@@ -438,7 +513,7 @@ async function sendOneGroupAndAdvance(
       console.log(
         `[caderno-scheduler] caderno ${caderno.id} sem pendentes — aguardando decisao do dono.`
       );
-      return;
+      return null;
     }
     question = pending[0];
   }
@@ -462,7 +537,7 @@ async function sendOneGroupAndAdvance(
     await setCadernoStatus(caderno.id, "paused_waiting_decision", { nextRunAt: null });
     await notifyOwnerEndOfCaderno(sock, caderno);
     console.log(`[caderno-scheduler] caderno ${caderno.id} terminou após este envio.`);
-    return;
+    return result;
   }
 
   const nextRun = computeNextRunForDay(caderno, dayIso, sentAfter);
@@ -477,6 +552,7 @@ async function sendOneGroupAndAdvance(
   console.log(
     `[caderno-scheduler] caderno ${caderno.id}: dia ${dayIso} ${sentAfter}/${caderno.questionsPerDay}, próximo envio ${formatNextRunPretty(nextRunIso, caderno.timezone)}`
   );
+  return result;
 }
 
 async function runPrivateRecipient(
@@ -741,6 +817,9 @@ async function buildGroupDailyDigestText(
   }
 
   cadernoLines.push("Enunciados: /omissas");
+  cadernoLines.push(
+    `Corte ${OMISSAS_SCHEDULE.cutoffHour}h: questão avulsa / destravar depois disso → omissas de amanhã.`
+  );
   if (totalToday || totalPlanned) {
     cadernoLines.push(`Total liberado hoje: ${totalToday} (planejado ~${totalPlanned}).`);
   }
@@ -850,5 +929,5 @@ export async function forceRunCaderno(sock: WASocket, caderno: CadernoRow): Prom
     }
     return;
   }
-  await runCaderno(sock, caderno);
+  await runCaderno(sock, caderno, { force: true });
 }

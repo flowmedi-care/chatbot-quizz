@@ -1,9 +1,10 @@
 /**
- * Rotas de omissas web num único serverless function (limite Hobby: 12).
+ * Rotas de omissas web + atividades num único serverless (limite Hobby: 12).
  * URLs públicas via rewrites em vercel.json:
  *   GET  /api/omissas-session
  *   POST /api/omissas-answer
  *   GET  /api/omissas-results
+ *   GET|POST /api/atividades
  */
 const { applyCors } = require("./_lib.js");
 const {
@@ -11,11 +12,17 @@ const {
   handleOmissasAnswer,
   handleOmissasResults
 } = require("./_omissas-web.js");
+const { handleAtividades } = require("./_atividades.js");
 
 function resolveRoute(req) {
   const url = new URL(req.url || "/", "http://localhost");
   const fromQuery = url.searchParams.get("om");
-  if (fromQuery === "session" || fromQuery === "answer" || fromQuery === "results") {
+  if (
+    fromQuery === "session" ||
+    fromQuery === "answer" ||
+    fromQuery === "results" ||
+    fromQuery === "atividades"
+  ) {
     return fromQuery;
   }
 
@@ -26,6 +33,7 @@ function resolveRoute(req) {
       ""
   ).toLowerCase();
 
+  if (path.includes("atividades")) return "atividades";
   if (path.includes("omissas-session")) return "session";
   if (path.includes("omissas-answer")) return "answer";
   if (path.includes("omissas-results")) return "results";
@@ -40,6 +48,7 @@ module.exports = async (req, res) => {
   if (route === "session") return handleOmissasSession(req, res);
   if (route === "answer") return handleOmissasAnswer(req, res);
   if (route === "results") return handleOmissasResults(req, res);
+  if (route === "atividades") return handleAtividades(req, res);
 
-  return res.status(404).json({ error: "Rota omissas desconhecida" });
+  return res.status(404).json({ error: "Rota omissas/atividades desconhecida" });
 };

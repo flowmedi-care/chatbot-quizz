@@ -111,14 +111,46 @@ export function parseAtrasadasCommand(text: string): boolean {
   return t === "/atrasadas" || t === "atrasadas";
 }
 
-/** Adiantar questões dos próximos N dias: adiantar 2, /adiantar 2 */
-export function parseAdiantarCommand(text: string): { days: number } | null {
+export type AdiantarCommand =
+  | { kind: "count"; days: number }
+  | { kind: "weekdays"; names: string[] };
+
+/**
+ * Adiantar:
+ *  - adiantar 2 / /adiantar 2 — próximos N dias (1–7)
+ *  - adiantar quinta / adiantar sab + domingo / adiantar qui sex
+ */
+export function parseAdiantarCommand(text: string): AdiantarCommand | null {
   const t = normalizeInput(text.trim());
-  const m = t.match(/^\/?adiantar\s+(\d+)$/);
-  if (!m) return null;
-  const days = Number(m[1]);
-  if (!Number.isFinite(days) || days < 1 || days > 7) return null;
-  return { days };
+  const countMatch = t.match(/^\/?adiantar\s+(\d+)$/);
+  if (countMatch) {
+    const days = Number(countMatch[1]);
+    if (!Number.isFinite(days) || days < 1 || days > 7) return null;
+    return { kind: "count", days };
+  }
+  const namedMatch = t.match(/^\/?adiantar\s+(.+)$/);
+  if (!namedMatch) return null;
+  const rest = namedMatch[1].trim();
+  if (!rest || /^\d+$/.test(rest)) return null;
+  const parts = rest
+    .split(/[+,\s]+/)
+    .map((p) => p.trim())
+    .filter(Boolean);
+  if (parts.length === 0) return null;
+  const names: string[] = [];
+  for (const p of parts) {
+    // Rejeita tokens claramente inválidos (números misturados etc.)
+    if (/^\d+$/.test(p)) return null;
+    names.push(p);
+  }
+  if (names.length === 0 || names.length > 7) return null;
+  return { kind: "weekdays", names };
+}
+
+/** /semana — auditoria seg–dom da semana civil atual. */
+export function parseSemanaCommand(text: string): boolean {
+  const t = normalizeInput(text.trim());
+  return t === "/semana" || t === "semana";
 }
 
 export type EconomyCommand =

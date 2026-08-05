@@ -180,7 +180,49 @@ module.exports = {
   resolveDailySlotUtc,
   dailySlotUtc,
   dateIsoInTimezone,
+  addDaysIso,
   getZonedParts,
-  zonedDateToUtc
+  zonedDateToUtc,
+  weekdayIndexMondayFirst,
+  startOfWeekMondayIso,
+  weekDayIsos,
+  monthDayIsos,
+  startOfMonthIso,
+  formatDayLabelPt
 };
+
+function weekdayIndexMondayFirst(isoDate) {
+  const [y, m, d] = isoDate.split("-").map((s) => Number(s));
+  const dt = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
+  const utcDay = dt.getUTCDay();
+  return utcDay === 0 ? 6 : utcDay - 1;
+}
+
+function startOfWeekMondayIso(isoDate) {
+  return addDaysIso(isoDate, -weekdayIndexMondayFirst(isoDate));
+}
+
+function weekDayIsos(isoDate) {
+  const monday = startOfWeekMondayIso(isoDate);
+  return Array.from({ length: 7 }, (_, i) => addDaysIso(monday, i));
+}
+
+function startOfMonthIso(yearMonthOrDay) {
+  const raw = String(yearMonthOrDay || "").trim();
+  if (/^\d{4}-\d{2}$/.test(raw)) return `${raw}-01`;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return `${raw.slice(0, 7)}-01`;
+  throw new Error(`Mês inválido: ${yearMonthOrDay}`);
+}
+
+function monthDayIsos(yearMonthOrDay) {
+  const first = startOfMonthIso(yearMonthOrDay);
+  const [y, m] = first.split("-").map((s) => Number(s));
+  const daysInMonth = new Date(Date.UTC(y, m, 0, 12, 0, 0)).getUTCDate();
+  return Array.from({ length: daysInMonth }, (_, i) => addDaysIso(first, i));
+}
+
+function formatDayLabelPt(isoDate) {
+  const [, m, d] = isoDate.split("-");
+  return `${d}/${m}`;
+}
 
