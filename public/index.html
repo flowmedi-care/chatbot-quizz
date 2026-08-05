@@ -3,43 +3,94 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Papa Vagas — Quiz</title>
+    <title>Papa Vagas — Quiz do grupo</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap"
       rel="stylesheet"
     />
     <link rel="stylesheet" href="/css/site.css" />
   </head>
-  <body>
-    <div class="wrap">
-      <header class="hero">
-        <div class="hero-toolbar" aria-label="Atalhos">
-          <a href="/hub" class="btn-tutorial btn-hub">Hub gamificação</a>
-          <a href="/tutorial" class="btn-tutorial">Como usar</a>
-          <a href="/hub#comandos" class="btn-tutorial">Comandos WhatsApp</a>
-          <a href="/engajamento" class="btn-tutorial btn-engagement">Engajamento</a>
-          <a href="/cadernos" class="btn-tutorial">Cadernos</a>
-          <button type="button" id="btn-report-open" class="btn-tutorial">Relatório</button>
+  <body class="home-page">
+    <div class="wrap home-wrap">
+      <nav class="site-nav" aria-label="Principal">
+        <a class="site-nav-brand" href="/">
+          <strong>Papa Vagas</strong>
+        </a>
+        <button
+          type="button"
+          class="site-nav-toggle"
+          id="nav-toggle"
+          aria-expanded="false"
+          aria-controls="site-nav-links"
+          aria-label="Abrir menu"
+        >
+          <span></span><span></span>
+        </button>
+        <div class="site-nav-links" id="site-nav-links">
+          <a href="/atividades" class="site-nav-link is-accent">Atividades</a>
+          <a href="/hub" class="site-nav-link">Hub</a>
+          <a href="/engajamento" class="site-nav-link">Engajamento</a>
+          <a href="/cadernos" class="site-nav-link">Cadernos</a>
+          <a href="/tutorial" class="site-nav-link">Como usar</a>
+          <button type="button" id="btn-report-open" class="site-nav-link site-nav-btn">
+            Relatório
+          </button>
         </div>
-        <p class="hero-kicker">Sistema do grupo</p>
-        <h1>Papa Vagas</h1>
-        <p>
-          Quiz, cadernos e o Hub — Diário Oficial, perfil, loja e economia. Respostas que contam são no WhatsApp;
-          aqui você pratica, acompanha e se orgulha do progresso.
+      </nav>
+
+      <header class="home-hero">
+        <p class="home-hero-kicker">Sistema do grupo</p>
+        <h1 class="home-hero-brand">Papa Vagas</h1>
+        <p class="home-hero-lead">
+          Omissas do dia, calendário da semana e prática de questões — tudo no ritmo do WhatsApp.
         </p>
-        <div class="hero-cta-row">
-          <a class="btn-reveal btn-hub-cta" href="/hub">Abrir Praça</a>
-          <a class="btn-tutorial" href="/cadernos">Cadernos</a>
-          <a class="btn-tutorial" href="/hub#loja">Portal de compras</a>
+        <div class="home-hero-cta">
+          <a class="btn-primary" href="/atividades">Abrir Atividades</a>
+          <a class="btn-secondary" href="/hub">Praça · Hub</a>
         </div>
       </header>
 
+      <section class="home-destinos" aria-labelledby="destinos-title">
+        <h2 id="destinos-title" class="home-section-title">Para onde ir</h2>
+        <p class="home-section-lead">Quatro portas. Escolha o que precisa agora.</p>
+        <ul class="destino-list">
+          <li>
+            <a class="destino-row" href="/atividades">
+              <span class="destino-name">Atividades</span>
+              <span class="destino-desc">Dia, semana e mês · adiantar · responder</span>
+              <span class="destino-go" aria-hidden="true">→</span>
+            </a>
+          </li>
+          <li>
+            <a class="destino-row" href="/hub">
+              <span class="destino-name">Hub</span>
+              <span class="destino-desc">Praça, Aura, loja e rankings</span>
+              <span class="destino-go" aria-hidden="true">→</span>
+            </a>
+          </li>
+          <li>
+            <a class="destino-row" href="/engajamento">
+              <span class="destino-name">Engajamento</span>
+              <span class="destino-desc">Entrar ou sair das matérias</span>
+              <span class="destino-go" aria-hidden="true">→</span>
+            </a>
+          </li>
+          <li>
+            <a class="destino-row" href="/cadernos">
+              <span class="destino-name">Cadernos</span>
+              <span class="destino-desc">Agenda, engajados e upload</span>
+              <span class="destino-go" aria-hidden="true">→</span>
+            </a>
+          </li>
+        </ul>
+      </section>
+
       <div id="load-error" class="error-banner hidden" role="alert"></div>
 
-      <section class="panel">
-        <h2><span class="badge">Q&amp;A</span> Grupo</h2>
+      <section class="panel home-panel" aria-labelledby="qa-title">
+        <h2 id="qa-title"><span class="badge">Q&amp;A</span> Grupo</h2>
         <p class="report-sub" style="margin: 0 0 1rem">
           Questões do grupo apenas (sem caderno privado). No WhatsApp: <code>/q&amp;a</code>
         </p>
@@ -59,8 +110,8 @@
         </div>
       </section>
 
-      <section class="panel">
-        <h2><span class="badge">Questões</span> Clique para responder</h2>
+      <section class="panel home-panel" aria-labelledby="q-title">
+        <h2 id="q-title"><span class="badge">Questões</span> Clique para responder</h2>
         <div id="questions-filters" class="questions-filters hidden">
           <div class="filters-row">
             <label class="filter-field">
@@ -82,8 +133,12 @@
         </div>
       </section>
 
-      <footer class="note">
-        Papa Vagas · o bot WhatsApp roda em servidor próprio; esta página usa as APIs publicadas no Vercel.
+      <footer class="note home-footer">
+        <span>Papa Vagas</span>
+        <span class="home-footer-sep" aria-hidden="true">·</span>
+        <a href="/hub#comandos">Comandos WhatsApp</a>
+        <span class="home-footer-sep" aria-hidden="true">·</span>
+        <a href="/tutorial">Como usar</a>
       </footer>
     </div>
 
@@ -167,7 +222,6 @@
       </div>
     </div>
 
-    <!-- Gamificação: Perfil -->
     <div id="profile-overlay" class="modal-overlay" aria-hidden="true">
       <div class="modal modal-wide economy-modal" role="dialog" aria-modal="true" aria-labelledby="profile-title">
         <button type="button" class="btn-close" id="profile-close" aria-label="Fechar">×</button>
@@ -180,11 +234,10 @@
       </div>
     </div>
 
-    <!-- Portal de compras -->
     <div id="shop-overlay" class="modal-overlay" aria-hidden="true">
       <div class="modal modal-wide economy-modal" role="dialog" aria-modal="true" aria-labelledby="shop-title">
         <button type="button" class="btn-close" id="shop-close" aria-label="Fechar">×</button>
-        <h2 id="shop-title">🏛️ Portal de compras</h2>
+        <h2 id="shop-title">Portal de compras</h2>
         <label class="filter-field economy-who">
           <span>Quem sou eu</span>
           <select id="shop-user-select" aria-label="Selecionar membro"></select>
@@ -199,11 +252,10 @@
       </div>
     </div>
 
-    <!-- Diário Oficial (auditoria) -->
     <div id="diario-overlay" class="modal-overlay" aria-hidden="true">
       <div class="modal modal-wide economy-modal" role="dialog" aria-modal="true" aria-labelledby="diario-title">
         <button type="button" class="btn-close" id="diario-close" aria-label="Fechar">×</button>
-        <h2 id="diario-title">📰 Diário Oficial</h2>
+        <h2 id="diario-title">Diário Oficial</h2>
         <p class="report-sub">Auditoria completa de eventos (o WhatsApp recebe só o resumo diário).</p>
         <div class="filters-row diario-filters">
           <label class="filter-field">
@@ -220,22 +272,25 @@
       </div>
     </div>
 
-    <!-- Rankings -->
-    <div id="rankings-overlay" class="modal-overlay" aria-hidden="true">
-      <div class="modal modal-wide economy-modal" role="dialog" aria-modal="true" aria-labelledby="rankings-title">
-        <button type="button" class="btn-close" id="rankings-close" aria-label="Fechar">×</button>
-        <h2 id="rankings-title">Rankings</h2>
-        <div class="shop-tabs" id="rankings-tabs" role="tablist">
-          <button type="button" class="shop-tab active" data-board="aura">🏛️ Aura</button>
-          <button type="button" class="shop-tab" data-board="producao">📚 Produção</button>
-          <button type="button" class="shop-tab" data-board="disciplina">🔥 Disciplina</button>
-          <button type="button" class="shop-tab" data-board="duelo">⚔️ Duelo</button>
-        </div>
-        <div id="rankings-body" class="rankings-body"></div>
-      </div>
-    </div>
-
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js" crossorigin="anonymous"></script>
     <script src="/js/app.js" defer></script>
+    <script>
+      (function () {
+        var toggle = document.getElementById("nav-toggle");
+        var links = document.getElementById("site-nav-links");
+        if (!toggle || !links) return;
+        toggle.addEventListener("click", function () {
+          var open = links.classList.toggle("is-open");
+          toggle.setAttribute("aria-expanded", open ? "true" : "false");
+          toggle.setAttribute("aria-label", open ? "Fechar menu" : "Abrir menu");
+        });
+        links.querySelectorAll("a, button").forEach(function (el) {
+          el.addEventListener("click", function () {
+            links.classList.remove("is-open");
+            toggle.setAttribute("aria-expanded", "false");
+            toggle.setAttribute("aria-label", "Abrir menu");
+          });
+        });
+      })();
+    </script>
   </body>
 </html>
