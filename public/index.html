@@ -3,14 +3,14 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Papa Vagas â€” Quiz do grupo</title>
+    <title>Papa Vagas — Continue estudando</title>
     <link rel="icon" href="/favicon.ico" sizes="any" />
     <link rel="icon" href="/img/logo.svg" type="image/svg+xml" />
     <link rel="icon" type="image/png" sizes="32x32" href="/img/favicon-32.png" />
     <link rel="icon" type="image/png" sizes="16x16" href="/img/favicon-16.png" />
     <link rel="apple-touch-icon" href="/img/apple-touch-icon.png" />
     <link rel="manifest" href="/site.webmanifest" />
-    <meta name="theme-color" content="#1e3a5f" />
+    <meta name="theme-color" content="#101d33" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -37,71 +37,110 @@
           <span></span><span></span>
         </button>
         <div class="site-nav-links" id="site-nav-links">
-          <a href="/atividades" class="site-nav-link is-accent">Atividades</a>
-          <a href="/hub" class="site-nav-link">Hub</a>
-          <a href="/engajamento" class="site-nav-link">Engajamento</a>
-          <a href="/cadernos" class="site-nav-link">Cadernos</a>
-          <a href="/tutorial" class="site-nav-link">Como usar</a>
-          <button type="button" id="btn-report-open" class="site-nav-link site-nav-btn">
-            RelatÃ³rio
-          </button>
+          <a href="/atividades" class="site-nav-link is-accent"><span class="nav-ico" aria-hidden="true">🏠</span> Hoje</a>
+          <a href="/atividades" class="site-nav-link"><span class="nav-ico" aria-hidden="true">📚</span> Estudos</a>
+          <a href="/hub" class="site-nav-link"><span class="nav-ico" aria-hidden="true">🏆</span> Ranking</a>
+          <a href="/engajamento" class="site-nav-link"><span class="nav-ico" aria-hidden="true">🔥</span> Matérias</a>
+          <a href="/hub#perfil" class="site-nav-link"><span class="nav-ico" aria-hidden="true">👤</span> Perfil</a>
+          <button type="button" id="btn-report-open" class="site-nav-link site-nav-btn">Relatório</button>
         </div>
       </nav>
 
-      <header class="home-hero">
-        <p class="home-hero-kicker">Sistema do grupo</p>
-        <div class="home-hero-logo-wrap">
-          <img
-            class="home-hero-logo"
-            src="/img/logo.svg"
-            width="120"
-            height="120"
-            alt="Papa Vagas"
-          />
+      <header class="product-hero" aria-labelledby="hero-greeting">
+        <div class="product-hero-mascot">
+          <img src="/img/logo.svg" width="280" height="280" alt="Mascote Papa Vagas" class="mascot-xl" />
+          <p class="mascot-bubble" id="mascot-bubble">Bora zerar as omissas de hoje?</p>
         </div>
-        <h1 class="home-hero-brand">Papa Vagas</h1>
-        <p class="home-hero-lead">
-          Omissas do dia, calendÃ¡rio da semana e prÃ¡tica de questÃµes â€” tudo no ritmo do WhatsApp.
-        </p>
-        <div class="home-hero-cta">
-          <a class="btn-primary" href="/atividades">Abrir Atividades</a>
-          <a class="btn-secondary" href="/hub">PraÃ§a Â· Hub</a>
+
+        <div class="product-hero-board">
+          <p class="product-eyebrow">Seu parceiro até a aprovação</p>
+          <h1 id="hero-greeting" class="product-greeting">
+            <span id="greet-time">Olá</span><span id="greet-name"></span>.
+          </h1>
+          <p class="product-tagline">
+            Estude todos os dias. Suba de nível. Passe no concurso.
+          </p>
+
+          <div class="today-panel" aria-label="Resumo de hoje">
+            <p class="today-label">Hoje</p>
+            <ul class="today-list">
+              <li><span aria-hidden="true">✔</span> <strong id="stat-omissas">—</strong> omissas disponíveis</li>
+              <li><span aria-hidden="true">📚</span> <strong id="stat-materias">—</strong> matérias engajadas</li>
+              <li><span aria-hidden="true">⭐</span> <strong id="stat-xp">—</strong> Aura</li>
+              <li><span aria-hidden="true">🥇</span> Ranking <strong id="stat-rank">#—</strong></li>
+            </ul>
+            <div class="xp-bar-wrap" aria-hidden="true">
+              <div class="xp-bar"><span id="xp-fill" style="width: 62%"></span></div>
+              <p class="xp-caption"><span id="stat-level">Nível —</span> · <span id="stat-streak">— dias de sequência</span></p>
+            </div>
+          </div>
+
+          <div class="product-hero-cta">
+            <a class="btn-primary btn-cta-xl" href="/atividades" id="cta-main">Continuar estudando</a>
+            <a class="btn-secondary" href="/hub">Ver ranking</a>
+          </div>
+
+          <label class="who-mini">
+            <span>Quem sou eu</span>
+            <select id="home-user" aria-label="Selecionar participante">
+              <option value="">— escolher para personalizar —</option>
+            </select>
+          </label>
         </div>
       </header>
 
+      <section class="pulse-strip" aria-label="Gamificação">
+        <article class="pulse-card pulse-fire">
+          <p class="pulse-kicker">Sequência</p>
+          <p class="pulse-value" id="pulse-streak">21</p>
+          <p class="pulse-sub">dias seguidos</p>
+        </article>
+        <article class="pulse-card pulse-xp">
+          <p class="pulse-kicker">Aura hoje</p>
+          <p class="pulse-value" id="pulse-xp">+120</p>
+          <p class="pulse-sub">XP farmado</p>
+        </article>
+        <article class="pulse-card pulse-rank">
+          <p class="pulse-kicker">Ranking</p>
+          <p class="pulse-value" id="pulse-rank">#14</p>
+          <p class="pulse-sub">no grupo</p>
+        </article>
+        <article class="pulse-card pulse-qs">
+          <p class="pulse-kicker">Questões</p>
+          <p class="pulse-value" id="pulse-qs">18k</p>
+          <p class="pulse-sub">no Papa Vagas</p>
+        </article>
+      </section>
+
       <section class="home-destinos" aria-labelledby="destinos-title">
-        <h2 id="destinos-title" class="home-section-title">Para onde ir</h2>
-        <p class="home-section-lead">Quatro portas. Escolha o que precisa agora.</p>
-        <ul class="destino-list">
-          <li>
-            <a class="destino-row" href="/atividades">
-              <span class="destino-name">Atividades</span>
-              <span class="destino-desc">Dia, semana e mÃªs Â· adiantar Â· responder</span>
-              <span class="destino-go" aria-hidden="true">â†’</span>
-            </a>
-          </li>
-          <li>
-            <a class="destino-row" href="/hub">
-              <span class="destino-name">Hub</span>
-              <span class="destino-desc">PraÃ§a, Aura, loja e rankings</span>
-              <span class="destino-go" aria-hidden="true">â†’</span>
-            </a>
-          </li>
-          <li>
-            <a class="destino-row" href="/engajamento">
-              <span class="destino-name">Engajamento</span>
-              <span class="destino-desc">Entrar ou sair das matÃ©rias</span>
-              <span class="destino-go" aria-hidden="true">â†’</span>
-            </a>
-          </li>
-          <li>
-            <a class="destino-row" href="/cadernos">
-              <span class="destino-name">Cadernos</span>
-              <span class="destino-desc">Agenda, engajados e upload</span>
-              <span class="destino-go" aria-hidden="true">â†’</span>
-            </a>
-          </li>
-        </ul>
+        <h2 id="destinos-title" class="home-section-title">O que fazer agora</h2>
+        <p class="home-section-lead">Escolha uma porta e entre. Sem enrolação.</p>
+        <div class="destino-grid">
+          <a class="destino-card" href="/atividades">
+            <span class="destino-ico" aria-hidden="true">📅</span>
+            <span class="destino-name">Atividades</span>
+            <span class="destino-desc">Questões do dia, semana e adiantar</span>
+            <span class="destino-go">Começar →</span>
+          </a>
+          <a class="destino-card" href="/engajamento">
+            <span class="destino-ico" aria-hidden="true">🔥</span>
+            <span class="destino-name">Engajamento</span>
+            <span class="destino-desc">Escolha suas matérias</span>
+            <span class="destino-go">Entrar →</span>
+          </a>
+          <a class="destino-card" href="/hub">
+            <span class="destino-ico" aria-hidden="true">🏆</span>
+            <span class="destino-name">Hub</span>
+            <span class="destino-desc">Aura, XP, loja e rankings</span>
+            <span class="destino-go">Ver XP →</span>
+          </a>
+          <a class="destino-card" href="/cadernos">
+            <span class="destino-ico" aria-hidden="true">📚</span>
+            <span class="destino-name">Cadernos</span>
+            <span class="destino-desc">Agenda e importação</span>
+            <span class="destino-go">Abrir →</span>
+          </a>
+        </div>
       </section>
 
       <div id="load-error" class="error-banner hidden" role="alert"></div>
@@ -109,7 +148,7 @@
       <section class="panel home-panel" aria-labelledby="qa-title">
         <h2 id="qa-title"><span class="badge">Q&amp;A</span> Grupo</h2>
         <p class="report-sub" style="margin: 0 0 1rem">
-          QuestÃµes do grupo apenas (sem caderno privado). No WhatsApp: <code>/q&amp;a</code>
+          Questões do grupo apenas (sem caderno privado). No WhatsApp: <code>/q&amp;a</code>
         </p>
         <p id="qa-stats-warning" class="empty-state hidden"></p>
         <div id="qa-stats-totals" class="qa-stats-totals"></div>
@@ -128,7 +167,7 @@
       </section>
 
       <section class="panel home-panel" aria-labelledby="q-title">
-        <h2 id="q-title"><span class="badge">QuestÃµes</span> Clique para responder</h2>
+        <h2 id="q-title"><span class="badge">Prática</span> Clique para responder</h2>
         <div id="questions-filters" class="questions-filters hidden">
           <div class="filters-row">
             <label class="filter-field">
@@ -152,9 +191,9 @@
 
       <footer class="note home-footer">
         <span>Papa Vagas</span>
-        <span class="home-footer-sep" aria-hidden="true">Â·</span>
+        <span class="home-footer-sep" aria-hidden="true">·</span>
         <a href="/hub#comandos">Comandos WhatsApp</a>
-        <span class="home-footer-sep" aria-hidden="true">Â·</span>
+        <span class="home-footer-sep" aria-hidden="true">·</span>
         <a href="/tutorial">Como usar</a>
       </footer>
     </div>
@@ -166,16 +205,16 @@
             <h3 id="modal-title"></h3>
             <p id="modal-author" style="margin: 0.25rem 0 0; font-size: 0.9rem; color: var(--muted)"></p>
           </div>
-          <button type="button" id="modal-close" class="btn-close" aria-label="Fechar">Ã—</button>
+          <button type="button" id="modal-close" class="btn-close" aria-label="Fechar">×</button>
         </div>
         <div id="modal-statement" class="statement-box"></div>
         <div id="modal-choices" class="choice-grid"></div>
         <div id="modal-feedback" class="feedback hidden"></div>
         <button type="button" id="modal-reveal-btn" class="btn-reveal hidden">
-          Ver gabarito e comentÃ¡rio do autor
+          Ver gabarito e comentário do autor
         </button>
         <div id="modal-reveal-box" class="reveal-box hidden">
-          <h4>ResoluÃ§Ã£o</h4>
+          <h4>Resolução</h4>
           <div id="modal-gabarito" class="gabarito-line"></div>
           <div id="modal-comment" class="comment"></div>
           <div id="modal-comment-media"></div>
@@ -187,17 +226,17 @@
       <div class="modal modal-report" role="dialog" aria-modal="true" aria-labelledby="report-title">
         <div class="modal-header">
           <div>
-            <h3 id="report-title">Gerar relatÃ³rio</h3>
+            <h3 id="report-title">Gerar relatório</h3>
             <p class="report-sub">
               Markdown + pasta <code>midias/</code> no ZIP. Inclui gabarito, o que cada um marcou (via WhatsApp) e
-              referÃªncia a arquivos de imagem/PDF quando existirem.
+              referência a arquivos de imagem/PDF quando existirem.
             </p>
           </div>
-          <button type="button" id="report-close" class="btn-close" aria-label="Fechar">Ã—</button>
+          <button type="button" id="report-close" class="btn-close" aria-label="Fechar">×</button>
         </div>
         <label class="report-field">
-          <span>Participante no relatÃ³rio</span>
-          <select id="report-person" aria-label="Escopo do relatÃ³rio"></select>
+          <span>Participante no relatório</span>
+          <select id="report-person" aria-label="Escopo do relatório"></select>
         </label>
         <label class="report-field">
           <span>Caderno</span>
@@ -211,18 +250,18 @@
             <input type="date" id="report-date-from" aria-label="Data inicial" />
           </label>
           <label class="report-field">
-            <span>Data atÃ©</span>
+            <span>Data até</span>
             <input type="date" id="report-date-to" aria-label="Data final" />
           </label>
         </div>
         <div class="report-field-row">
           <label class="report-field">
-            <span>QuestÃ£o de (#)</span>
-            <input type="text" id="report-qid-from" placeholder="ex: 10" aria-label="NÃºmero da questÃ£o inicial" />
+            <span>Questão de (#)</span>
+            <input type="text" id="report-qid-from" placeholder="ex: 10" aria-label="Número da questão inicial" />
           </label>
           <label class="report-field">
-            <span>QuestÃ£o atÃ© (#)</span>
-            <input type="text" id="report-qid-to" placeholder="ex: 50" aria-label="NÃºmero da questÃ£o final" />
+            <span>Questão até (#)</span>
+            <input type="text" id="report-qid-to" placeholder="ex: 50" aria-label="Número da questão final" />
           </label>
         </div>
         <label class="report-field">
@@ -241,7 +280,7 @@
 
     <div id="profile-overlay" class="modal-overlay" aria-hidden="true">
       <div class="modal modal-wide economy-modal" role="dialog" aria-modal="true" aria-labelledby="profile-title">
-        <button type="button" class="btn-close" id="profile-close" aria-label="Fechar">Ã—</button>
+        <button type="button" class="btn-close" id="profile-close" aria-label="Fechar">×</button>
         <h2 id="profile-title">Perfil</h2>
         <label class="filter-field economy-who">
           <span>Quem sou eu</span>
@@ -253,14 +292,14 @@
 
     <div id="shop-overlay" class="modal-overlay" aria-hidden="true">
       <div class="modal modal-wide economy-modal" role="dialog" aria-modal="true" aria-labelledby="shop-title">
-        <button type="button" class="btn-close" id="shop-close" aria-label="Fechar">Ã—</button>
+        <button type="button" class="btn-close" id="shop-close" aria-label="Fechar">×</button>
         <h2 id="shop-title">Portal de compras</h2>
         <label class="filter-field economy-who">
           <span>Quem sou eu</span>
           <select id="shop-user-select" aria-label="Selecionar membro"></select>
         </label>
         <p class="report-sub">
-          A confirmaÃ§Ã£o serÃ¡ enviada no WhatsApp <strong>dessa</strong> pessoa. Responda <code>sim</code> no privado.
+          A confirmação será enviada no WhatsApp <strong>dessa</strong> pessoa. Responda <code>sim</code> no privado.
         </p>
         <div id="shop-balance" class="shop-balance"></div>
         <div class="shop-tabs" id="shop-tabs" role="tablist"></div>
@@ -271,9 +310,9 @@
 
     <div id="diario-overlay" class="modal-overlay" aria-hidden="true">
       <div class="modal modal-wide economy-modal" role="dialog" aria-modal="true" aria-labelledby="diario-title">
-        <button type="button" class="btn-close" id="diario-close" aria-label="Fechar">Ã—</button>
-        <h2 id="diario-title">DiÃ¡rio Oficial</h2>
-        <p class="report-sub">Auditoria completa de eventos (o WhatsApp recebe sÃ³ o resumo diÃ¡rio).</p>
+        <button type="button" class="btn-close" id="diario-close" aria-label="Fechar">×</button>
+        <h2 id="diario-title">Diário Oficial</h2>
+        <p class="report-sub">Auditoria completa de eventos (o WhatsApp recebe só o resumo diário).</p>
         <div class="filters-row diario-filters">
           <label class="filter-field">
             <span>Dia</span>
@@ -281,7 +320,7 @@
           </label>
           <label class="filter-field">
             <span>Pessoa (JID opcional)</span>
-            <input type="text" id="diario-user" placeholder="user_jidâ€¦" />
+            <input type="text" id="diario-user" placeholder="user_jid…" />
           </label>
           <button type="button" id="diario-reload" class="btn-tutorial">Atualizar</button>
         </div>
@@ -290,24 +329,6 @@
     </div>
 
     <script src="/js/app.js" defer></script>
-    <script>
-      (function () {
-        var toggle = document.getElementById("nav-toggle");
-        var links = document.getElementById("site-nav-links");
-        if (!toggle || !links) return;
-        toggle.addEventListener("click", function () {
-          var open = links.classList.toggle("is-open");
-          toggle.setAttribute("aria-expanded", open ? "true" : "false");
-          toggle.setAttribute("aria-label", open ? "Fechar menu" : "Abrir menu");
-        });
-        links.querySelectorAll("a, button").forEach(function (el) {
-          el.addEventListener("click", function () {
-            links.classList.remove("is-open");
-            toggle.setAttribute("aria-expanded", "false");
-            toggle.setAttribute("aria-label", "Abrir menu");
-          });
-        });
-      })();
-    </script>
+    <script src="/js/home.js" defer></script>
   </body>
 </html>
