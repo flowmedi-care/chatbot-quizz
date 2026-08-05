@@ -1,9 +1,9 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="pt-BR">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Atividades â€” Papa Vagas</title>
+    <title>Atividades — Papa Vagas</title>
     <link rel="icon" href="/favicon.ico" sizes="any" />
     <link rel="icon" href="/img/logo.svg" type="image/svg+xml" />
     <link rel="icon" type="image/png" sizes="32x32" href="/img/favicon-32.png" />
@@ -45,12 +45,12 @@
       </div>
 
       <div id="atv-gate" class="atv-gate">
-        <p>Selecione quem vocÃª Ã© para abrir o calendÃ¡rio de atividades.</p>
+        <p>Selecione quem você é para abrir o calendário de atividades.</p>
       </div>
 
       <div id="atv-main" class="atv-main hidden">
         <div class="atv-tabs" role="tablist">
-          <button type="button" class="atv-tab active" data-view="day">DiÃ¡ria</button>
+          <button type="button" class="atv-tab active" data-view="day">Diária</button>
           <button type="button" class="atv-tab" data-view="week">Semanal</button>
           <button type="button" class="atv-tab" data-view="month">Mensal</button>
         </div>
@@ -71,12 +71,12 @@
 
         <section id="panel-week" class="atv-panel hidden">
           <div class="atv-panel-head atv-nav-head">
-            <button type="button" class="atv-btn ghost" id="week-prev" aria-label="Semana anterior">â€¹</button>
+            <button type="button" class="atv-btn ghost" id="week-prev" aria-label="Semana anterior">‹</button>
             <div>
               <h1>Semana</h1>
               <p id="week-range" class="atv-muted"></p>
             </div>
-            <button type="button" class="atv-btn ghost" id="week-next" aria-label="PrÃ³xima semana">â€º</button>
+            <button type="button" class="atv-btn ghost" id="week-next" aria-label="Próxima semana">›</button>
           </div>
           <div class="atv-legend">
             <span data-s="feito">feito</span>
@@ -95,12 +95,12 @@
 
         <section id="panel-month" class="atv-panel hidden">
           <div class="atv-panel-head atv-nav-head">
-            <button type="button" class="atv-btn ghost" id="month-prev" aria-label="MÃªs anterior">â€¹</button>
+            <button type="button" class="atv-btn ghost" id="month-prev" aria-label="Mês anterior">‹</button>
             <div>
-              <h1 id="month-title">MÃªs</h1>
+              <h1 id="month-title">Mês</h1>
               <p id="month-counts" class="atv-muted"></p>
             </div>
-            <button type="button" class="atv-btn ghost" id="month-next" aria-label="PrÃ³ximo mÃªs">â€º</button>
+            <button type="button" class="atv-btn ghost" id="month-next" aria-label="Próximo mês">›</button>
           </div>
           <div class="atv-legend">
             <span data-s="feito">feito</span>
@@ -119,21 +119,21 @@
       </div>
 
       <section id="atv-quiz-wrap" class="atv-quiz-wrap hidden">
-        <button type="button" class="atv-btn ghost" id="btn-close-quiz">â† Voltar ao calendÃ¡rio</button>
+        <button type="button" class="atv-btn ghost" id="btn-close-quiz">← Voltar ao calendário</button>
         <div id="omissas-error" class="error-banner hidden" role="alert"></div>
-        <div id="omissas-loading" class="omissas-loading hidden">Carregandoâ€¦</div>
+        <div id="omissas-loading" class="omissas-loading hidden">Carregando…</div>
         <section id="omissas-quiz" class="omissas-card hidden" aria-live="polite">
           <div class="omissas-card-head">
             <div>
-              <h1 id="q-title" class="omissas-q-title">QuestÃ£o</h1>
+              <h1 id="q-title" class="omissas-q-title">Questão</h1>
               <p id="q-meta" class="omissas-q-meta"></p>
             </div>
             <p id="q-progress" class="omissas-progress"></p>
           </div>
           <div id="q-statement" class="statement-box"></div>
           <label class="omissas-comment-field">
-            <span>ComentÃ¡rio (opcional)</span>
-            <textarea id="q-comment" rows="3" maxlength="2000" placeholder="Justificativaâ€¦"></textarea>
+            <span>Comentário (opcional)</span>
+            <textarea id="q-comment" rows="3" maxlength="2000" placeholder="Justificativa…"></textarea>
           </label>
           <div id="q-choices" class="choice-grid"></div>
           <p id="q-status" class="omissas-status hidden"></p>
