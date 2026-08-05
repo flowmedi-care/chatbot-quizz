@@ -1,10 +1,11 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="pt-BR">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Cadernos — Papa Vagas</title>
+    <title>Cadernos â€” Papa Vagas</title>
     <link rel="icon" href="/favicon.ico" sizes="any" />
+    <link rel="icon" href="/img/logo.svg" type="image/svg+xml" />
     <link rel="icon" type="image/png" sizes="32x32" href="/img/favicon-32.png" />
     <link rel="apple-touch-icon" href="/img/apple-touch-icon.png" />
     <link rel="manifest" href="/site.webmanifest" />
@@ -22,9 +23,9 @@
     <div class="cb-shell">
       <header class="cb-topbar">
         <div class="cb-brand-row">
-          <a class="cb-back" href="/">← Quiz</a>
+          <a class="cb-back" href="/">â† Quiz</a>
           <a class="cb-brand" href="/cadernos">
-            <img class="brand-mark" src="/img/logo-papa-vagas.png" width="40" height="40" alt="" />
+            <img class="brand-mark" src="/img/logo.svg" width="40" height="40" alt="" />
             <span class="cb-brand-text">
               <strong>Papa Vagas</strong>
               <span>Cadernos</span>
@@ -43,8 +44,8 @@
         <div>
           <h1>Cadernos</h1>
           <p>
-            Gerencie cadernões automáticos do Tec Concursos — agenda, progresso, engajados e envio. O grupo recebe o
-            ritmo; enunciados vão por <code>/omissas</code>.
+            Gerencie cadernÃµes automÃ¡ticos do Tec Concursos â€” agenda, progresso, engajados e envio. O grupo recebe o
+            ritmo; enunciados vÃ£o por <code>/omissas</code>.
           </p>
         </div>
         <div class="cb-hero-stats" id="cb-summary" aria-live="polite"></div>
@@ -53,7 +54,7 @@
       <div class="cb-toolbar">
         <label class="cb-search">
           <span class="visually-hidden">Buscar</span>
-          <input type="search" id="cb-search" placeholder="Buscar por nome ou #id…" autocomplete="off" />
+          <input type="search" id="cb-search" placeholder="Buscar por nome ou #idâ€¦" autocomplete="off" />
         </label>
         <label class="cb-filter">
           Status
@@ -61,7 +62,7 @@
             <option value="all">Todos</option>
             <option value="active">Ativos</option>
             <option value="inactive">Inativos</option>
-            <option value="paused_waiting_decision">Aguardando decisão</option>
+            <option value="paused_waiting_decision">Aguardando decisÃ£o</option>
             <option value="finished">Encerrados</option>
           </select>
         </label>
@@ -79,7 +80,7 @@
             <option value="name">Nome</option>
             <option value="status">Status</option>
             <option value="progress">Progresso</option>
-            <option value="next">Próximo envio</option>
+            <option value="next">PrÃ³ximo envio</option>
             <option value="id">Mais recentes</option>
           </select>
         </label>
@@ -91,22 +92,22 @@
       <ul id="cadernos-list" class="cb-grid" aria-label="Lista de cadernos"></ul>
     </div>
 
-    <!-- Wizard de importação -->
+    <!-- Wizard de importaÃ§Ã£o -->
     <div id="caderno-add-overlay" class="modal-overlay" aria-hidden="true">
       <div class="modal modal-caderno-wizard" role="dialog" aria-modal="true" aria-labelledby="caderno-add-title">
         <div class="modal-header wizard-header">
           <div>
             <h3 id="caderno-add-title">Importar caderno</h3>
-            <p class="report-sub" id="wizard-step-caption">Passo 1 de 5 — Preparar PDF no TEC</p>
+            <p class="report-sub" id="wizard-step-caption">Passo 1 de 5 â€” Preparar PDF no TEC</p>
           </div>
-          <button type="button" id="caderno-add-close" class="btn-close" aria-label="Fechar">×</button>
+          <button type="button" id="caderno-add-close" class="btn-close" aria-label="Fechar">Ã—</button>
         </div>
 
         <ol class="wizard-steps" id="wizard-steps" aria-label="Etapas">
           <li class="active" data-step-dot="1">TEC</li>
           <li data-step-dot="2">PDF</li>
-          <li data-step-dot="3">Básicas</li>
-          <li data-step-dot="4">Avançadas</li>
+          <li data-step-dot="3">BÃ¡sicas</li>
+          <li data-step-dot="4">AvanÃ§adas</li>
           <li data-step-dot="5">Concluir</li>
         </ol>
 
@@ -116,16 +117,16 @@
             <h4 class="wizard-panel-title">Gabarito no fim do caderno</h4>
             <p class="report-sub">
               No TEC Concursos, ao imprimir o PDF, em <strong>Imprimir gabaritos</strong> escolha
-              <strong>“No fim do caderno”</strong>. Sem isso o parser não encontra as respostas e a importação falha.
+              <strong>â€œNo fim do cadernoâ€</strong>. Sem isso o parser nÃ£o encontra as respostas e a importaÃ§Ã£o falha.
             </p>
             <figure class="wizard-tec-figure">
               <img
                 src="/img/tec-gabarito-fim.png"
-                alt="Tela Imprimir do TEC: opção Imprimir gabaritos → No fim do caderno"
+                alt="Tela Imprimir do TEC: opÃ§Ã£o Imprimir gabaritos â†’ No fim do caderno"
                 width="920"
                 height="auto"
               />
-              <figcaption>Marque exatamente a opção destacada antes de gerar o PDF.</figcaption>
+              <figcaption>Marque exatamente a opÃ§Ã£o destacada antes de gerar o PDF.</figcaption>
             </figure>
           </section>
 
@@ -138,60 +139,60 @@
               <input type="file" id="caderno-pdf" accept="application/pdf" />
             </label>
             <div class="wizard-inline-actions">
-              <button type="button" id="btn-caderno-preview" class="btn-tutorial">Pré-visualizar parser</button>
+              <button type="button" id="btn-caderno-preview" class="btn-tutorial">PrÃ©-visualizar parser</button>
             </div>
             <div id="caderno-preview-box" class="caderno-preview hidden"></div>
           </section>
 
           <!-- Step 3: Basics -->
           <section class="wizard-panel" data-wizard-step="3">
-            <h4 class="wizard-panel-title">Configurações básicas</h4>
+            <h4 class="wizard-panel-title">ConfiguraÃ§Ãµes bÃ¡sicas</h4>
             <label class="report-field">
               <span>Nome do caderno</span>
-              <input type="text" id="caderno-name" placeholder="Ex.: SEFAZ PI 2025 — Geral" />
+              <input type="text" id="caderno-name" placeholder="Ex.: SEFAZ PI 2025 â€” Geral" />
             </label>
 
             <div id="caderno-add-group-schedule" class="caderno-row">
               <label class="report-field">
-                <span>Questões por dia</span>
+                <span>QuestÃµes por dia</span>
                 <input type="number" id="caderno-per-day" min="1" max="24" value="3" />
               </label>
               <label class="report-field">
-                <span>Horário de início</span>
+                <span>HorÃ¡rio de inÃ­cio</span>
                 <input type="time" id="caderno-time" value="07:00" />
               </label>
               <label class="report-field">
-                <span>Horário de fim</span>
+                <span>HorÃ¡rio de fim</span>
                 <input type="time" id="caderno-end-time" value="22:00" />
               </label>
             </div>
 
             <div id="caderno-send-times-wrap" class="caderno-send-times-wrap">
               <p class="report-sub" id="caderno-spread-hint" style="margin-top: -6px">
-                Horário de envio de <strong>cada</strong> questão do dia (modo coletivo). No privado, a agenda fica por
-                pessoa no próximo passo.
+                HorÃ¡rio de envio de <strong>cada</strong> questÃ£o do dia (modo coletivo). No privado, a agenda fica por
+                pessoa no prÃ³ximo passo.
               </p>
               <button type="button" id="btn-caderno-fill-uniform" class="btn-tutorial">
-                Distribuir entre início e fim
+                Distribuir entre inÃ­cio e fim
               </button>
               <div
                 id="caderno-send-times-list"
                 class="caderno-send-times-list"
                 role="group"
-                aria-label="Horários por questão"
+                aria-label="HorÃ¡rios por questÃ£o"
               ></div>
             </div>
           </section>
 
           <!-- Step 4: Advanced -->
           <section class="wizard-panel" data-wizard-step="4">
-            <h4 class="wizard-panel-title">Configurações avançadas</h4>
+            <h4 class="wizard-panel-title">ConfiguraÃ§Ãµes avanÃ§adas</h4>
 
             <label class="caderno-toggle">
               <input type="checkbox" id="caderno-random" />
               <span>
-                <strong>Ordem aleatória</strong>
-                <small>Sorteia entre as questões ainda não enviadas. Sem aleatório, segue a ordem do PDF.</small>
+                <strong>Ordem aleatÃ³ria</strong>
+                <small>Sorteia entre as questÃµes ainda nÃ£o enviadas. Sem aleatÃ³rio, segue a ordem do PDF.</small>
               </span>
             </label>
 
@@ -200,7 +201,7 @@
               <span>
                 <strong>Esperar engajados entre dias</strong>
                 <small>
-                  Só começa o dia seguinte quando todos os engajados responderem. Quem virar engajado depois não trava o
+                  SÃ³ comeÃ§a o dia seguinte quando todos os engajados responderem. Quem virar engajado depois nÃ£o trava o
                   ritmo.
                 </small>
               </span>
@@ -213,8 +214,8 @@
                 <span>
                   <strong>Coletivo <em>(recomendado)</em></strong>
                   <small>
-                    O grupo recebe o Diário Oficial. Enunciados vão no privado via <code>/omissas</code> para engajados e
-                    passivos. <strong>Não</strong> posta o enunciado no grupo.
+                    O grupo recebe o DiÃ¡rio Oficial. Enunciados vÃ£o no privado via <code>/omissas</code> para engajados e
+                    passivos. <strong>NÃ£o</strong> posta o enunciado no grupo.
                   </small>
                 </span>
               </label>
@@ -223,7 +224,7 @@
                 <span>
                   <strong>Privado (DM)</strong>
                   <small>
-                    Enunciado vai direto no WhatsApp de cada destinatário. Não entra no Diário nem no <code>/omissas</code>
+                    Enunciado vai direto no WhatsApp de cada destinatÃ¡rio. NÃ£o entra no DiÃ¡rio nem no <code>/omissas</code>
                     coletivo.
                   </small>
                 </span>
@@ -232,9 +233,9 @@
 
             <div id="caderno-add-engagement-panel" class="caderno-engagement-panel">
               <p class="report-sub">
-                <strong>Obrigatório:</strong> carregue os membros e marque ao menos um
+                <strong>ObrigatÃ³rio:</strong> carregue os membros e marque ao menos um
                 <strong>engajado</strong> ou <strong>passivo</strong>.
-                Engajados fecham gabarito e ritmo; passivos só recebem no <code>/omissas</code>.
+                Engajados fecham gabarito e ritmo; passivos sÃ³ recebem no <code>/omissas</code>.
               </p>
               <button type="button" id="btn-caderno-add-load-engagement" class="btn-reveal wizard-load-members">
                 Carregar membros do grupo
@@ -245,8 +246,8 @@
 
             <div id="caderno-private-add-panel" class="caderno-private-panel hidden">
               <p class="report-sub" style="margin-bottom: 8px">
-                <strong>Modo privado:</strong> agenda <strong>só por destinatário</strong>. Marque quem recebe e defina
-                Q/dia, início e fim em cada linha.
+                <strong>Modo privado:</strong> agenda <strong>sÃ³ por destinatÃ¡rio</strong>. Marque quem recebe e defina
+                Q/dia, inÃ­cio e fim em cada linha.
               </p>
               <button type="button" id="btn-caderno-add-load-members" class="btn-reveal wizard-load-members">
                 Carregar membros do grupo
@@ -260,7 +261,7 @@
             <h4 class="wizard-panel-title">Conferir e salvar</h4>
             <div id="wizard-summary" class="wizard-summary"></div>
             <p class="report-sub">
-              Prefira pré-visualizar o PDF no passo 2 antes de ativar. “Salvar inativo” cria o caderno sem começar o
+              Prefira prÃ©-visualizar o PDF no passo 2 antes de ativar. â€œSalvar inativoâ€ cria o caderno sem comeÃ§ar o
               envio.
             </p>
             <div class="caderno-actions wizard-save-actions">
@@ -286,11 +287,11 @@
           <div>
             <h3 id="caderno-edit-title">Editar caderno</h3>
             <p class="report-sub">
-              Mude o nome, a agenda ou o modo de envio. Para cadernos ativos, o próximo envio
-              é recalculado automaticamente quando você muda horário ou quantidade.
+              Mude o nome, a agenda ou o modo de envio. Para cadernos ativos, o prÃ³ximo envio
+              Ã© recalculado automaticamente quando vocÃª muda horÃ¡rio ou quantidade.
             </p>
           </div>
-          <button type="button" id="caderno-edit-close" class="btn-close" aria-label="Fechar">×</button>
+          <button type="button" id="caderno-edit-close" class="btn-close" aria-label="Fechar">Ã—</button>
         </div>
 
         <div class="caderno-form">
@@ -304,35 +305,35 @@
           <div id="caderno-edit-group-schedule">
             <div class="caderno-row">
               <label class="report-field">
-                <span>Questões por dia</span>
+                <span>QuestÃµes por dia</span>
                 <input type="number" id="caderno-edit-per-day" min="1" max="24" />
               </label>
               <label class="report-field">
-                <span>Horário de início</span>
+                <span>HorÃ¡rio de inÃ­cio</span>
                 <input type="time" id="caderno-edit-time" />
               </label>
               <label class="report-field">
-                <span>Horário de fim</span>
+                <span>HorÃ¡rio de fim</span>
                 <input type="time" id="caderno-edit-end-time" />
               </label>
             </div>
 
             <div id="caderno-edit-send-times-wrap" class="caderno-send-times-wrap">
               <p class="report-sub" id="caderno-edit-spread-hint" style="margin-top: -6px;">
-                Horário de cada questão do dia (envio em <strong>grupo</strong>).
+                HorÃ¡rio de cada questÃ£o do dia (envio em <strong>grupo</strong>).
               </p>
               <button type="button" id="btn-caderno-edit-fill-uniform" class="btn-tutorial">
-                Distribuir entre início e fim
+                Distribuir entre inÃ­cio e fim
               </button>
-              <div id="caderno-edit-send-times-list" class="caderno-send-times-list" role="group" aria-label="Horários por questão"></div>
+              <div id="caderno-edit-send-times-list" class="caderno-send-times-list" role="group" aria-label="HorÃ¡rios por questÃ£o"></div>
             </div>
           </div>
 
           <label class="caderno-toggle">
             <input type="checkbox" id="caderno-edit-random" />
             <span>
-              <strong>Ordem aleatória</strong>
-              <small>Sorteia entre as questões ainda não enviadas. Sem aleatório, segue a ordem do PDF.</small>
+              <strong>Ordem aleatÃ³ria</strong>
+              <small>Sorteia entre as questÃµes ainda nÃ£o enviadas. Sem aleatÃ³rio, segue a ordem do PDF.</small>
             </span>
           </label>
 
@@ -341,8 +342,8 @@
             <span>
               <strong>Esperar resposta entre dias</strong>
               <small>
-                Só começa o dia seguinte quando todos os engajados <strong>deste caderno</strong> responderem as questões do dia anterior.
-                Novos engajados não travam — seguem a partir do ponto do grupo.
+                SÃ³ comeÃ§a o dia seguinte quando todos os engajados <strong>deste caderno</strong> responderem as questÃµes do dia anterior.
+                Novos engajados nÃ£o travam â€” seguem a partir do ponto do grupo.
               </small>
             </span>
           </label>
@@ -354,7 +355,7 @@
               <span>
                 <strong>Coletivo</strong>
                 <small>
-                  Diário Oficial no grupo; enunciados via <code>/omissas</code> (engajados/passivos). Não posta enunciado
+                  DiÃ¡rio Oficial no grupo; enunciados via <code>/omissas</code> (engajados/passivos). NÃ£o posta enunciado
                   no grupo.
                 </small>
               </span>
@@ -363,15 +364,15 @@
               <input type="radio" name="caderno-edit-delivery" id="caderno-edit-delivery-private" value="private" />
               <span>
                 <strong>Privado (DM)</strong>
-                <small>Enunciado no WhatsApp de cada destinatário; fora do Diário e do <code>/omissas</code> coletivo.</small>
+                <small>Enunciado no WhatsApp de cada destinatÃ¡rio; fora do DiÃ¡rio e do <code>/omissas</code> coletivo.</small>
               </span>
             </label>
           </fieldset>
 
           <div id="caderno-edit-private-panel" class="caderno-private-panel hidden">
             <p class="report-sub">
-              Destinatários (marque quem recebe no privado). <strong>Horário e quantidade são só por pessoa</strong> nas
-              linhas abaixo (início e fim do dia).
+              DestinatÃ¡rios (marque quem recebe no privado). <strong>HorÃ¡rio e quantidade sÃ£o sÃ³ por pessoa</strong> nas
+              linhas abaixo (inÃ­cio e fim do dia).
             </p>
             <button type="button" id="btn-caderno-edit-load-members" class="btn-tutorial">
               Carregar membros do grupo
@@ -382,9 +383,9 @@
           <div id="caderno-edit-engagement-panel" class="caderno-engagement-panel">
             <p class="report-sub">
               <strong>Engajados</strong> fecham o gabarito e o ritmo do caderno.
-              <strong>Passivos</strong> recebem no /omissas só as questões do dia (não influenciam o ritmo).
+              <strong>Passivos</strong> recebem no /omissas sÃ³ as questÃµes do dia (nÃ£o influenciam o ritmo).
               <strong>Engajados</strong> veem no /omissas as do dia (streak); backlog em /atrasadas desde o dia em que entraram.
-              Marque no máximo um dos dois por pessoa.
+              Marque no mÃ¡ximo um dos dois por pessoa.
             </p>
             <button type="button" id="btn-caderno-edit-load-engagement" class="btn-tutorial">
               Carregar membros do grupo
@@ -395,7 +396,7 @@
 
           <div class="caderno-actions">
             <button type="button" id="btn-caderno-edit-cancel" class="btn-tutorial">Cancelar</button>
-            <button type="button" id="btn-caderno-edit-save" class="btn-reveal">Salvar alterações</button>
+            <button type="button" id="btn-caderno-edit-save" class="btn-reveal">Salvar alteraÃ§Ãµes</button>
           </div>
 
           <p id="caderno-edit-status" class="report-status" role="status" aria-live="polite"></p>

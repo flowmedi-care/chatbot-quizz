@@ -1,10 +1,11 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="pt-BR">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Hub Papa Vagas — Gamificação</title>
+    <title>Hub Papa Vagas â€” GamificaÃ§Ã£o</title>
     <link rel="icon" href="/favicon.ico" sizes="any" />
+    <link rel="icon" href="/img/logo.svg" type="image/svg+xml" />
     <link rel="icon" type="image/png" sizes="32x32" href="/img/favicon-32.png" />
     <link rel="apple-touch-icon" href="/img/apple-touch-icon.png" />
     <link rel="manifest" href="/site.webmanifest" />
@@ -21,7 +22,7 @@
     <div class="hub-shell">
       <header class="hub-topbar">
         <a class="hub-brand" href="/hub">
-          <img class="brand-mark" src="/img/logo-papa-vagas.png" width="40" height="40" alt="" />
+          <img class="brand-mark" src="/img/logo.svg" width="40" height="40" alt="" />
           <span class="hub-brand-text">
             <strong>Papa Vagas</strong>
             <span>Hub</span>
@@ -32,7 +33,7 @@
           <a class="hub-chip" href="/atividades">Atividades</a>
           <a class="hub-chip" href="/engajamento">Engajamento</a>
           <a class="hub-chip" href="/tutorial">Como usar</a>
-          <button type="button" class="hub-chip primary" data-go="diario">Praça</button>
+          <button type="button" class="hub-chip primary" data-go="diario">PraÃ§a</button>
         </nav>
       </header>
 
@@ -42,39 +43,39 @@
           <select id="hub-user" aria-label="Selecionar participante"></select>
         </label>
         <p style="margin: 0; font-size: 0.85rem; color: var(--muted); max-width: 42ch">
-          Compras debitam só após <strong>sim</strong> no WhatsApp dessa pessoa.
+          Compras debitam sÃ³ apÃ³s <strong>sim</strong> no WhatsApp dessa pessoa.
         </p>
       </div>
 
       <div class="hub-layout">
         <nav class="hub-nav" aria-label="Hub">
           <div class="nav-section">Mundo vivo</div>
-          <button type="button" data-go="diario" class="active">Praça</button>
+          <button type="button" data-go="diario" class="active">PraÃ§a</button>
           <button type="button" data-go="perfil">Meu perfil</button>
           <button type="button" data-go="rankings">Rankings</button>
 
           <div class="nav-section">Progresso</div>
           <button type="button" data-go="conquistas">Conquistas</button>
-          <button type="button" data-go="inventario">Inventário</button>
+          <button type="button" data-go="inventario">InventÃ¡rio</button>
           <button type="button" data-go="loja">Portal de compras</button>
-          <button type="button" data-go="historico">Histórico</button>
+          <button type="button" data-go="historico">HistÃ³rico</button>
 
-          <div class="nav-section">Transparência</div>
-          <button type="button" data-go="transparencia">Portal da Transparência</button>
+          <div class="nav-section">TransparÃªncia</div>
+          <button type="button" data-go="transparencia">Portal da TransparÃªncia</button>
           <button type="button" data-go="manual">Manual da Economia</button>
-          <button type="button" data-go="acoes">Tabela de Ações</button>
+          <button type="button" data-go="acoes">Tabela de AÃ§Ãµes</button>
           <button type="button" data-go="comandos">Comandos WhatsApp</button>
           <button type="button" data-go="atualizacao">Texto pro grupo</button>
-          <button type="button" data-go="ideias">Ideias de retenção</button>
+          <button type="button" data-go="ideias">Ideias de retenÃ§Ã£o</button>
         </nav>
 
         <main class="hub-main">
-          <!-- HOME: Praça + Diário -->
+          <!-- HOME: PraÃ§a + DiÃ¡rio -->
           <section id="page-diario" class="hub-page active">
             <div class="hub-hero">
-              <h1>Praça dos concurseiros</h1>
+              <h1>PraÃ§a dos concurseiros</h1>
               <p>
-                Quadro vivo do grupo — molduras, Aura e títulos. Clique em alguém para abrir o perfil. O Diário Oficial
+                Quadro vivo do grupo â€” molduras, Aura e tÃ­tulos. Clique em alguÃ©m para abrir o perfil. O DiÃ¡rio Oficial
                 fica abaixo.
               </p>
             </div>
@@ -82,12 +83,12 @@
 
             <div class="diario-section">
               <div class="hub-hero diario-hero">
-                <h2>Diário Oficial</h2>
-                <p>Nomeações, recordes, mandados e despesas empenhadas do dia.</p>
+                <h2>DiÃ¡rio Oficial</h2>
+                <p>NomeaÃ§Ãµes, recordes, mandados e despesas empenhadas do dia.</p>
               </div>
               <div class="hub-grid-2">
                 <div class="hub-card">
-                  <h3>Edição de hoje</h3>
+                  <h3>EdiÃ§Ã£o de hoje</h3>
                   <div class="filters-row" style="display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.75rem">
                     <input type="date" id="diario-day" />
                     <button type="button" class="hub-chip" id="diario-reload">Atualizar</button>
@@ -95,15 +96,15 @@
                   <div id="diario-feed" class="feed-list"></div>
                 </div>
                 <aside class="hub-card">
-                  <h3>Seções do Diário</h3>
+                  <h3>SeÃ§Ãµes do DiÃ¡rio</h3>
                   <ul>
-                    <li><strong>Nomeações</strong> — conquistas e títulos</li>
-                    <li><strong>Recordes</strong> — streak e 1ºs lugares</li>
-                    <li><strong>Mandados</strong> — duelos públicos</li>
-                    <li><strong>Despesas</strong> — compras no Portal</li>
+                    <li><strong>NomeaÃ§Ãµes</strong> â€” conquistas e tÃ­tulos</li>
+                    <li><strong>Recordes</strong> â€” streak e 1Âºs lugares</li>
+                    <li><strong>Mandados</strong> â€” duelos pÃºblicos</li>
+                    <li><strong>Despesas</strong> â€” compras no Portal</li>
                   </ul>
                   <p style="color: var(--muted); font-size: 0.9rem; margin-top: 1rem">
-                    No WhatsApp o digest matinal é enxuto (Aura + streak). Aqui está a auditoria completa.
+                    No WhatsApp o digest matinal Ã© enxuto (Aura + streak). Aqui estÃ¡ a auditoria completa.
                   </p>
                 </aside>
               </div>
@@ -114,7 +115,7 @@
           <section id="page-perfil" class="hub-page">
             <div class="hub-hero">
               <h1>Perfil do concurseiro</h1>
-              <p>Prestígio, patrimônio e prova de disciplina — o cartão de visitas do grupo.</p>
+              <p>PrestÃ­gio, patrimÃ´nio e prova de disciplina â€” o cartÃ£o de visitas do grupo.</p>
             </div>
             <div id="perfil-root"></div>
           </section>
@@ -123,13 +124,13 @@
           <section id="page-rankings" class="hub-page">
             <div class="hub-hero">
               <h1>Rankings</h1>
-              <p>Vários podiums para ninguém depender só de “estar há mais tempo”.</p>
+              <p>VÃ¡rios podiums para ninguÃ©m depender sÃ³ de â€œestar hÃ¡ mais tempoâ€.</p>
             </div>
             <div class="rank-tabs" id="rank-tabs">
-              <button type="button" class="active" data-board="aura">🏛️ Aura</button>
-              <button type="button" data-board="producao">📚 Produção</button>
-              <button type="button" data-board="disciplina">🔥 Disciplina</button>
-              <button type="button" data-board="duelo">⚔️ Duelo</button>
+              <button type="button" class="active" data-board="aura">ðŸ›ï¸ Aura</button>
+              <button type="button" data-board="producao">ðŸ“š ProduÃ§Ã£o</button>
+              <button type="button" data-board="disciplina">ðŸ”¥ Disciplina</button>
+              <button type="button" data-board="duelo">âš”ï¸ Duelo</button>
             </div>
             <div class="hub-card">
               <ol class="rank-list" id="rank-list"></ol>
@@ -137,8 +138,8 @@
             <div class="hub-card" style="margin-top: 1rem">
               <h3>Em breve no ranking</h3>
               <p style="color: var(--muted); margin: 0">
-                Precisão · evolução semanal · patrimônio · colecionadores · tempo estudando · sequência perfeita.
-                Cada um abre uma “porta de vitória” diferente (competição saudável + retenção).
+                PrecisÃ£o Â· evoluÃ§Ã£o semanal Â· patrimÃ´nio Â· colecionadores Â· tempo estudando Â· sequÃªncia perfeita.
+                Cada um abre uma â€œporta de vitÃ³riaâ€ diferente (competiÃ§Ã£o saudÃ¡vel + retenÃ§Ã£o).
               </p>
             </div>
           </section>
@@ -147,16 +148,16 @@
           <section id="page-conquistas" class="hub-page">
             <div class="hub-hero">
               <h1>Conquistas</h1>
-              <p>Títulos de carreira pública — do Calouro à Nazli. Raros, visíveis, cobiçados.</p>
+              <p>TÃ­tulos de carreira pÃºblica â€” do Calouro Ã  Nazli. Raros, visÃ­veis, cobiÃ§ados.</p>
             </div>
             <div id="conquistas-root" class="badge-grid"></div>
           </section>
 
-          <!-- INVENTÁRIO -->
+          <!-- INVENTÃRIO -->
           <section id="page-inventario" class="hub-page">
             <div class="hub-hero">
-              <h1>Inventário</h1>
-              <p>Molduras, efeitos, consumíveis e o que está equipado agora.</p>
+              <h1>InventÃ¡rio</h1>
+              <p>Molduras, efeitos, consumÃ­veis e o que estÃ¡ equipado agora.</p>
             </div>
             <div id="inventario-root" class="inv-grid"></div>
           </section>
@@ -165,13 +166,13 @@
           <section id="page-loja" class="hub-page">
             <div class="hub-hero">
               <h1>Portal de compras</h1>
-              <p>Balcão orçamentário com vitrine — escolha o item, veja o preview e empenhe a despesa.</p>
+              <p>BalcÃ£o orÃ§amentÃ¡rio com vitrine â€” escolha o item, veja o preview e empenhe a despesa.</p>
             </div>
             <div id="shop-balance" class="shop-wallet"></div>
             <div class="shop-aisle shop-aisle-h" id="shop-tabs" aria-label="Corredores"></div>
             <div class="shop-stage shop-stage-2">
               <div class="shop-showcase" id="shop-showcase">
-                <p class="muted">Carregando catálogo…</p>
+                <p class="muted">Carregando catÃ¡logoâ€¦</p>
               </div>
               <div class="shop-detail" id="shop-detail">
                 <p class="muted">Selecione um item na lista.</p>
@@ -180,22 +181,22 @@
             <p id="shop-status" class="status-line"></p>
           </section>
 
-          <!-- HISTÓRICO -->
+          <!-- HISTÃ“RICO -->
           <section id="page-historico" class="hub-page">
             <div class="hub-hero">
-              <h1>Histórico do jogador</h1>
-              <p>Timeline pessoal — cada crédito aprovado, cada despesa, cada marco.</p>
+              <h1>HistÃ³rico do jogador</h1>
+              <p>Timeline pessoal â€” cada crÃ©dito aprovado, cada despesa, cada marco.</p>
             </div>
             <div class="hub-card">
               <div id="historico-feed" class="feed-list"></div>
             </div>
           </section>
 
-          <!-- TRANSPARÊNCIA -->
+          <!-- TRANSPARÃŠNCIA -->
           <section id="page-transparencia" class="hub-page">
             <div class="hub-hero">
-              <h1>Portal da Transparência</h1>
-              <p>Consulta pública da economia: ledger, escrow, aplicações e movimentações.</p>
+              <h1>Portal da TransparÃªncia</h1>
+              <p>Consulta pÃºblica da economia: ledger, escrow, aplicaÃ§Ãµes e movimentaÃ§Ãµes.</p>
             </div>
             <div id="transparencia-root"></div>
           </section>
@@ -204,26 +205,26 @@
           <section id="page-manual" class="hub-page">
             <div class="hub-hero">
               <h1>Manual da Economia</h1>
-              <p>Como funciona Aura, Créditos, streak, loja, mandados e penalidades — sem mistério.</p>
+              <p>Como funciona Aura, CrÃ©ditos, streak, loja, mandados e penalidades â€” sem mistÃ©rio.</p>
             </div>
             <div class="doc-tabs" id="manual-tabs">
               <button type="button" class="active" data-doc="aura">Aura</button>
-              <button type="button" data-doc="creditos">Créditos</button>
+              <button type="button" data-doc="creditos">CrÃ©ditos</button>
               <button type="button" data-doc="streak">Streak</button>
-              <button type="button" data-doc="niveis">Níveis</button>
+              <button type="button" data-doc="niveis">NÃ­veis</button>
               <button type="button" data-doc="loja">Loja</button>
               <button type="button" data-doc="mandado">Mandado</button>
-              <button type="button" data-doc="aplicar">Aplicação</button>
+              <button type="button" data-doc="aplicar">AplicaÃ§Ã£o</button>
               <button type="button" data-doc="penalidades">Penalidades</button>
             </div>
             <div class="hub-card" id="manual-body"></div>
           </section>
 
-          <!-- AÇÕES -->
+          <!-- AÃ‡Ã•ES -->
           <section id="page-acoes" class="hub-page">
             <div class="hub-hero">
-              <h1>Tabela de Ações</h1>
-              <p>Documentação oficial: o que gera, o que custa, o que pune.</p>
+              <h1>Tabela de AÃ§Ãµes</h1>
+              <p>DocumentaÃ§Ã£o oficial: o que gera, o que custa, o que pune.</p>
             </div>
             <div class="hub-card" style="overflow: auto">
               <table class="actions-table" id="acoes-table"></table>
@@ -234,11 +235,11 @@
           <section id="page-comandos" class="hub-page">
             <div class="hub-hero">
               <h1>Comandos WhatsApp</h1>
-              <p>Tudo o que o bot entende — quiz, cadernos e gamificação.</p>
+              <p>Tudo o que o bot entende â€” quiz, cadernos e gamificaÃ§Ã£o.</p>
             </div>
             <div class="doc-tabs" id="cmd-tabs">
-              <button type="button" class="active" data-cmd="sessao">Sessão</button>
-              <button type="button" data-cmd="questoes">Questões</button>
+              <button type="button" class="active" data-cmd="sessao">SessÃ£o</button>
+              <button type="button" data-cmd="questoes">QuestÃµes</button>
               <button type="button" data-cmd="cadernos">Cadernos</button>
               <button type="button" data-cmd="grupo">Grupo</button>
               <button type="button" data-cmd="economia">Economia</button>
@@ -246,11 +247,11 @@
             <div class="cmd-grid" id="cmd-body"></div>
           </section>
 
-          <!-- ATUALIZAÇÃO -->
+          <!-- ATUALIZAÃ‡ÃƒO -->
           <section id="page-atualizacao" class="hub-page">
             <div class="hub-hero">
               <h1>Texto pro grupo</h1>
-              <p>Copie e cole no WhatsApp para anunciar a atualização. Ajuste o tom se quiser.</p>
+              <p>Copie e cole no WhatsApp para anunciar a atualizaÃ§Ã£o. Ajuste o tom se quiser.</p>
             </div>
             <div class="hub-card">
               <div class="filters-row" style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.75rem">
@@ -264,8 +265,8 @@
           <!-- IDEIAS -->
           <section id="page-ideias" class="hub-page">
             <div class="hub-hero">
-              <h1>Ideias de retenção</h1>
-              <p>Próximas camadas para deixar o hábito inevitável — com justificativa de produto.</p>
+              <h1>Ideias de retenÃ§Ã£o</h1>
+              <p>PrÃ³ximas camadas para deixar o hÃ¡bito inevitÃ¡vel â€” com justificativa de produto.</p>
             </div>
             <div class="idea-list" id="ideias-root"></div>
           </section>
@@ -273,7 +274,7 @@
       </div>
 
       <footer class="hub-footer">
-        Papa Vagas Hub · identidade TCU + jogo · dados via WhatsApp · confirme compras com <em>sim</em> no privado
+        Papa Vagas Hub Â· identidade TCU + jogo Â· dados via WhatsApp Â· confirme compras com <em>sim</em> no privado
       </footer>
     </div>
     <script src="/js/hub.js" defer></script>
