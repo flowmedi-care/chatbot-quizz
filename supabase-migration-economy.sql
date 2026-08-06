@@ -167,6 +167,7 @@ create table if not exists public.economy_day_flags (
 insert into public.shop_catalog (item_key, name, category, price_credits, min_aura, consumable, metadata, sort_order) values
   ('assist_eliminate', 'Eliminar uma alternativa', 'assistencias', 50, 0, true, '{"uses":1}'::jsonb, 10),
   ('streak_insurance', 'Seguro de Streak', 'protecao', 300, 0, true, '{"charges":1}'::jsonb, 20),
+  ('day_off', 'Dia de folga', 'protecao', 450, 0, true, '{"uses":1,"prepaid":true}'::jsonb, 25),
   ('frame_basic', 'Moldura básica', 'cosmeticos', 80, 0, false, '{"slot":"frame","css":"frame-basic"}'::jsonb, 30),
   ('frame_rare', 'Moldura rara', 'cosmeticos', 220, 100, false, '{"slot":"frame","css":"frame-rare"}'::jsonb, 40),
   ('name_color', 'Cor do nome', 'cosmeticos', 120, 50, false, '{"slot":"name_color","css":"name-accent"}'::jsonb, 50),

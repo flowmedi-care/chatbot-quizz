@@ -306,7 +306,53 @@ export async function equipItem(userJid: string, itemKey: string): Promise<strin
   return `Equipado: ${item.name}`;
 }
 
-export async function useEliminateAssist(userJid: string, questionShortId: string): Promise<string> {
+async function consumeInventoryItem(userJid: string, itemKey: string): Promise<number> {
+  const { data: inv } = await economyDb()
+    .from("user_inventory")
+    .select("qty")
+    .eq("user_jid", userJid)
+    .eq("item_key", itemKey)
+    .maybeSingle();
+  if (!inv || (inv.qty || 0) < 1) return -1;
+  const newQty = (inv.qty || 1) - 1;
+  if (newQty <= 0) {
+    await economyDb().from("user_inventory").delete().eq("user_jid", userJid).eq("item_key", itemKey);
+  } else {
+    await economyDb()
+      .from("user_inventory")
+      .update({ qty: newQty, updated_at: new Date().toISOString() })
+      .eq("user_jid", userJid)
+      .eq("item_key", itemKey);
+  }
+  return Math.max(0, newQty);
+}
+
+async function hasUsedEliminateOnQuestion(userJid: string, questionShortId: string): Promise<boolean> {
+  const sid = questionShortId.toUpperCase();
+  const { data } = await economyDb()
+    .from("economy_ledger")
+    .select("id")
+    .eq("user_jid", userJid)
+    .eq("reason", "assist_eliminate_use")
+    .eq("ref_id", `elim:${sid}`)
+    .maybeSingle();
+  return Boolean(data);
+}
+
+/**
+ * Usa assistência: elimina 1 alternativa errada (aleatória) OU revela se a letra escolhida é o gabarito.
+ * Máximo 1 uso por questão.
+ */
+export async function useEliminateAssist(
+  userJid: string,
+  questionShortId: string,
+  chosenLetter?: string | null
+): Promise<string> {
+  const sid = questionShortId.toUpperCase();
+  if (await hasUsedEliminateOnQuestion(userJid, sid)) {
+    throw new Error(`Você já usou assistência nesta questão (#${sid}). Máximo 1 por questão.`);
+  }
+
   const { data: inv } = await economyDb()
     .from("user_inventory")
     .select("qty")
@@ -318,42 +364,115 @@ export async function useEliminateAssist(userJid: string, questionShortId: strin
   }
 
   const { getQuestionResult } = await import("../supabase");
-  const result = await getQuestionResult(questionShortId);
+  const result = await getQuestionResult(sid);
   const key = String(result.answerKey || "").toUpperCase();
   const options =
     result.questionType === "true_false" ? ["C", "E"] : ["A", "B", "C", "D", "E"];
-  const wrong = options.filter((o) => o !== key);
-  if (wrong.length === 0) throw new Error("Não há alternativa para eliminar.");
-  const removed = wrong[Math.floor(Math.random() * wrong.length)];
 
-  const newQty = (inv.qty || 1) - 1;
-  if (newQty <= 0) {
-    await economyDb()
-      .from("user_inventory")
-      .delete()
-      .eq("user_jid", userJid)
-      .eq("item_key", "assist_eliminate");
+  const letterRaw = chosenLetter != null ? String(chosenLetter).trim().toUpperCase().slice(0, 1) : "";
+  let removed: string | null = null;
+  let isCorrect: boolean | null = null;
+  let mode: "random" | "check" = "random";
+
+  if (letterRaw) {
+    if (!options.includes(letterRaw)) {
+      throw new Error(
+        result.questionType === "true_false"
+          ? "Letra inválida. Use C ou E."
+          : "Letra inválida. Use A, B, C, D ou E."
+      );
+    }
+    mode = "check";
+    isCorrect = letterRaw === key;
+    if (!isCorrect) removed = letterRaw;
   } else {
-    await economyDb()
-      .from("user_inventory")
-      .update({ qty: newQty, updated_at: new Date().toISOString() })
-      .eq("user_jid", userJid)
-      .eq("item_key", "assist_eliminate");
+    const wrong = options.filter((o) => o !== key);
+    if (wrong.length === 0) throw new Error("Não há alternativa para eliminar.");
+    removed = wrong[Math.floor(Math.random() * wrong.length)];
+  }
+
+  const newQty = await consumeInventoryItem(userJid, "assist_eliminate");
+  if (newQty < 0) {
+    throw new Error("Você não tem 'Eliminar uma alternativa'. Compre no /loja (50 Créditos).");
   }
 
   await applyLedger({
     userJid,
     reason: "assist_eliminate_use",
     refType: "assist",
-    refId: `${questionShortId}:${Date.now()}`,
-    meta: { removed, questionShortId }
+    refId: `elim:${sid}`,
+    meta: { removed, letter: letterRaw || removed, isCorrect, mode, questionShortId: sid }
   });
+
+  if (mode === "check") {
+    return [
+      "🧩 Assistência usada: Eliminar uma alternativa",
+      `Questão #${sid}`,
+      `Alternativa *${letterRaw}* é *${isCorrect ? "VERDADEIRA (gabarito)" : "FALSA"}*.`,
+      `Restantes: ${newQty}`
+    ].join("\n");
+  }
 
   return [
     "🧩 Assistência usada: Eliminar uma alternativa",
-    `Questão #${questionShortId.toUpperCase()}`,
+    `Questão #${sid}`,
     `Pode descartar a alternativa *${removed}* (não é o gabarito).`,
-    `Restantes: ${Math.max(0, newQty)}`
+    `Restantes: ${newQty}`
+  ].join("\n");
+}
+
+/** Consome Dia de folga e marca o dia em prepaid_days (sem omissas naquele dia). */
+export async function useDayOff(userJid: string, dayIso: string): Promise<string> {
+  const day = String(dayIso || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) {
+    throw new Error("Data inválida. Use /folga hoje, /folga amanha ou /folga AAAA-MM-DD.");
+  }
+  const today = todayIso();
+  if (day < today) {
+    throw new Error("Só é possível marcar folga para hoje ou um dia futuro.");
+  }
+
+  const { data: inv } = await economyDb()
+    .from("user_inventory")
+    .select("qty")
+    .eq("user_jid", userJid)
+    .eq("item_key", "day_off")
+    .maybeSingle();
+  if (!inv || (inv.qty || 0) < 1) {
+    throw new Error("Você não tem 'Dia de folga'. Compre no /loja (450 Créditos).");
+  }
+
+  const { ensureStreak } = await import("./db");
+  const streak = await ensureStreak(userJid);
+  const prepaid = new Set([...(streak.prepaid_days || []), day]);
+  if ((streak.prepaid_days || []).includes(day)) {
+    throw new Error(`O dia ${day} já está marcado como folga/adiantado.`);
+  }
+
+  const newQty = await consumeInventoryItem(userJid, "day_off");
+  if (newQty < 0) {
+    throw new Error("Você não tem 'Dia de folga'. Compre no /loja (450 Créditos).");
+  }
+
+  await economyDb()
+    .from("user_streak")
+    .update({ prepaid_days: [...prepaid], updated_at: new Date().toISOString() })
+    .eq("user_jid", userJid);
+
+  await applyLedger({
+    userJid,
+    reason: "day_off_use",
+    refType: "streak_day",
+    refId: `folga:${day}`,
+    meta: { dayIso: day }
+  });
+
+  const label = day === today ? "hoje" : day;
+  return [
+    "🌴 Dia de folga ativado",
+    `Dia: *${label}* (${day})`,
+    "Naquele dia você conta como sem omissas (igual a ter adiantado).",
+    `Restantes: ${newQty}`
   ].join("\n");
 }
 
@@ -379,6 +498,7 @@ export function formatShopList(items: ShopItem[]): string {
   }
   lines.push("Comprar: /comprar <item_key>");
   lines.push("Equipar: /equipar <item_key>");
-  lines.push("Assistência: /eliminar <id>");
+  lines.push("Assistência: /eliminar <id> [letra]");
+  lines.push("Folga: /folga hoje|amanha|AAAA-MM-DD");
   return lines.join("\n");
 }

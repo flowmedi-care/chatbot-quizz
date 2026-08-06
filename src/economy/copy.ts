@@ -80,6 +80,10 @@ export function ledgerReasonLabel(reason: string, meta?: Record<string, unknown>
       return `${name} não respondeu no dia (−1 Aura)`;
     case "streak_insurance":
       return `${name} usou Seguro de Streak`;
+    case "assist_eliminate_use":
+      return `${name} usou assistência (eliminar alternativa)${shortId ? " em #" + shortId : ""}`;
+    case "day_off_use":
+      return `${name} ativou Dia de folga${meta?.dayIso ? " em " + meta.dayIso : ""}`;
     default:
       return `${name}: ${reason}`;
   }

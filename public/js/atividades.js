@@ -8,6 +8,7 @@
     post: "/api/atividades",
     session: (t) => `/api/omissas-session?t=${encodeURIComponent(t)}`,
     answer: "/api/omissas-answer",
+    assist: "/api/omissas-assist",
     results: (t) => `/api/omissas-results?t=${encodeURIComponent(t)}`
   };
 
@@ -29,6 +30,10 @@
   let totalInSession = 0;
   let answeredAtStart = 0;
   let submitting = false;
+  let assistQty = 0;
+  let quizUserName = "";
+  let assistMode = false;
+  let assistBusy = false;
 
   function esc(s) {
     return String(s ?? "")
@@ -337,6 +342,10 @@
     pending = [];
     index = 0;
     submitting = false;
+    assistMode = false;
+    assistBusy = false;
+    assistQty = 0;
+    quizUserName = userName || "";
     showQuizWrap(true);
     $("omissas-error").classList.add("hidden");
     $("omissas-results").classList.add("hidden");
@@ -348,6 +357,8 @@
       const data = await fetchJson(API.session(token));
       totalInSession = data.total || 0;
       answeredAtStart = data.answeredCount || 0;
+      assistQty = data.assistEliminateQty || 0;
+      if (data.userName) quizUserName = data.userName;
       pending = (data.questions || []).filter((q) => !q.missing && !q.alreadyAnswered);
       if (!pending.length) {
         if ((data.questions || []).some((q) => q.alreadyAnswered) || data.completedAt) {
@@ -368,6 +379,63 @@
     }
   }
 
+  function firstName(name) {
+    const t = String(name || "").trim();
+    if (!t || t === "Participante") return "";
+    return t.split(/\s+/)[0];
+  }
+
+  function applyAssistReveal(q, reveal) {
+    if (!reveal) return;
+    q.assistUsed = true;
+    q.assistReveal = reveal;
+    const letter = String(reveal.letter || reveal.removed || "").toLowerCase();
+    $("q-choices").querySelectorAll(".btn-choice").forEach((btn) => {
+      if (btn.dataset.letter !== letter) return;
+      if (reveal.isCorrect === true) {
+        btn.classList.add("assist-true");
+        btn.insertAdjacentHTML("beforeend", '<span class="assist-tag">Verdadeira</span>');
+      } else {
+        btn.classList.add("assist-false");
+        btn.disabled = true;
+        btn.insertAdjacentHTML("beforeend", '<span class="assist-tag">Falsa</span>');
+      }
+    });
+  }
+
+  function syncAssistUi(q) {
+    assistMode = false;
+    const wrap = $("q-assist");
+    const btn = $("btn-assist");
+    const hint = $("assist-hint");
+    if (!wrap || !btn) return;
+    wrap.classList.remove("hidden");
+    if (!q || q.assistUsed) {
+      btn.disabled = true;
+      btn.classList.remove("active");
+      btn.textContent = "Assistência usada nesta questão";
+      const r = q && q.assistReveal;
+      if (r && hint) {
+        const L = (r.letter || r.removed || "?").toString().toUpperCase();
+        hint.textContent =
+          r.isCorrect === true ? `${L} é verdadeira (gabarito).` : `${L} é falsa — descartada.`;
+      } else if (hint) hint.textContent = "";
+      return;
+    }
+    btn.disabled = assistQty < 1 || submitting;
+    btn.classList.remove("active");
+    btn.textContent =
+      assistQty > 0
+        ? `Verificar alternativa (${assistQty} no inventário)`
+        : "Sem assistência no inventário";
+    if (hint) {
+      hint.textContent =
+        assistQty > 0
+          ? "Gasta 1 consumível · escolha uma letra · máx. 1 por questão"
+          : "Compre no Hub /loja (50 Créditos)";
+    }
+  }
+
   function renderQuestion() {
     const q = pending[index];
     if (!q) {
@@ -379,10 +447,15 @@
     $("omissas-quiz").classList.remove("hidden");
     $("q-status").classList.add("hidden");
     $("q-comment").value = "";
+    assistMode = false;
 
     const doneSoFar = answeredAtStart + index;
+    const hello = firstName(quizUserName || userName);
     $("q-title").textContent = `Questão #${q.shortId}`;
-    $("q-meta").textContent = q.creatorName ? `Por ${q.creatorName}` : "";
+    const metaParts = [];
+    if (hello) metaParts.push(`Olá, ${hello}`);
+    if (q.creatorName) metaParts.push(`Por ${q.creatorName}`);
+    $("q-meta").textContent = metaParts.join(" · ");
     $("q-progress").textContent = `${doneSoFar + 1} / ${totalInSession}`;
 
     let html = "";
@@ -399,6 +472,7 @@
     const isTf = q.questionType === "true_false";
     const choices = $("q-choices");
     choices.classList.toggle("tf", isTf);
+    choices.classList.remove("assist-picking");
     if (isTf) {
       choices.innerHTML = `
         <button type="button" class="btn-choice" data-letter="c">C — Certo</button>
@@ -412,8 +486,43 @@
         .join("");
     }
     choices.querySelectorAll(".btn-choice").forEach((btn) => {
-      btn.addEventListener("click", () => onChoose(btn.dataset.letter));
+      btn.addEventListener("click", () => onChoiceClick(btn.dataset.letter));
     });
+    if (q.assistReveal) applyAssistReveal(q, q.assistReveal);
+    syncAssistUi(q);
+  }
+
+  async function onChoiceClick(letter) {
+    if (assistMode) {
+      await useAssistOnLetter(letter);
+      return;
+    }
+    await onChoose(letter);
+  }
+
+  async function useAssistOnLetter(letter) {
+    if (assistBusy || submitting) return;
+    const q = pending[index];
+    if (!q || !letter || q.assistUsed) return;
+    assistBusy = true;
+    $("q-status").classList.remove("hidden");
+    $("q-status").textContent = "Verificando alternativa…";
+    try {
+      const data = await fetchJson(API.assist, {
+        method: "POST",
+        body: JSON.stringify({ t: token, shortId: q.shortId, letter })
+      });
+      assistQty = data.assistEliminateQty != null ? data.assistEliminateQty : Math.max(0, assistQty - 1);
+      applyAssistReveal(q, data.assistReveal || { letter: letter.toUpperCase(), isCorrect: data.isCorrect });
+      $("q-status").textContent = data.message || "Assistência usada.";
+      syncAssistUi(q);
+    } catch (e) {
+      $("q-status").textContent = e.message || "Erro ao usar assistência.";
+      assistMode = false;
+      syncAssistUi(q);
+    } finally {
+      assistBusy = false;
+    }
   }
 
   async function onChoose(letter) {
@@ -421,10 +530,13 @@
     const q = pending[index];
     if (!q || !letter) return;
     submitting = true;
+    assistMode = false;
     $("q-choices").querySelectorAll(".btn-choice").forEach((b) => {
       b.disabled = true;
       if (b.dataset.letter === letter) b.classList.add("selected");
     });
+    const btnAssist = $("btn-assist");
+    if (btnAssist) btnAssist.disabled = true;
     $("q-status").classList.remove("hidden");
     $("q-status").textContent = "Salvando…";
     try {
@@ -448,9 +560,10 @@
       submitting = false;
       $("q-status").textContent = e.message || "Erro ao salvar.";
       $("q-choices").querySelectorAll(".btn-choice").forEach((b) => {
-        b.disabled = false;
+        if (!b.classList.contains("assist-false")) b.disabled = false;
         b.classList.remove("selected");
       });
+      syncAssistUi(q);
     }
   }
 
@@ -462,7 +575,9 @@
       const data = await fetchJson(API.results(token));
       $("omissas-loading").classList.add("hidden");
       $("omissas-results").classList.remove("hidden");
+      const hello = firstName(data.userName || quizUserName || userName);
       $("results-summary").innerHTML = `
+        ${hello ? `<p class="omissas-hello">Boa, ${esc(hello)}!</p>` : ""}
         <div class="omissas-stat ok"><span>${data.correctCount}</span> acertos</div>
         <div class="omissas-stat bad"><span>${data.wrongCount}</span> erros</div>
         <div class="omissas-stat"><span>${data.total}</span> no total</div>`;
@@ -522,6 +637,23 @@
     $("btn-atrasadas").addEventListener("click", () => startSession("atrasadas"));
     $("btn-adiantar-week").addEventListener("click", () => adiantarSelected());
     $("btn-adiantar-month").addEventListener("click", () => adiantarSelected());
+
+    const btnAssist = $("btn-assist");
+    if (btnAssist) {
+      btnAssist.addEventListener("click", () => {
+        const q = pending[index];
+        if (!q || q.assistUsed || assistQty < 1 || submitting || assistBusy) return;
+        assistMode = !assistMode;
+        btnAssist.classList.toggle("active", assistMode);
+        const hint = $("assist-hint");
+        if (hint) {
+          hint.textContent = assistMode
+            ? "Modo verificação: toque na alternativa que quer checar."
+            : "Gasta 1 consumível · escolha uma letra · máx. 1 por questão";
+        }
+        $("q-choices").classList.toggle("assist-picking", assistMode);
+      });
+    }
 
     $("week-prev").addEventListener("click", () => {
       if (!weekAnchor) return;

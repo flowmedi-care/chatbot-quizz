@@ -16,6 +16,7 @@
     { "source": "/api/omissas-session", "destination": "/api/omissas-web?om=session" },
     { "source": "/api/omissas-answer", "destination": "/api/omissas-web?om=answer" },
     { "source": "/api/omissas-results", "destination": "/api/omissas-web?om=results" },
+    { "source": "/api/omissas-assist", "destination": "/api/omissas-web?om=assist" },
     { "source": "/api/atividades", "destination": "/api/omissas-web?om=atividades" },
     { "source": "/tutorial", "destination": "/tutorial/index.html" },
     { "source": "/hub", "destination": "/hub/index.html" },

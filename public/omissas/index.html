@@ -24,7 +24,7 @@
           <img class="brand-mark" src="/img/logo.svg" width="36" height="36" alt="" />
           Papa Vagas
         </a>
-        <p class="omissas-kicker">Suas omissas · sessão pessoal</p>
+        <p class="omissas-kicker" id="omissas-greeting">Suas omissas · sessão pessoal</p>
       </header>
 
       <div id="omissas-error" class="error-banner hidden" role="alert"></div>
@@ -48,6 +48,12 @@
             placeholder="Ex.: justificativa da alternativa…"
           ></textarea>
         </label>
+        <div id="q-assist" class="omissas-assist hidden">
+          <button type="button" id="btn-assist" class="omissas-assist-btn">
+            Verificar alternativa
+          </button>
+          <p id="assist-hint" class="omissas-assist-hint"></p>
+        </div>
         <div id="q-choices" class="choice-grid"></div>
         <p id="q-status" class="omissas-status hidden"></p>
       </section>

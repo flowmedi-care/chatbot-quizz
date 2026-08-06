@@ -161,7 +161,8 @@ export type EconomyCommand =
   | { kind: "equipar"; itemKey: string }
   | { kind: "aplicar"; amount: number }
   | { kind: "diario" }
-  | { kind: "eliminar"; questionShortId: string }
+  | { kind: "eliminar"; questionShortId: string; letter?: string }
+  | { kind: "folga"; dayToken: string }
   | { kind: "ranking_eco"; board: "aura" | "producao" | "disciplina" | "duelo" }
   | {
       kind: "intimar";
@@ -194,8 +195,18 @@ export function parseEconomyCommand(text: string): EconomyCommand | null {
   }
   const comprar = t.match(/^\/?comprar\s+([a-z0-9_-]+)$/);
   if (comprar) return { kind: "comprar", itemKey: comprar[1] };
-  const eliminar = t.match(/^\/?eliminar\s+([a-z0-9-]+)$/);
-  if (eliminar) return { kind: "eliminar", questionShortId: eliminar[1].toUpperCase() };
+  const eliminar = t.match(/^\/?eliminar\s+([a-z0-9-]+)(?:\s+([a-e]))?$/i);
+  if (eliminar) {
+    return {
+      kind: "eliminar",
+      questionShortId: eliminar[1].toUpperCase(),
+      letter: eliminar[2] ? eliminar[2].toUpperCase() : undefined
+    };
+  }
+  const folga = t.match(/^\/?folga\s+(.+)$/i);
+  if (folga) {
+    return { kind: "folga", dayToken: folga[1].trim() };
+  }
   const equipar = t.match(/^\/?equipar\s+([a-z0-9_-]+)$/);
   if (equipar) return { kind: "equipar", itemKey: equipar[1] };
   const aplicar = t.match(/^\/?aplicar\s+(\d+)$/);

@@ -206,6 +206,90 @@ async function upsertAnswer(supabase, input) {
   return { wasUpdate: false, previousLetter: null };
 }
 
+async function resolveSessionUserName(supabase, session) {
+  const stored = session.userName != null ? String(session.userName).trim() : "";
+  if (stored && !/@/.test(stored) && !/^\d{8,}$/.test(stored)) return stored;
+
+  try {
+    const { pickDisplayLabel } = require("./_group-members.js");
+    const { data: eco } = await supabase
+      .from("user_economy")
+      .select("display_name")
+      .eq("user_jid", session.userJid)
+      .maybeSingle();
+    const { data: eng } = await supabase
+      .from("group_member_engagement")
+      .select("quiz_display_name, user_label")
+      .eq("user_jid", session.userJid)
+      .limit(3);
+    const engRow = (eng || [])[0] || null;
+    return pickDisplayLabel({
+      userJid: session.userJid,
+      userLabel: eco?.display_name || engRow?.user_label || stored || null,
+      quizDisplayName: engRow?.quiz_display_name || null,
+      nameFromQuiz: stored || null
+    });
+  } catch {
+    return stored || "Participante";
+  }
+}
+
+async function getAssistEliminateQty(supabase, userJid) {
+  const { data } = await supabase
+    .from("user_inventory")
+    .select("qty")
+    .eq("user_jid", userJid)
+    .eq("item_key", "assist_eliminate")
+    .maybeSingle();
+  return data ? Math.max(0, Number(data.qty) || 0) : 0;
+}
+
+async function fetchAssistUsedMap(supabase, userJid, shortIds) {
+  const out = new Map();
+  if (!shortIds.length) return out;
+  const refIds = shortIds.map((s) => `elim:${String(s).toUpperCase()}`);
+  const { data, error } = await supabase
+    .from("economy_ledger")
+    .select("ref_id, meta")
+    .eq("user_jid", userJid)
+    .eq("reason", "assist_eliminate_use")
+    .in("ref_id", refIds);
+  if (error) return out;
+  for (const row of data || []) {
+    const sid = String(row.ref_id || "")
+      .replace(/^elim:/i, "")
+      .toUpperCase();
+    const meta = row.meta || {};
+    out.set(sid, {
+      letter: meta.letter ? String(meta.letter).toUpperCase() : meta.removed ? String(meta.removed).toUpperCase() : null,
+      isCorrect: typeof meta.isCorrect === "boolean" ? meta.isCorrect : null,
+      removed: meta.removed ? String(meta.removed).toUpperCase() : null
+    });
+  }
+  return out;
+}
+
+async function consumeAssistEliminate(supabase, userJid) {
+  const { data: inv } = await supabase
+    .from("user_inventory")
+    .select("qty")
+    .eq("user_jid", userJid)
+    .eq("item_key", "assist_eliminate")
+    .maybeSingle();
+  if (!inv || (inv.qty || 0) < 1) return -1;
+  const newQty = (inv.qty || 1) - 1;
+  if (newQty <= 0) {
+    await supabase.from("user_inventory").delete().eq("user_jid", userJid).eq("item_key", "assist_eliminate");
+  } else {
+    await supabase
+      .from("user_inventory")
+      .update({ qty: newQty, updated_at: new Date().toISOString() })
+      .eq("user_jid", userJid)
+      .eq("item_key", "assist_eliminate");
+  }
+  return Math.max(0, newQty);
+}
+
 async function handleOmissasSession(req, res) {
   if (req.method !== "GET") return res.status(405).json({ error: "Method not allowed" });
 
@@ -219,16 +303,22 @@ async function handleOmissasSession(req, res) {
     const { session } = loaded;
     const questions = await fetchQuestionsByShortIds(supabase, session.shortIds);
     const answers = await fetchUserAnswersForShortIds(supabase, session.userJid, session.shortIds);
+    const userName = await resolveSessionUserName(supabase, session);
+    const assistQty = await getAssistEliminateQty(supabase, session.userJid);
+    const assistUsed = await fetchAssistUsedMap(supabase, session.userJid, session.shortIds);
 
     const list = session.shortIds.map((sid) => {
       const q = questions.find((x) => String(x.short_id).toUpperCase() === sid);
       const ans = answers.get(sid) || null;
+      const assist = assistUsed.get(sid) || null;
       if (!q) {
         return {
           shortId: sid,
           missing: true,
           alreadyAnswered: Boolean(ans),
-          yourLetter: ans ? ans.letter : null
+          yourLetter: ans ? ans.letter : null,
+          assistUsed: Boolean(assist),
+          assistReveal: assist
         };
       }
       return {
@@ -241,7 +331,9 @@ async function handleOmissasSession(req, res) {
         alreadyAnswered: Boolean(ans),
         yourLetter: ans ? ans.letter : null,
         yourComment: ans ? ans.comment : null,
-        missing: false
+        missing: false,
+        assistUsed: Boolean(assist),
+        assistReveal: assist
       };
     });
 
@@ -250,6 +342,8 @@ async function handleOmissasSession(req, res) {
 
     return res.status(200).json({
       mode: session.mode,
+      userName,
+      assistEliminateQty: assistQty,
       expiresAt: session.expiresAt,
       completedAt: session.completedAt,
       total: list.length,
@@ -367,6 +461,7 @@ async function handleOmissasResults(req, res) {
     const { session } = loaded;
     const questions = await fetchQuestionsByShortIds(supabase, session.shortIds);
     const answers = await fetchUserAnswersForShortIds(supabase, session.userJid, session.shortIds);
+    const userName = await resolveSessionUserName(supabase, session);
 
     const playable = session.shortIds.filter((sid) => {
       const q = questions.find((x) => String(x.short_id).toUpperCase() === sid);
@@ -430,6 +525,7 @@ async function handleOmissasResults(req, res) {
 
     return res.status(200).json({
       mode: session.mode,
+      userName,
       correctCount,
       wrongCount,
       total: playable.length,
@@ -438,6 +534,117 @@ async function handleOmissasResults(req, res) {
   } catch (e) {
     console.error(e);
     return res.status(500).json({ error: e.message || "Erro ao carregar resultados" });
+  }
+}
+
+/**
+ * POST: usa assistência na sessão — escolhe 1 alternativa e revela se é verdadeira/falsa.
+ * Body: { t, shortId, letter }
+ */
+async function handleOmissasAssist(req, res) {
+  if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
+
+  let body = {};
+  try {
+    body = typeof req.body === "string" ? JSON.parse(req.body || "{}") : req.body || {};
+  } catch {
+    return res.status(400).json({ error: "JSON inválido" });
+  }
+
+  const token = String(body.t || body.token || "").trim();
+  const shortId = String(body.shortId || "")
+    .trim()
+    .toUpperCase();
+  const letter = String(body.letter || "")
+    .trim()
+    .toLowerCase()
+    .slice(0, 1);
+
+  try {
+    const supabase = getClient();
+    const loaded = await loadSession(supabase, token);
+    if (loaded.error) return res.status(loaded.status).json({ error: loaded.error });
+
+    const { session } = loaded;
+    if (!session.shortIds.includes(shortId)) {
+      return res.status(403).json({ error: "Esta questão não faz parte da sua sessão." });
+    }
+
+    const usedMap = await fetchAssistUsedMap(supabase, session.userJid, [shortId]);
+    if (usedMap.has(shortId)) {
+      return res.status(409).json({
+        error: "Você já usou assistência nesta questão (máximo 1).",
+        assistReveal: usedMap.get(shortId)
+      });
+    }
+
+    const questions = await fetchQuestionsByShortIds(supabase, [shortId]);
+    const q = questions[0];
+    if (!q) return res.status(404).json({ error: "Questão não encontrada" });
+
+    const normalized = normalizeLetter(letter, q.question_type);
+    if (!normalized) {
+      return res.status(400).json({
+        error:
+          q.question_type === "true_false"
+            ? "Escolha C ou E para verificar."
+            : "Escolha A, B, C, D ou E para verificar."
+      });
+    }
+
+    const key = String(q.answer_key || "")
+      .trim()
+      .toLowerCase()
+      .slice(0, 1);
+    const isCorrect = normalized === key;
+    const letterUp = normalized.toUpperCase();
+
+    const newQty = await consumeAssistEliminate(supabase, session.userJid);
+    if (newQty < 0) {
+      return res.status(400).json({
+        error: "Você não tem 'Eliminar uma alternativa' no inventário. Compre no Hub/loja (50 Créditos)."
+      });
+    }
+
+    const { todayIso } = require("./_economy.js");
+    const meta = {
+      letter: letterUp,
+      removed: isCorrect ? null : letterUp,
+      isCorrect,
+      mode: "check",
+      questionShortId: shortId
+    };
+    const { error: ledErr } = await supabase.from("economy_ledger").insert({
+      user_jid: session.userJid,
+      delta_aura: 0,
+      delta_credits: 0,
+      reason: "assist_eliminate_use",
+      ref_type: "assist",
+      ref_id: `elim:${shortId}`,
+      day_iso: todayIso(),
+      meta
+    });
+    if (ledErr) {
+      if (ledErr.code === "23505") {
+        return res.status(409).json({ error: "Assistência já usada nesta questão." });
+      }
+      throw ledErr;
+    }
+
+    return res.status(200).json({
+      ok: true,
+      shortId,
+      letter: letterUp,
+      isCorrect,
+      message: isCorrect
+        ? `Alternativa ${letterUp} é VERDADEIRA (gabarito).`
+        : `Alternativa ${letterUp} é FALSA — pode descartar.`,
+      assistEliminateQty: newQty,
+      assistReveal: { letter: letterUp, isCorrect, removed: isCorrect ? null : letterUp }
+    });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ error: e.message || "Erro ao usar assistência" });
   }
 }
 
@@ -456,5 +663,6 @@ module.exports = {
   upsertAnswer,
   handleOmissasSession,
   handleOmissasAnswer,
-  handleOmissasResults
+  handleOmissasResults,
+  handleOmissasAssist
 };

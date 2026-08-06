@@ -10,7 +10,8 @@ const { applyCors } = require("./_lib.js");
 const {
   handleOmissasSession,
   handleOmissasAnswer,
-  handleOmissasResults
+  handleOmissasResults,
+  handleOmissasAssist
 } = require("./_omissas-web.js");
 const { handleAtividades } = require("./_atividades.js");
 
@@ -21,6 +22,7 @@ function resolveRoute(req) {
     fromQuery === "session" ||
     fromQuery === "answer" ||
     fromQuery === "results" ||
+    fromQuery === "assist" ||
     fromQuery === "atividades"
   ) {
     return fromQuery;
@@ -37,6 +39,7 @@ function resolveRoute(req) {
   if (path.includes("omissas-session")) return "session";
   if (path.includes("omissas-answer")) return "answer";
   if (path.includes("omissas-results")) return "results";
+  if (path.includes("omissas-assist")) return "assist";
   return null;
 }
 
@@ -48,6 +51,7 @@ module.exports = async (req, res) => {
   if (route === "session") return handleOmissasSession(req, res);
   if (route === "answer") return handleOmissasAnswer(req, res);
   if (route === "results") return handleOmissasResults(req, res);
+  if (route === "assist") return handleOmissasAssist(req, res);
   if (route === "atividades") return handleAtividades(req, res);
 
   return res.status(404).json({ error: "Rota omissas/atividades desconhecida" });

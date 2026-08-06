@@ -423,14 +423,16 @@
         (i) => `
       <div class="inv-card ${i.equipped ? "equipped" : ""}">
         <strong>${esc(i.name || i.item_key)}</strong>
-        <span>${esc(i.metadata?.slot || (i.consumable ? "Consumível" : "Item"))}</span>
+        <span>${esc(i.metadata?.slot || (i.item_key === "assist_eliminate" || i.item_key === "day_off" || i.item_key === "streak_insurance" ? "Consumível" : "Item"))}</span>
         <span>Qtd: ${esc(i.qty || 1)}</span>
         ${
           i.equipped
             ? `<em class="eq-badge">Equipado</em>`
             : i.metadata?.slot
               ? `<button type="button" class="hub-chip primary" data-equip="${esc(i.item_key)}">Equipar</button>`
-              : ""
+              : i.item_key === "day_off"
+                ? `<button type="button" class="hub-chip primary" data-folga="${esc(i.item_key)}">Usar folga</button>`
+                : ""
         }
       </div>`
       )
@@ -439,6 +441,26 @@
       btn.addEventListener("click", async () => {
         try {
           await apiPost({ action: "equip", userJid: state.userJid, itemKey: btn.dataset.equip });
+          await loadInventario();
+        } catch (e) {
+          alert(e.message || String(e));
+        }
+      });
+    });
+    $$("[data-folga]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const raw = prompt(
+          "Para qual dia? Digite hoje, amanha ou AAAA-MM-DD",
+          "hoje"
+        );
+        if (raw == null) return;
+        try {
+          const data = await apiPost({
+            action: "use-day-off",
+            userJid: state.userJid,
+            dayIso: String(raw).trim()
+          });
+          alert(data.message || "Folga ativada.");
           await loadInventario();
         } catch (e) {
           alert(e.message || String(e));
@@ -460,6 +482,7 @@
     const meta = item?.metadata || {};
     const css = meta.css || "";
     if (item?.item_key?.includes("streak")) return `<span class="thumb-emoji">🛡️</span>`;
+    if (item?.item_key === "day_off") return `<span class="thumb-emoji">🌴</span>`;
     if (item?.item_key?.includes("eliminate")) return `<span class="thumb-emoji">✂️</span>`;
     if (meta.emoji) return `<span class="thumb-emoji">${esc(meta.emoji)}</span>`;
     if (meta.slot === "frame") return `<span class="thumb-swatch ${esc(css)}"></span>`;
@@ -823,7 +846,7 @@
         <li>Receba pedido no WhatsApp e confirme com <strong>sim</strong></li>
         <li>Equipe moldura/título/efeito</li>
       </ol>
-      <p>Itens podem exigir Aura mínima. Consumíveis (ex.: eliminar alternativa) saem do inventário ao usar.</p>
+      <p>Itens podem exigir Aura mínima. Consumíveis (eliminar alternativa, dia de folga) saem do inventário ao usar.</p>
     `,
     mandado: `
       <h2>Mandado de Intimação — passo a passo</h2>
@@ -895,7 +918,8 @@
     ["Completar caderno", "Fator 0,25×Q (5–40)", "créditos", "—", "0", "5–40", "por caderno", "Capado"],
     ["Comprar item", "Portal / /comprar", "—", "preço", "0", "−preço", "confirm 5 min", "Sim no WhatsApp"],
     ["Equipar item", "/equipar ou Hub", "—", "—", "0", "0", "—", "Cosmético"],
-    ["Eliminar alternativa", "/eliminar N", "ajuda", "1 consumível", "0", "0", "por uso", "Item de inventário"],
+    ["Eliminar alternativa", "/eliminar N [letra]", "ajuda", "1 consumível", "0", "0", "por uso", "No site: escolher letra"],
+    ["Dia de folga", "/folga hoje|amanha|data", "ajuda", "1 consumível", "0", "0", "por uso", "Marca dia sem omissas"],
     ["Aplicar créditos", "/aplicar N", "meta", "lock N", "0", "escrow", "10 dias", "Retorno 12%"],
     ["Intimar", "/intimar …", "duelo", "stake+taxa", "var", "escrow", "24h · máx 2", "Taxa 10% burn"],
     ["Quebrar streak", "Dia perdido", "—", "−4 Aura", "−4", "0", "—", "Loss aversion"],
@@ -950,7 +974,8 @@
       ["/loja", "Catálogo do Portal"],
       ["/comprar <item>", "Inicia compra"],
       ["/equipar <item>", "Equipa cosmético"],
-      ["/eliminar N", "Remove 1 alternativa errada"],
+      ["/eliminar N", "Remove 1 alternativa errada (ou /eliminar N B para checar letra)"],
+      ["/folga hoje", "Marca o dia como sem omissas (item Dia de folga)"],
       ["/aplicar 500", "Aplicação Orçamentária"],
       ["/intimar Nome 50 123", "Mandado: nome · stake · #questão"],
       ["/ranking aura|producao|disciplina|duelo", "Placares"],

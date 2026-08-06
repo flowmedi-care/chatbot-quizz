@@ -13,7 +13,7 @@ const {
 /**
  * API unificada de gamificação (Hobby plan = máx. 12 functions).
  * GET  ?view=members|profile|shop|diario|rankings|plaza|ledger|transparencia
- * POST body.action = purchase-intent|equip
+ * POST body.action = purchase-intent|equip|use-day-off
  */
 
 async function handleDiario(supabase, url, res) {
@@ -176,6 +176,76 @@ async function handleShopPost(supabase, req, res) {
       .eq("user_jid", userJid)
       .eq("item_key", itemKey);
     return res.status(200).json({ ok: true, message: `Equipado: ${item.name}` });
+  }
+
+  if (action === "use-day-off") {
+    const { userJid, dayIso: dayRaw } = body;
+    if (!userJid) return res.status(400).json({ error: "userJid obrigatório" });
+    let day = String(dayRaw || "").trim();
+    const today = todayIso();
+    if (!day || day === "hoje") day = today;
+    else if (day === "amanha" || day === "amanhã") {
+      const [y, m, d] = today.split("-").map(Number);
+      const dt = new Date(Date.UTC(y, m - 1, d));
+      dt.setUTCDate(dt.getUTCDate() + 1);
+      day = dt.toISOString().slice(0, 10);
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) {
+      return res.status(400).json({ error: "Informe o dia (hoje, amanha ou AAAA-MM-DD)" });
+    }
+    if (day < today) {
+      return res.status(400).json({ error: "Só é possível marcar folga para hoje ou um dia futuro." });
+    }
+
+    const { data: inv } = await supabase
+      .from("user_inventory")
+      .select("qty")
+      .eq("user_jid", userJid)
+      .eq("item_key", "day_off")
+      .maybeSingle();
+    if (!inv || (inv.qty || 0) < 1) {
+      return res.status(400).json({ error: "Você não tem Dia de folga. Compre na loja (450 Créditos)." });
+    }
+
+    const streak = await ensureStreak(supabase, userJid);
+    const prepaid = Array.isArray(streak.prepaid_days) ? streak.prepaid_days : [];
+    if (prepaid.includes(day)) {
+      return res.status(400).json({ error: `O dia ${day} já está marcado como folga/adiantado.` });
+    }
+
+    const newQty = (inv.qty || 1) - 1;
+    if (newQty <= 0) {
+      await supabase.from("user_inventory").delete().eq("user_jid", userJid).eq("item_key", "day_off");
+    } else {
+      await supabase
+        .from("user_inventory")
+        .update({ qty: newQty, updated_at: new Date().toISOString() })
+        .eq("user_jid", userJid)
+        .eq("item_key", "day_off");
+    }
+
+    await supabase
+      .from("user_streak")
+      .update({ prepaid_days: [...prepaid, day], updated_at: new Date().toISOString() })
+      .eq("user_jid", userJid);
+
+    await supabase.from("economy_ledger").insert({
+      user_jid: userJid,
+      delta_aura: 0,
+      delta_credits: 0,
+      reason: "day_off_use",
+      ref_type: "streak_day",
+      ref_id: `folga:${day}`,
+      day_iso: today,
+      meta: { dayIso: day }
+    });
+
+    return res.status(200).json({
+      ok: true,
+      dayIso: day,
+      qtyLeft: Math.max(0, newQty),
+      message: `Dia de folga ativado para ${day === today ? "hoje" : day}.`
+    });
   }
 
   const { userJid, itemKey } = body;

@@ -10,6 +10,7 @@ import {
   purchaseDirectWhatsapp,
   equipItem,
   useEliminateAssist,
+  useDayOff,
   createAplicacao,
   createMandado,
   getRanking,
@@ -29,6 +30,7 @@ import {
   markStreakDayComplete,
   tryMatureAplicacoes,
   ensureStreak,
+  friendlyEconomyLabel,
   type RewardSideEffects
 } from "./index";
 import {
@@ -38,7 +40,89 @@ import {
   getCadernoIdForQuestion
 } from "../supabase";
 import { tryAdvanceCadernoAfterAnswer } from "../caderno-scheduler";
-import { todayIso } from "./db";
+import { todayIso, addDaysToIso, economyDb } from "./db";
+
+function looksLikeRawId(s: string | null | undefined): boolean {
+  const t = String(s || "").trim();
+  if (!t) return true;
+  if (t.includes("@")) return true;
+  if (/^\+?\d{8,}$/.test(t)) return true;
+  if (/^\d{10,}/.test(t)) return true;
+  if (/^Caderno:/i.test(t)) return true;
+  return false;
+}
+
+function resolveFolgaDayIso(dayToken: string): string | null {
+  const raw = dayToken
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+  const today = todayIso();
+  if (raw === "hoje" || raw === "today") return today;
+  if (raw === "amanha" || raw === "tomorrow") return addDaysToIso(today, 1);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  return null;
+}
+
+async function resolveDefenderForIntimar(query: string): Promise<{
+  userJid: string;
+  label: string;
+} | null> {
+  const q = query.trim().toLowerCase();
+  const digits = q.replace(/\D/g, "");
+  const db = economyDb();
+
+  type Cand = { userJid: string; names: string[] };
+  const byJid = new Map<string, Cand>();
+
+  const add = (userJid: string, ...names: (string | null | undefined)[]) => {
+    if (!userJid) return;
+    let c = byJid.get(userJid);
+    if (!c) {
+      c = { userJid, names: [] };
+      byJid.set(userJid, c);
+    }
+    for (const n of names) {
+      const t = n != null ? String(n).trim() : "";
+      if (t && !looksLikeRawId(t) && !c.names.includes(t)) c.names.push(t);
+    }
+  };
+
+  const { data: ecos } = await db.from("user_economy").select("user_jid, display_name").limit(500);
+  for (const e of ecos || []) add(e.user_jid, e.display_name);
+
+  try {
+    const { data: eng } = await db
+      .from("group_member_engagement")
+      .select("user_jid, quiz_display_name, user_label")
+      .limit(500);
+    for (const e of eng || []) add(e.user_jid, e.quiz_display_name, e.user_label);
+  } catch {
+    /* tabela pode não existir */
+  }
+
+  const list = [...byJid.values()];
+  const scored = list
+    .map((c) => {
+      let score = 0;
+      if (c.userJid === query.trim() || c.userJid.toLowerCase() === q) score += 100;
+      for (const n of c.names) {
+        const ln = n.toLowerCase();
+        if (ln === q) score += 80;
+        else if (ln.includes(q) || q.includes(ln)) score += 40;
+      }
+      if (digits.length >= 6 && c.userJid.toLowerCase().includes(digits)) score += 20;
+      return { c, score };
+    })
+    .filter((x) => x.score > 0)
+    .sort((a, b) => b.score - a.score);
+
+  const best = scored[0]?.c;
+  if (!best) return null;
+  const label = friendlyEconomyLabel(best.names[0] || null, null, best.userJid);
+  return { userJid: best.userJid, label };
+}
 
 function quizGroupJid(): string | null {
   if (config.targetGroupJids.length === 0) return null;
@@ -218,7 +302,19 @@ export async function handleEconomyCommand(
     return true;
   }
   if (cmd.kind === "eliminar") {
-    const msg = await useEliminateAssist(sender, cmd.questionShortId);
+    const msg = await useEliminateAssist(sender, cmd.questionShortId, cmd.letter);
+    await sock.sendMessage(remoteJid, { text: msg });
+    return true;
+  }
+  if (cmd.kind === "folga") {
+    const dayIso = resolveFolgaDayIso(cmd.dayToken);
+    if (!dayIso) {
+      await sock.sendMessage(remoteJid, {
+        text: "Uso: /folga hoje · /folga amanha · /folga AAAA-MM-DD"
+      });
+      return true;
+    }
+    const msg = await useDayOff(sender, dayIso);
     await sock.sendMessage(remoteJid, { text: msg });
     return true;
   }
@@ -246,24 +342,10 @@ export async function handleEconomyCommand(
       await sock.sendMessage(remoteJid, { text: "Grupo do quiz não configurado." });
       return true;
     }
-    // Resolve defender by display name substring or jid fragment
-    const { data: ecos } = await (
-      await import("./db")
-    ).economyDb()
-      .from("user_economy")
-      .select("user_jid, display_name")
-      .limit(200);
-    const q = cmd.defenderQuery.toLowerCase();
-    const match =
-      (ecos || []).find(
-        (e) =>
-          e.user_jid === cmd.defenderQuery ||
-          (e.display_name && e.display_name.toLowerCase().includes(q)) ||
-          e.user_jid.toLowerCase().includes(q.replace(/\D/g, ""))
-      ) || null;
+    const match = await resolveDefenderForIntimar(cmd.defenderQuery);
     if (!match) {
       await sock.sendMessage(remoteJid, {
-        text: "Não achei o intimado. Peça para a pessoa responder uma questão antes (cria o perfil) ou use parte do nome/JID.\nUso: /intimar Nome 50 123"
+        text: "Não achei o intimado. Peça para a pessoa responder uma questão antes (cria o perfil) ou use parte do nome.\nUso: /intimar Nome 50 123"
       });
       return true;
     }
@@ -273,15 +355,26 @@ export async function handleEconomyCommand(
     try {
       const qr = await getQuestionResult(cmd.questionShortId);
       questionLabel = (qr.statementText || "").slice(0, 80) || null;
+      const { data: qrow } = await economyDb()
+        .from("questions")
+        .select("materia_id")
+        .eq("short_id", cmd.questionShortId.toUpperCase())
+        .maybeSingle();
+      const mid = qrow?.materia_id != null ? Number(qrow.materia_id) : null;
+      if (mid && Number.isFinite(mid)) {
+        const { data: mat } = await economyDb().from("materias").select("name").eq("id", mid).maybeSingle();
+        if (mat?.name) materia = String(mat.name);
+      }
     } catch {
       await sock.sendMessage(remoteJid, { text: "Questão não encontrada." });
       return true;
     }
+    const challengerLabel = friendlyEconomyLabel(displayName, null, sender);
     const created = await createMandado({
       challengerJid: sender,
-      challengerLabel: displayName,
-      defenderJid: match.user_jid,
-      defenderLabel: match.display_name || match.user_jid,
+      challengerLabel,
+      defenderJid: match.userJid,
+      defenderLabel: match.label,
       groupJid,
       questionShortId: cmd.questionShortId,
       questionLabel,
@@ -290,12 +383,12 @@ export async function handleEconomyCommand(
     });
     await sock.sendMessage(groupJid, { text: created.card });
     await sock.sendMessage(remoteJid, {
-      text: `Mandado emitido. Taxa queimada: ${created.fee} Créditos. Stake empenhado: ${cmd.stake}.`
+      text: `Mandado emitido contra *${match.label}*. Taxa queimada: ${created.fee} Créditos. Stake empenhado: ${cmd.stake}.`
     });
-    await sock.sendMessage(match.user_jid, {
+    await sock.sendMessage(match.userJid, {
       text: [
         "⚖️ Você foi intimado!",
-        `Por: ${displayName}`,
+        `Por: ${challengerLabel}`,
         `Questão: #${cmd.questionShortId}`,
         `Valor: ${cmd.stake} Créditos`,
         "Prazo: 24h — responda no privado."
