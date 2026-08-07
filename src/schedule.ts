@@ -204,7 +204,8 @@ export function normalizeSendTimesForDay(
 
 /**
  * Instante UTC do slot `index` (0..N-1) no dia `dayIso` (YYYY-MM-DD no fuso `timeZone`).
- * Usa `sendTimes` quando definido com N itens; senão distribui uniformemente entre início e fim.
+ * Modo lote do dia: todas as questões liberam no horário de início (`startHour`/`startMinute`).
+ * `sendTimes` / `endHour` são ignorados para o ritmo (mantidos no banco só por compat).
  */
 export function resolveDailySlotUtc(
   dayIso: string,
@@ -212,24 +213,9 @@ export function resolveDailySlotUtc(
   timeZone: string,
   schedule: DailyScheduleSlots
 ): Date {
-  const N = Math.max(1, schedule.questionsPerDay);
-  const safeIndex = Math.min(Math.max(0, index), N - 1);
-  const times = schedule.sendTimes;
-  if (times && times.length >= N && times[safeIndex]) {
-    const [y, m, d] = dayIso.split("-").map((s) => Number(s));
-    const slot = times[safeIndex];
-    return zonedDateToUtc(y, m, d, slot.hour, slot.minute, timeZone);
-  }
-  return dailySlotUtc(
-    dayIso,
-    schedule.startHour,
-    schedule.startMinute,
-    schedule.endHour,
-    schedule.endMinute,
-    N,
-    safeIndex,
-    timeZone
-  );
+  void index;
+  const [y, m, d] = dayIso.split("-").map((s) => Number(s));
+  return zonedDateToUtc(y, m, d, schedule.startHour, schedule.startMinute, timeZone);
 }
 
 /** Próximo slot 0 do dia (ou amanhã) conforme agenda. */
@@ -244,11 +230,8 @@ export function firstSlotFromSchedule(from: Date, timeZone: string, schedule: Da
 }
 
 /**
- * Instante UTC do slot `index` (0..N-1) no dia `dayIso` (YYYY-MM-DD no fuso `timeZone`).
- * Distribui as N questões **uniformemente entre início e fim** (inclusive), no mesmo dia local.
- * Se fim <= início, cai no comportamento antigo: espaçamento 24h/N a partir do início.
- *
- * Ex.: N=2, 07:00–22:00 ⇒ 07:00 e 22:00. N=5 ⇒ 5 pontos ao longo de 15h.
+ * Instante UTC do slot `index` — legado (drip). Preferir `resolveDailySlotUtc` (lote no startHour).
+ * Mantido para API/UI que ainda calcula prévia de horários.
  */
 export function dailySlotUtc(
   dayIso: string,
@@ -260,21 +243,12 @@ export function dailySlotUtc(
   index: number,
   timeZone: string
 ): Date {
+  void endHour;
+  void endMinute;
+  void questionsPerDay;
+  void index;
   const [y, m, d] = dayIso.split("-").map((s) => Number(s));
-  const safeN = Math.max(1, questionsPerDay);
-  const safeIndex = Math.min(Math.max(0, index), safeN - 1);
-  const start = zonedDateToUtc(y, m, d, startHour, startMinute, timeZone);
-  const end = zonedDateToUtc(y, m, d, endHour, endMinute, timeZone);
-  let windowMs = end.getTime() - start.getTime();
-
-  if (windowMs <= 0) {
-    const gapMs = Math.round((24 * 60 * 60 * 1000) / safeN);
-    return new Date(start.getTime() + safeIndex * gapMs);
-  }
-
-  if (safeN <= 1) return start;
-  const offsetMs = (windowMs * safeIndex) / (safeN - 1);
-  return new Date(start.getTime() + offsetMs);
+  return zonedDateToUtc(y, m, d, startHour, startMinute, timeZone);
 }
 
 export function formatNextRunPretty(iso: string | null, timeZone: string): string {

@@ -334,10 +334,66 @@ function computeNextRunForDay(caderno: CadernoRow, dayIso: string, sentNow: numb
   const slots = scheduleSlotsFromCaderno(caderno);
   const N = slots.questionsPerDay;
   if (sentNow < N) {
+    // Lote: horários restantes do mesmo dia = startHour (já vencido se o lote começou).
     return resolveDailySlotUtc(dayIso, sentNow, caderno.timezone, slots);
   }
   const nextDay = addDaysIso(dayIso, 1);
   return resolveDailySlotUtc(nextDay, 0, caderno.timezone, slots);
+}
+
+/** Publica todas as questões restantes do dia em um único tick. */
+async function sendDayBatchGroup(
+  sock: WASocket,
+  caderno: CadernoRow,
+  dayIso: string,
+  sentBefore: number
+): Promise<string[]> {
+  const N = Math.max(1, caderno.questionsPerDay);
+  const shortIds: string[] = [];
+  let current = caderno;
+  let sent = Math.max(0, sentBefore);
+
+  while (sent < N) {
+    const result = await sendOneGroupAndAdvance(sock, current, dayIso, sent);
+    if (!result) break;
+    shortIds.push(result.shortId);
+    const refreshed = await getCadernoById(current.id);
+    if (!refreshed) break;
+    current = refreshed;
+    sent = refreshed.currentDaySent ?? sent + 1;
+    if (refreshed.currentDayDate !== dayIso) break;
+    if (refreshed.status === "paused_waiting_decision") break;
+  }
+
+  if (shortIds.length > 1) {
+    console.log(
+      `[caderno-scheduler] caderno ${caderno.id}: lote do dia ${dayIso} — ${shortIds.length} questão(ões) (${shortIds.map((id) => "#" + id).join(", ")})`
+    );
+  }
+  return shortIds;
+}
+
+async function sendDayBatchPrivate(
+  sock: WASocket,
+  caderno: CadernoRow,
+  recipient: CadernoPrivateRecipientRow,
+  eff: ReturnType<typeof effectivePrivateRecipientSchedule>,
+  dayIso: string,
+  sentBefore: number
+): Promise<void> {
+  const N = Math.max(1, eff.questionsPerDay);
+  let currentRecipient = recipient;
+  let sent = Math.max(0, sentBefore);
+
+  while (sent < N) {
+    await sendOnePrivateAndAdvance(sock, caderno, currentRecipient, eff, dayIso, sent);
+    const list = await listPrivateRecipientsByCaderno(caderno.id);
+    const refreshed = list.find((r) => r.id === recipient.id) || null;
+    if (!refreshed || !refreshed.active) break;
+    currentRecipient = refreshed;
+    sent = refreshed.currentDaySent ?? sent + 1;
+    if (refreshed.currentDayDate !== dayIso) break;
+  }
 }
 
 async function runCaderno(
@@ -412,10 +468,10 @@ async function runCaderno(
       });
       return;
     }
-    const published = await sendOneGroupAndAdvance(sock, caderno, newDayIso, 0);
-    if (earlyUnlock && beforeCutoff && published?.shortId && caderno.targetGroupJid) {
+    const shortIds = await sendDayBatchGroup(sock, caderno, newDayIso, 0);
+    if (earlyUnlock && beforeCutoff && shortIds.length > 0 && caderno.targetGroupJid) {
       await notifyGroupOmissasEntered(sock, caderno.targetGroupJid, {
-        shortIds: [published.shortId],
+        shortIds,
         source: "caderno",
         cadernoName: caderno.name
       });
@@ -449,21 +505,16 @@ async function runCaderno(
     return;
   }
 
-  const published = await sendOneGroupAndAdvance(
-    sock,
-    caderno,
-    decision.dayIso,
-    decision.sentBefore
-  );
+  const shortIds = await sendDayBatchGroup(sock, caderno, decision.dayIso, decision.sentBefore);
   if (
     opts?.force &&
     beforeCutoff &&
     decision.sentBefore === 0 &&
-    published?.shortId &&
+    shortIds.length > 0 &&
     caderno.targetGroupJid
   ) {
     await notifyGroupOmissasEntered(sock, caderno.targetGroupJid, {
-      shortIds: [published.shortId],
+      shortIds,
       source: "caderno",
       cadernoName: caderno.name
     });
@@ -613,11 +664,11 @@ async function runPrivateRecipient(
       });
       return;
     }
-    await sendOnePrivateAndAdvance(sock, caderno, recipient, eff, newDayIso, 0);
+    await sendDayBatchPrivate(sock, caderno, recipient, eff, newDayIso, 0);
     return;
   }
 
-  await sendOnePrivateAndAdvance(sock, caderno, recipient, eff, decision.dayIso, decision.sentBefore);
+  await sendDayBatchPrivate(sock, caderno, recipient, eff, decision.dayIso, decision.sentBefore);
 }
 
 async function sendOnePrivateAndAdvance(

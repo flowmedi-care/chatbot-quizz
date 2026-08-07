@@ -173,11 +173,11 @@ automático das questões no grupo.
 2. Dê um nome (ex.: `SEFAZ PI 2025 — Geral`).
 3. Selecione o PDF do Tec Concursos (formato padrão da plataforma).
 4. Configure:
-   - **Questões por dia** (1–24, padrão 3). As questões são distribuídas em
-     intervalos iguais ao longo do dia: `24h / questions_per_day`.
-   - **Horário de início** (HH:MM no fuso `America/Sao_Paulo`). É o horário
-     em que a 1ª questão do dia sai. As próximas saem a cada `24h/N`.
-     Ex.: 3 q./dia a partir das 07:00 ⇒ 07:00, 15:00 e 23:00.
+   - **Questões por dia** (1–24, padrão 3). Na hora de liberação, as N questões
+     do dia saem **todas de uma vez** (lote).
+   - **Hora de liberação do dia** (HH:MM, máx. 15:00, fuso `America/Sao_Paulo`).
+     É quando o lote do dia fica disponível no `/omissas`.
+     Ex.: 3 q./dia às 07:00 ⇒ as 3 questões liberam juntas às 07:00.
    - **Ordem aleatória** (opcional): sorteia entre as questões ainda não
      enviadas em vez de seguir a ordem do PDF. Nenhuma questão repete.
    - **Esperar resposta entre dias** (opcional): só inicia o próximo dia se
@@ -191,8 +191,8 @@ automático das questões no grupo.
 Cada caderno mostra botões:
 
 - **Enviar questão** — força o próximo envio agora (o bot publica em até 60s).
-  Conta como uma das do dia.
-- **Editar** — muda nome, quantidade/dia, horário, ordem aleatória e modo
+  Conta como uma das do dia (no lote, o tick pode esvaziar o restante do dia).
+- **Editar** — muda nome, quantidade/dia, horário de liberação, ordem aleatória e modo
   "esperar resposta" sem precisar recriar o caderno.
 - **Ordem aleatória / Ordem do PDF** — alterna o modo a qualquer momento.
 - **Pausar** / **Retomar** — sem perder o progresso.
@@ -215,16 +215,17 @@ truncadas. Use o preview para identificar e descartar antes de ativar.
   `status = 'active'` e `next_run_at <= now()`.
 - Cada caderno tem um **dia em curso** (`current_day_date`) e quantas das
   N do dia já foram enviadas (`current_day_sent`).
-- Os slots do dia são `start_hour:start_minute + i * (24h/N)` para
-  `i = 0..N-1`. A cada tick, se chegou o slot atual, o bot envia **uma**
-  questão, incrementa `current_day_sent` e agenda o próximo slot.
+- Na **hora de liberação** (`start_hour`/`start_minute`, máx. 15:00), o bot
+  publica **todas as N questões do dia de uma vez** (lote). Depois agenda a
+  liberação do dia seguinte.
 - Uma vez que o dia começou, ele **sempre é completado** (não fica
   bloqueado nem pelo "esperar resposta"). A regra só vale na virada do dia.
 - Cada questão entra em `public.questions` igual a uma criação manual:
   - `creator_name = "Caderno: <nome>"` (criador é um JID sentinela, então o
     fechamento por engajamento espera **todos** os engajados responderem).
   - `explanation_text` traz o link da questão no Tec Concursos + banca + matéria.
-  - Responda no privado com `a 182`, `c 182` etc.
+  - Responda no privado com `a 182`, `c 182` etc. — ou use `/omissas` / site
+    (o link já traz o lote completo do dia).
   - O auto-gabarito por engajamento fecha igual ao fluxo manual.
 
 ### "Esperar resposta" e engajados por caderno

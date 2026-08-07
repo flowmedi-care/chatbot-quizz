@@ -924,7 +924,7 @@
     ["Intimar", "/intimar …", "duelo", "stake+taxa", "var", "escrow", "24h · máx 2", "Taxa 10% burn"],
     ["Quebrar streak", "Dia perdido", "—", "−4 Aura", "−4", "0", "—", "Loss aversion"],
     ["Dia zerado", "0 respostas", "—", "−1 Aura", "−1", "0", "1×/dia", "—"],
-    ["Trancar caderno", "Faltou no dia com wait_for_answers", "—", "−50 Aura", "−50", "0", "1×/dia caderno", "Aviso 19h/21h · soft-unlock 00h"]
+    ["Trancar caderno", "Faltou no dia com wait_for_answers", "—", "−50 Aura", "−50", "0", "1×/dia caderno", "Lote do dia na liberação · aviso 19h/21h · soft-unlock 00h"]
   ];
 
   function loadAcoes() {

@@ -2,7 +2,6 @@ const pdfParse = require("pdf-parse/lib/pdf-parse.js");
 const { getClient, applyCors, pickTargetGroupJid } = require("./_lib.js");
 const { parseTecConcursosPdf } = require("./_pdf-parser.js");
 const { firstSlotFromSchedule } = require("./_schedule.js");
-const { normalizeSendTimesForDay } = require("./_send-times.js");
 const { sanitizePostgresText } = require("./_text-sanitize.js");
 
 const MAX_PDF_BYTES = 8 * 1024 * 1024;
@@ -44,30 +43,36 @@ module.exports = async (req, res) => {
   const sched = body.schedule || {};
   // Modelo novo: questionsPerDay + startHour/startMinute + waitForAnswers.
   // Mantemos compat com chamadas antigas (questionsPerRun, sendHour, sendMinute).
+  const MAX_RELEASE_HOUR = 15;
   const questionsPerDay = clampInt(
     sched.questionsPerDay != null ? sched.questionsPerDay : sched.questionsPerRun,
     1,
     24,
     3
   );
-  const startHour = clampInt(
+  let startHour = clampInt(
     sched.startHour != null ? sched.startHour : sched.sendHour,
     0,
-    23,
+    MAX_RELEASE_HOUR,
     7
   );
-  const startMinute = clampInt(
+  let startMinute = clampInt(
     sched.startMinute != null ? sched.startMinute : sched.sendMinute,
     0,
     59,
     0
   );
-  const endHour = clampInt(sched.endHour != null ? sched.endHour : 22, 0, 23, 22);
-  const endMinute = clampInt(sched.endMinute != null ? sched.endMinute : 0, 0, 59, 0);
+  if (startHour >= MAX_RELEASE_HOUR) startMinute = 0;
+  // Lote do dia: fim = liberação; send_times = N cópias do mesmo horário.
+  const endHour = startHour;
+  const endMinute = startMinute;
   const waitForAnswers = Boolean(sched.waitForAnswers);
   const timezone = String(sched.timezone || "America/Sao_Paulo");
   const randomOrder = Boolean(sched.randomOrder);
-  const sendTimes = normalizeSendTimesForDay(sched.sendTimes, questionsPerDay);
+  const sendTimes = Array.from({ length: questionsPerDay }, () => ({
+    hour: startHour,
+    minute: startMinute
+  }));
 
   // Legados: persistimos espelhando os campos novos para não violar NOT NULL.
   const questionsPerRun = Math.min(20, questionsPerDay);
@@ -256,17 +261,12 @@ module.exports = async (req, res) => {
       const userJid = String(item.userJid).trim();
       const qpdUse =
         item.questionsPerDay != null ? clampInt(item.questionsPerDay, 1, 24, questionsPerDay) : questionsPerDay;
-      const shUse = item.startHour != null ? clampInt(item.startHour, 0, 23, startHour) : startHour;
-      const smUse = item.startMinute != null ? clampInt(item.startMinute, 0, 59, startMinute) : startMinute;
-      const ehUse = item.endHour != null ? clampInt(item.endHour, 0, 23, endHour) : endHour;
-      const emUse = item.endMinute != null ? clampInt(item.endMinute, 0, 59, endMinute) : endMinute;
-      const recSendTimes =
-        item.sendTimes != null
-          ? normalizeSendTimesForDay(item.sendTimes, qpdUse)
-          : sendTimes;
-      if (item.sendTimes != null && !recSendTimes) {
-        throw new Error(`Horarios invalidos para destinatario ${userJid}`);
-      }
+      let shUse = item.startHour != null ? clampInt(item.startHour, 0, MAX_RELEASE_HOUR, startHour) : startHour;
+      let smUse = item.startMinute != null ? clampInt(item.startMinute, 0, 59, startMinute) : startMinute;
+      if (shUse >= MAX_RELEASE_HOUR) smUse = 0;
+      const ehUse = shUse;
+      const emUse = smUse;
+      const recSendTimes = Array.from({ length: qpdUse }, () => ({ hour: shUse, minute: smUse }));
       const recSchedule = {
         sendTimes: recSendTimes,
         startHour: shUse,

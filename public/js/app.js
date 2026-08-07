@@ -921,27 +921,26 @@
     return { hour, minute };
   }
 
-  /** Espelha o backend: N pontos uniformes entre início e fim (inclusive). */
+  const MAX_RELEASE_HOUR = 15;
+
+  function clampReleaseTime(hour, minute) {
+    let h = Number.isFinite(hour) ? Math.round(hour) : 7;
+    let m = Number.isFinite(minute) ? Math.round(minute) : 0;
+    if (h < 0) h = 0;
+    if (h > MAX_RELEASE_HOUR) h = MAX_RELEASE_HOUR;
+    if (m < 0) m = 0;
+    if (m > 59) m = 59;
+    if (h >= MAX_RELEASE_HOUR) m = 0;
+    return { hour: h, minute: m };
+  }
+
+  /** Lote do dia: N horários iguais ao horário de liberação. */
   function computeUniformSendTimes(n, startHour, startMinute, endHour, endMinute) {
+    void endHour;
+    void endMinute;
     const safeN = Math.max(1, Math.min(24, Number(n) || 1));
-    const start = startHour * 60 + startMinute;
-    let end = endHour * 60 + endMinute;
-    if (end <= start) {
-      const gap = Math.round((24 * 60) / safeN);
-      const out = [];
-      for (let i = 0; i < safeN; i++) {
-        const mins = (start + i * gap) % (24 * 60);
-        out.push({ hour: Math.floor(mins / 60), minute: mins % 60 });
-      }
-      return out;
-    }
-    if (safeN <= 1) return [{ hour: startHour, minute: startMinute }];
-    const out = [];
-    for (let i = 0; i < safeN; i++) {
-      const mins = Math.round(start + ((end - start) * i) / (safeN - 1));
-      out.push({ hour: Math.floor(mins / 60), minute: mins % 60 });
-    }
-    return out;
+    const t = clampReleaseTime(startHour, startMinute);
+    return Array.from({ length: safeN }, () => ({ hour: t.hour, minute: t.minute }));
   }
 
   function formatSendTimesForDisplay(times) {
@@ -991,9 +990,23 @@
   }
 
   function readGroupWindowFromEls(startEl, endEl) {
+    void endEl;
     const start = parseTimeInputValue(startEl?.value, 7, 0);
-    const end = parseTimeInputValue(endEl?.value, 22, 0);
-    return { ...start, endHour: end.hour, endMinute: end.minute };
+    const t = clampReleaseTime(start.hour, start.minute);
+    return { ...t, endHour: t.hour, endMinute: t.minute };
+  }
+
+  function syncEndHiddenFromStart(startEl, endEl) {
+    if (!startEl || !endEl) return;
+    const t = clampReleaseTime(
+      ...(() => {
+        const p = parseTimeInputValue(startEl.value, 7, 0);
+        return [p.hour, p.minute];
+      })()
+    );
+    const val = `${pad2(t.hour)}:${pad2(t.minute)}`;
+    startEl.value = val;
+    endEl.value = val;
   }
 
   function syncCadernoAddSendTimes(preserve) {
@@ -1443,20 +1456,16 @@
         : "5";
     const sh = r.startHour != null ? Number(r.startHour) : 7;
     const sm = r.startMinute != null ? Number(r.startMinute) : 0;
-    const timeVal = `${pad2(sh)}:${pad2(sm)}`;
-    const eh = r.endHour != null ? Number(r.endHour) : 22;
-    const em = r.endMinute != null ? Number(r.endMinute) : 0;
-    const timeEndVal = `${pad2(eh)}:${pad2(em)}`;
+    const clamped = clampReleaseTime(sh, sm);
+    const timeVal = `${pad2(clamped.hour)}:${pad2(clamped.minute)}`;
+    const timeEndVal = timeVal;
     const qpdN = Math.max(1, Math.min(24, Number(qpd) || 5));
-    const sendTimes =
-      r.sendTimes && r.sendTimes.length >= qpdN
-        ? r.sendTimes
-        : computeUniformSendTimes(qpdN, sh, sm, eh, em);
+    const sendTimes = computeUniformSendTimes(qpdN, clamped.hour, clamped.minute, clamped.hour, clamped.minute);
     const slotsHtml = sendTimes
       .slice(0, qpdN)
       .map((slot, i) => {
         const val = `${pad2(slot.hour)}:${pad2(slot.minute)}`;
-        return `<label><span>Q${i + 1}</span><input type="time" class="caderno-slot-time" value="${escAttr(
+        return `<label class="hidden" hidden><span>Q${i + 1}</span><input type="time" class="caderno-slot-time" value="${escAttr(
           val
         )}" /></label>`;
       })
@@ -1468,11 +1477,9 @@
       label
     )}</span></label>
       <input class="caderno-priv-qpd" type="number" min="1" max="24" value="${escAttr(qpd)}" title="Questões/dia" />
-      <input class="caderno-priv-time" type="time" value="${escAttr(timeVal)}" title="Início (preencher uniforme)" />
-      <input class="caderno-priv-end-time" type="time" value="${escAttr(
-        timeEndVal
-      )}" title="Fim (preencher uniforme)" />
-      <div class="caderno-priv-send-times" role="group" aria-label="Horários por questão">${slotsHtml}</div>
+      <input class="caderno-priv-time" type="time" value="${escAttr(timeVal)}" max="15:00" title="Hora de liberação do dia" />
+      <input class="caderno-priv-end-time" type="hidden" value="${escAttr(timeEndVal)}" />
+      <div class="caderno-priv-send-times hidden" hidden role="group" aria-label="Horários por questão">${slotsHtml}</div>
       <span class="caderno-priv-meta${metaHidden}">${esc(jid)}</span>
     </li>`;
   }
@@ -1499,22 +1506,19 @@
         const h = Number(hh);
         const m = Number(mm);
         if (Number.isFinite(h) && Number.isFinite(m)) {
-          startHour = h;
-          startMinute = m;
+          const t = clampReleaseTime(h, m);
+          startHour = t.hour;
+          startMinute = t.minute;
         }
       }
-      let endHour = null;
-      let endMinute = null;
-      if (tEndRaw && tEndRaw.includes(":")) {
-        const [hh, mm] = tEndRaw.split(":");
-        const h = Number(hh);
-        const m = Number(mm);
-        if (Number.isFinite(h) && Number.isFinite(m)) {
-          endHour = h;
-          endMinute = m;
-        }
-      }
-      const sendTimes = collectSendTimesFromList(li.querySelector(".caderno-priv-send-times"));
+      const endHour = startHour;
+      const endMinute = startMinute;
+      const nTimes = questionsPerDay != null ? questionsPerDay : 3;
+      const sendTimes =
+        startHour != null
+          ? computeUniformSendTimes(nTimes, startHour, startMinute, endHour, endMinute)
+          : collectSendTimesFromList(li.querySelector(".caderno-priv-send-times"));
+      void tEndRaw;
       out.push({
         userJid,
         active,
@@ -1726,18 +1730,10 @@
         const perDay = c.questionsPerDay != null ? c.questionsPerDay : c.questionsPerRun;
         const startHour = c.startHour != null ? c.startHour : c.sendHour;
         const startMinute = c.startMinute != null ? c.startMinute : c.sendMinute;
-        const timesLabel =
-          c.sendTimes && c.sendTimes.length >= perDay
-            ? formatSendTimesForDisplay(c.sendTimes.slice(0, perDay))
-            : null;
         const scheduleText =
           c.deliveryMode === "private"
             ? `${(c.privateRecipients || []).filter((r) => r.active).length} destinatário(s)`
-            : timesLabel
-              ? `${perDay} q./dia · ${timesLabel}`
-              : `${perDay} q./dia · ${pad2(startHour)}:${pad2(startMinute)}–${pad2(
-                  c.endHour != null ? c.endHour : 22
-                )}:${pad2(c.endMinute != null ? c.endMinute : 0)}`;
+            : `${perDay} q./dia · liberação ${pad2(startHour)}:${pad2(startMinute)}`;
         const todaySent = Number(c.currentDaySent || 0);
         const todayText =
           c.currentDayDate && c.status === "active" ? `${todaySent}/${perDay}` : "—";
@@ -1936,17 +1932,20 @@
     const file = els.cadernoPdf && els.cadernoPdf.files && els.cadernoPdf.files[0];
     const name = (els.cadernoName.value || "").trim();
     const questionsPerDay = Number((els.cadernoPerDay && els.cadernoPerDay.value) || 3);
+    syncEndHiddenFromStart(els.cadernoTime, els.cadernoEndTime);
     const [hh, mm] = String((els.cadernoTime && els.cadernoTime.value) || "07:00").split(":");
-    const startHour = Number(hh);
-    const startMinute = Number(mm);
-    const [he, me] = String((els.cadernoEndTime && els.cadernoEndTime.value) || "22:00").split(":");
-    const endHour = Number(he);
-    const endMinute = Number(me);
+    const clamped = clampReleaseTime(Number(hh), Number(mm));
+    const startHour = clamped.hour;
+    const startMinute = clamped.minute;
+    const endHour = startHour;
+    const endMinute = startMinute;
     const randomOrder = Boolean(els.cadernoRandom && els.cadernoRandom.checked);
     const waitForAnswers = Boolean(els.cadernoWait && els.cadernoWait.checked);
     const deliveryMode = getCadernoAddDeliveryMode();
     const sendTimes =
-      deliveryMode === "group" ? collectSendTimesFromList(els.cadernoSendTimesList) : null;
+      deliveryMode === "group"
+        ? computeUniformSendTimes(questionsPerDay, startHour, startMinute, endHour, endMinute)
+        : null;
     const privateRecipients = deliveryMode === "private" ? collectAddPrivateRecipients() : [];
     const createdByJid =
       deliveryMode === "private"
@@ -1963,8 +1962,8 @@
         sendTimes,
         startHour: Number.isFinite(startHour) ? startHour : 7,
         startMinute: Number.isFinite(startMinute) ? startMinute : 0,
-        endHour: Number.isFinite(endHour) ? endHour : 22,
-        endMinute: Number.isFinite(endMinute) ? endMinute : 0,
+        endHour,
+        endMinute,
         timezone: "America/Sao_Paulo",
         randomOrder,
         waitForAnswers
@@ -2139,14 +2138,18 @@
         ? Number(caderno.startMinute)
         : Number(caderno.sendMinute || 0);
     els.cadernoEditPerDay.value = String(perDay);
-    els.cadernoEditTime.value = `${pad2(startHour)}:${pad2(startMinute)}`;
-    const endH = caderno.endHour != null ? Number(caderno.endHour) : 22;
-    const endM = caderno.endMinute != null ? Number(caderno.endMinute) : 0;
-    if (els.cadernoEditEndTime) els.cadernoEditEndTime.value = `${pad2(endH)}:${pad2(endM)}`;
-    const editTimes =
-      caderno.sendTimes && caderno.sendTimes.length >= perDay
-        ? caderno.sendTimes.slice(0, perDay)
-        : computeUniformSendTimes(perDay, startHour, startMinute, endH, endM);
+    const clampedEdit = clampReleaseTime(startHour, startMinute);
+    els.cadernoEditTime.value = `${pad2(clampedEdit.hour)}:${pad2(clampedEdit.minute)}`;
+    if (els.cadernoEditEndTime) {
+      els.cadernoEditEndTime.value = `${pad2(clampedEdit.hour)}:${pad2(clampedEdit.minute)}`;
+    }
+    const editTimes = computeUniformSendTimes(
+      perDay,
+      clampedEdit.hour,
+      clampedEdit.minute,
+      clampedEdit.hour,
+      clampedEdit.minute
+    );
     renderSendTimesList(els.cadernoEditSendTimesList, perDay, editTimes, "Questão");
     els.cadernoEditRandom.checked = Boolean(caderno.randomOrder);
     if (els.cadernoEditWait) els.cadernoEditWait.checked = Boolean(caderno.waitForAnswers);
@@ -2211,8 +2214,8 @@
       current.startHour != null ? Number(current.startHour) : Number(current.sendHour);
     const currentStartMinute =
       current.startMinute != null ? Number(current.startMinute) : Number(current.sendMinute);
-    const currentEndHour = current.endHour != null ? Number(current.endHour) : 22;
-    const currentEndMinute = current.endMinute != null ? Number(current.endMinute) : 0;
+    const currentEndHour = current.endHour != null ? Number(current.endHour) : currentStartHour;
+    const currentEndMinute = current.endMinute != null ? Number(current.endMinute) : currentStartMinute;
 
     const payload = { id };
     if (name && name !== current.name) payload.name = name;
@@ -2223,19 +2226,14 @@
 
     if (editDm === "group") {
       const questionsPerDay = Number(els.cadernoEditPerDay.value || 3);
+      syncEndHiddenFromStart(els.cadernoEditTime, els.cadernoEditEndTime);
       const [hh, mm] = String(els.cadernoEditTime.value || "07:00").split(":");
-      const startHour = Number(hh);
-      const startMinute = Number(mm);
-      const [he, me] = String((els.cadernoEditEndTime && els.cadernoEditEndTime.value) || "22:00").split(":");
-      const endHour = Number(he);
-      const endMinute = Number(me);
-      const sendTimes = collectSendTimesFromList(els.cadernoEditSendTimesList);
-      const timesErr = validateSendTimesAscending(sendTimes);
-      if (timesErr || sendTimes.length !== questionsPerDay) {
-        els.cadernoEditStatus.textContent =
-          timesErr || `Grupo: informe ${questionsPerDay} horário(s), um por questão.`;
-        return;
-      }
+      const clamped = clampReleaseTime(Number(hh), Number(mm));
+      const startHour = clamped.hour;
+      const startMinute = clamped.minute;
+      const endHour = startHour;
+      const endMinute = startMinute;
+      const sendTimes = computeUniformSendTimes(questionsPerDay, startHour, startMinute, endHour, endMinute);
       if (questionsPerDay !== currentPerDay) payload.questionsPerDay = questionsPerDay;
       if (Number.isFinite(startHour) && startHour !== currentStartHour) payload.startHour = startHour;
       if (Number.isFinite(startMinute) && startMinute !== currentStartMinute) payload.startMinute = startMinute;
@@ -2307,7 +2305,7 @@
     if (els.cadernoPdf) els.cadernoPdf.value = "";
     if (els.cadernoPerDay) els.cadernoPerDay.value = "3";
     if (els.cadernoTime) els.cadernoTime.value = "07:00";
-    if (els.cadernoEndTime) els.cadernoEndTime.value = "22:00";
+    if (els.cadernoEndTime) els.cadernoEndTime.value = "07:00";
     syncCadernoAddSendTimes(false);
     if (els.cadernoRandom) els.cadernoRandom.checked = false;
     if (els.cadernoWait) els.cadernoWait.checked = false;

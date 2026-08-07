@@ -126,41 +126,20 @@ function addDaysIso(isoDate, days) {
   return `${yy}-${mm < 10 ? `0${mm}` : mm}-${dd < 10 ? `0${dd}` : dd}`;
 }
 
+/** Modo lote: todas as questões do dia liberam no horário de início. */
 function dailySlotUtc(dayIso, startHour, startMinute, endHour, endMinute, questionsPerDay, index, timeZone) {
+  void endHour;
+  void endMinute;
+  void questionsPerDay;
+  void index;
   const [y, m, d] = dayIso.split("-").map((s) => Number(s));
-  const safeN = Math.max(1, questionsPerDay);
-  const safeIndex = Math.min(Math.max(0, index), safeN - 1);
-  const start = zonedDateToUtc(y, m, d, startHour, startMinute, timeZone);
-  const end = zonedDateToUtc(y, m, d, endHour, endMinute, timeZone);
-  let windowMs = end.getTime() - start.getTime();
-  if (windowMs <= 0) {
-    const gapMs = Math.round((24 * 60 * 60 * 1000) / safeN);
-    return new Date(start.getTime() + safeIndex * gapMs);
-  }
-  if (safeN <= 1) return start;
-  const offsetMs = (windowMs * safeIndex) / (safeN - 1);
-  return new Date(start.getTime() + offsetMs);
+  return zonedDateToUtc(y, m, d, startHour, startMinute, timeZone);
 }
 
 function resolveDailySlotUtc(dayIso, index, timeZone, schedule) {
-  const N = Math.max(1, schedule.questionsPerDay || 1);
-  const safeIndex = Math.min(Math.max(0, index), N - 1);
-  const times = schedule.sendTimes;
-  if (times && times.length >= N && times[safeIndex]) {
-    const [y, m, d] = dayIso.split("-").map((s) => Number(s));
-    const slot = times[safeIndex];
-    return zonedDateToUtc(y, m, d, slot.hour, slot.minute, timeZone);
-  }
-  return dailySlotUtc(
-    dayIso,
-    schedule.startHour,
-    schedule.startMinute,
-    schedule.endHour,
-    schedule.endMinute,
-    N,
-    safeIndex,
-    timeZone
-  );
+  void index;
+  const [y, m, d] = dayIso.split("-").map((s) => Number(s));
+  return zonedDateToUtc(y, m, d, schedule.startHour, schedule.startMinute, timeZone);
 }
 
 function firstSlotFromSchedule(from, timeZone, schedule) {

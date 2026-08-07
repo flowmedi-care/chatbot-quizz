@@ -1545,7 +1545,7 @@ function mapCadernoRow(row: Record<string, unknown>): CadernoRow {
     sendTimes: parseSendTimesJson(row.send_times),
     startHour: Number.isFinite(startHourRaw) ? startHourRaw : 7,
     startMinute: Number.isFinite(startMinuteRaw) ? startMinuteRaw : 0,
-    endHour: Number.isFinite(Number(row.end_hour)) ? Number(row.end_hour) : 22,
+    endHour: Number.isFinite(Number(row.end_hour)) ? Number(row.end_hour) : 15,
     endMinute: Number.isFinite(Number(row.end_minute)) ? Number(row.end_minute) : 0,
     waitForAnswers: Boolean(row.wait_for_answers),
     currentDayDate: row.current_day_date ? String(row.current_day_date) : null,

@@ -1,12 +1,39 @@
 const { getClient, applyCors, pickTargetGroupJid } = require("./_lib.js");
 const { firstSlotFromSchedule } = require("./_schedule.js");
-const { normalizeSendTimesForDay, parseSendTimes } = require("./_send-times.js");
+const { parseSendTimes } = require("./_send-times.js");
+
+/** Hora máxima de liberação do lote do dia (alinhada ao corte de omissas). */
+const MAX_RELEASE_HOUR = 15;
 
 const SELECT_COLUMNS =
   "id, name, target_group_jid, created_by_jid, delivery_mode, status, questions_per_day, send_times, start_hour, start_minute, end_hour, end_minute, wait_for_answers, current_day_date, current_day_sent, questions_per_run, interval_days, send_hour, send_minute, timezone, cursor, random_order, last_run_at, next_run_at, created_at";
 
 const SELECT_COLUMNS_NO_DM =
   "id, name, target_group_jid, created_by_jid, status, questions_per_day, send_times, start_hour, start_minute, end_hour, end_minute, wait_for_answers, current_day_date, current_day_sent, questions_per_run, interval_days, send_hour, send_minute, timezone, cursor, random_order, last_run_at, next_run_at, created_at";
+
+function clampInt(value, min, max, fallback) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  const i = Math.round(n);
+  if (i < min) return min;
+  if (i > max) return max;
+  return i;
+}
+
+function clampReleaseHour(value, fallback = 7) {
+  return clampInt(value, 0, MAX_RELEASE_HOUR, fallback);
+}
+
+function clampReleaseMinute(hour, minute, fallback = 0) {
+  const m = clampInt(minute, 0, 59, fallback);
+  return hour >= MAX_RELEASE_HOUR ? 0 : m;
+}
+
+/** Lote: N horários iguais ao horário de liberação (compat com coluna send_times). */
+function batchSendTimes(n, hour, minute) {
+  const N = Math.max(1, Math.min(24, n || 1));
+  return Array.from({ length: N }, () => ({ hour, minute }));
+}
 
 module.exports = async (req, res) => {
   applyCors(res);
@@ -157,7 +184,7 @@ async function handleGet(req, res, supabase) {
         sendTimes: parseSendTimes(c.send_times),
         startHour: c.start_hour ?? c.send_hour,
         startMinute: c.start_minute ?? c.send_minute,
-        endHour: c.end_hour != null ? Number(c.end_hour) : 22,
+        endHour: c.end_hour != null ? Number(c.end_hour) : 15,
         endMinute: c.end_minute != null ? Number(c.end_minute) : 0,
         waitForAnswers: Boolean(c.wait_for_answers),
         currentDayDate: c.current_day_date,
@@ -197,13 +224,10 @@ async function replacePrivateRecipients(supabase, cadernoId, list, template) {
   if (!list || list.length === 0) return;
 
   const qd = template.questions_per_day ?? template.questions_per_run ?? 3;
-  const sh = template.start_hour ?? template.send_hour ?? 7;
-  const sm = template.start_minute ?? template.send_minute ?? 0;
-  const eh = template.end_hour != null ? Number(template.end_hour) : 22;
-  const em = template.end_minute != null ? Number(template.end_minute) : 0;
+  const sh = clampReleaseHour(template.start_hour ?? template.send_hour ?? 7, 7);
+  const sm = clampReleaseMinute(sh, template.start_minute ?? template.send_minute ?? 0, 0);
   const tz = template.timezone || "America/Sao_Paulo";
-  const wa = Boolean(template.wait_for_answers);
-  const ro = Boolean(template.random_order);
+  void tz;
 
   const rows = [];
   for (const item of list) {
@@ -211,25 +235,24 @@ async function replacePrivateRecipients(supabase, cadernoId, list, template) {
     if (!userJid) continue;
     const qpdItem =
       item.questionsPerDay != null ? clampInt(item.questionsPerDay, 1, 24, qd) : null;
-    const sendTimesItem =
-      item.sendTimes != null && qpdItem != null
-        ? normalizeSendTimesForDay(item.sendTimes, qpdItem)
-        : item.sendTimes != null
-          ? normalizeSendTimesForDay(item.sendTimes, qd)
-          : null;
-    if (item.sendTimes != null && !sendTimesItem) {
-      throw new Error(`Horarios invalidos para ${userJid}`);
-    }
+    const nForTimes = qpdItem != null ? qpdItem : qd;
+    const shItem = item.startHour != null ? clampReleaseHour(item.startHour, sh) : null;
+    const smItem =
+      item.startMinute != null
+        ? clampReleaseMinute(shItem != null ? shItem : sh, item.startMinute, sm)
+        : null;
+    const releaseH = shItem != null ? shItem : sh;
+    const releaseM = smItem != null ? smItem : sm;
     rows.push({
       caderno_id: cadernoId,
       user_jid: userJid,
       active: item.active !== false,
       questions_per_day: qpdItem,
-      send_times: sendTimesItem,
-      start_hour: item.startHour != null ? clampInt(item.startHour, 0, 23, sh) : null,
-      start_minute: item.startMinute != null ? clampInt(item.startMinute, 0, 59, sm) : null,
-      end_hour: item.endHour != null ? clampInt(item.endHour, 0, 23, eh) : null,
-      end_minute: item.endMinute != null ? clampInt(item.endMinute, 0, 59, em) : null,
+      send_times: batchSendTimes(nForTimes, releaseH, releaseM),
+      start_hour: shItem,
+      start_minute: smItem,
+      end_hour: shItem,
+      end_minute: smItem,
       wait_for_answers: item.waitForAnswers != null ? Boolean(item.waitForAnswers) : null,
       random_order: item.randomOrder != null ? Boolean(item.randomOrder) : null,
       timezone: item.timezone != null ? String(item.timezone).trim() || null : null,
@@ -253,25 +276,22 @@ async function reschedulePrivateRecipients(supabase, cadernoId, template) {
   if (error) return;
 
   const qd0 = template.questions_per_day ?? template.questions_per_run ?? 3;
-  const sh0 = template.start_hour ?? template.send_hour ?? 7;
-  const sm0 = template.start_minute ?? template.send_minute ?? 0;
+  const sh0 = clampReleaseHour(template.start_hour ?? template.send_hour ?? 7, 7);
+  const sm0 = clampReleaseMinute(sh0, template.start_minute ?? template.send_minute ?? 0, 0);
   const tz0 = template.timezone || "America/Sao_Paulo";
 
   const now = new Date();
   for (const r of recs || []) {
     const qpd = r.questions_per_day ?? qd0;
-    const sh = r.start_hour ?? sh0;
-    const sm = r.start_minute ?? sm0;
-    const eh = r.end_hour != null ? Number(r.end_hour) : template.end_hour != null ? Number(template.end_hour) : 22;
-    const em = r.end_minute != null ? Number(r.end_minute) : template.end_minute != null ? Number(template.end_minute) : 0;
+    const sh = clampReleaseHour(r.start_hour ?? sh0, sh0);
+    const sm = clampReleaseMinute(sh, r.start_minute ?? sm0, sm0);
     const tz = r.timezone || tz0;
-    const recSendTimes = parseSendTimes(r.send_times) || parseSendTimes(template.send_times);
     const next = firstSlotFromSchedule(now, tz, {
-      sendTimes: recSendTimes,
+      sendTimes: batchSendTimes(qpd, sh, sm),
       startHour: sh,
       startMinute: sm,
-      endHour: eh,
-      endMinute: em,
+      endHour: sh,
+      endMinute: sm,
       questionsPerDay: qpd
     }).toISOString();
     await supabase
@@ -321,10 +341,12 @@ async function handlePatch(req, res, supabase) {
   const existingDm = existing.delivery_mode === "private" ? "private" : "group";
 
   const existingQuestionsPerDay = existing.questions_per_day ?? existing.questions_per_run ?? 3;
-  const existingStartHour = existing.start_hour ?? existing.send_hour ?? 7;
-  const existingStartMinute = existing.start_minute ?? existing.send_minute ?? 0;
-  const existingEndHour = existing.end_hour != null ? Number(existing.end_hour) : 22;
-  const existingEndMinute = existing.end_minute != null ? Number(existing.end_minute) : 0;
+  const existingStartHour = clampReleaseHour(existing.start_hour ?? existing.send_hour ?? 7, 7);
+  const existingStartMinute = clampReleaseMinute(
+    existingStartHour,
+    existing.start_minute ?? existing.send_minute ?? 0,
+    0
+  );
 
   const update = {};
   if (typeof body.name === "string" && body.name.trim()) update.name = body.name.trim();
@@ -344,50 +366,52 @@ async function handlePatch(req, res, supabase) {
   }
 
   if (body.startHour !== undefined) {
-    const h = clampInt(body.startHour, 0, 23, existingStartHour);
+    const h = clampReleaseHour(body.startHour, existingStartHour);
     update.start_hour = h;
     update.send_hour = h;
   } else if (body.sendHour !== undefined) {
-    const h = clampInt(body.sendHour, 0, 23, existing.send_hour);
+    const h = clampReleaseHour(body.sendHour, existingStartHour);
     update.send_hour = h;
     update.start_hour = h;
   }
 
   if (body.startMinute !== undefined) {
-    const m = clampInt(body.startMinute, 0, 59, existingStartMinute);
+    const h = update.start_hour !== undefined ? update.start_hour : existingStartHour;
+    const m = clampReleaseMinute(h, body.startMinute, existingStartMinute);
     update.start_minute = m;
     update.send_minute = m;
   } else if (body.sendMinute !== undefined) {
-    const m = clampInt(body.sendMinute, 0, 59, existing.send_minute);
+    const h = update.start_hour !== undefined ? update.start_hour : existingStartHour;
+    const m = clampReleaseMinute(h, body.sendMinute, existingStartMinute);
     update.send_minute = m;
     update.start_minute = m;
   }
 
-  if (body.endHour !== undefined) {
-    update.end_hour = clampInt(body.endHour, 0, 23, existingEndHour);
-  }
-  if (body.endMinute !== undefined) {
-    update.end_minute = clampInt(body.endMinute, 0, 59, existingEndMinute);
-  }
-
+  const releaseHourForBatch =
+    update.start_hour !== undefined ? update.start_hour : existingStartHour;
+  const releaseMinuteForBatch =
+    update.start_minute !== undefined ? update.start_minute : existingStartMinute;
   const mergedQpdForTimes =
     update.questions_per_day !== undefined ? update.questions_per_day : existingQuestionsPerDay;
-  if (body.sendTimes !== undefined) {
-    if (body.sendTimes === null) {
-      update.send_times = null;
-    } else {
-      const normalized = normalizeSendTimesForDay(body.sendTimes, mergedQpdForTimes);
-      if (!normalized) {
-        return res.status(400).json({
-          error:
-            "sendTimes invalido: um horario por questao/dia, em ordem crescente (ex.: [{\"hour\":7,\"minute\":0}])."
-        });
-      }
-      update.send_times = normalized;
-    }
-  } else if (update.questions_per_day !== undefined && existing.send_times) {
-    const adjusted = normalizeSendTimesForDay(existing.send_times, mergedQpdForTimes);
-    update.send_times = adjusted;
+
+  if (
+    body.startHour !== undefined ||
+    body.sendHour !== undefined ||
+    body.startMinute !== undefined ||
+    body.sendMinute !== undefined ||
+    body.endHour !== undefined ||
+    body.endMinute !== undefined ||
+    body.sendTimes !== undefined ||
+    body.questionsPerDay !== undefined ||
+    body.questionsPerRun !== undefined
+  ) {
+    update.end_hour = releaseHourForBatch;
+    update.end_minute = releaseMinuteForBatch;
+    update.send_times = batchSendTimes(
+      mergedQpdForTimes,
+      releaseHourForBatch,
+      releaseMinuteForBatch
+    );
   }
 
   if (typeof body.waitForAnswers === "boolean") {
@@ -413,8 +437,12 @@ async function handlePatch(req, res, supabase) {
 
   const merged = { ...existing, ...update };
   const newDm = merged.delivery_mode === "private" ? "private" : "group";
-  const newStartHour = merged.start_hour ?? merged.send_hour ?? 7;
-  const newStartMinute = merged.start_minute ?? merged.send_minute ?? 0;
+  const newStartHour = clampReleaseHour(merged.start_hour ?? merged.send_hour ?? 7, 7);
+  const newStartMinute = clampReleaseMinute(
+    newStartHour,
+    merged.start_minute ?? merged.send_minute ?? 0,
+    0
+  );
   const newTimezone = merged.timezone || "America/Sao_Paulo";
   const newStatus = merged.status;
   const previousStatus = existing.status;
@@ -436,15 +464,13 @@ async function handlePatch(req, res, supabase) {
     if (previousStatus !== "active" || body.recomputeNextRun === true || scheduleChanged) {
       update.current_day_date = null;
       update.current_day_sent = 0;
-      const newEndHour = merged.end_hour != null ? Number(merged.end_hour) : 22;
-      const newEndMinute = merged.end_minute != null ? Number(merged.end_minute) : 0;
       const newQpd = merged.questions_per_day ?? merged.questions_per_run ?? 3;
       update.next_run_at = firstSlotFromSchedule(new Date(), newTimezone, {
-        sendTimes: parseSendTimes(merged.send_times),
+        sendTimes: batchSendTimes(newQpd, newStartHour, newStartMinute),
         startHour: newStartHour,
         startMinute: newStartMinute,
-        endHour: newEndHour,
-        endMinute: newEndMinute,
+        endHour: newStartHour,
+        endMinute: newStartMinute,
         questionsPerDay: newQpd
       }).toISOString();
     }
@@ -557,13 +583,4 @@ async function handlePatch(req, res, supabase) {
   }
 
   return res.status(200).json({ ok: true, id, applied: update });
-}
-
-function clampInt(value, min, max, fallback) {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return fallback;
-  const i = Math.round(n);
-  if (i < min) return min;
-  if (i > max) return max;
-  return i;
 }

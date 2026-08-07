@@ -158,21 +158,18 @@
                 <input type="number" id="caderno-per-day" min="1" max="24" value="3" />
               </label>
               <label class="report-field">
-                <span>Horário de início</span>
-                <input type="time" id="caderno-time" value="07:00" />
+                <span>Hora de liberação do dia</span>
+                <input type="time" id="caderno-time" value="07:00" max="15:00" />
               </label>
-              <label class="report-field">
-                <span>Horário de fim</span>
-                <input type="time" id="caderno-end-time" value="22:00" />
-              </label>
+              <input type="hidden" id="caderno-end-time" value="07:00" />
             </div>
 
-            <div id="caderno-send-times-wrap" class="caderno-send-times-wrap">
+            <div id="caderno-send-times-wrap" class="caderno-send-times-wrap hidden" hidden>
               <p class="report-sub" id="caderno-spread-hint" style="margin-top: -6px">
-                Horário de envio de <strong>cada</strong> questão do dia (modo coletivo). No privado, a agenda fica por
-                pessoa no próximo passo.
+                Todas as questões do dia são liberadas juntas na hora acima (até 15:00). O <code>/omissas</code> mostra o
+                lote completo.
               </p>
-              <button type="button" id="btn-caderno-fill-uniform" class="btn-tutorial">
+              <button type="button" id="btn-caderno-fill-uniform" class="btn-tutorial hidden" hidden>
                 Distribuir entre início e fim
               </button>
               <div
@@ -180,6 +177,7 @@
                 class="caderno-send-times-list"
                 role="group"
                 aria-label="Horários por questão"
+                hidden
               ></div>
             </div>
           </section>
@@ -309,23 +307,25 @@
                 <input type="number" id="caderno-edit-per-day" min="1" max="24" />
               </label>
               <label class="report-field">
-                <span>Horário de início</span>
-                <input type="time" id="caderno-edit-time" />
+                <span>Hora de liberação do dia</span>
+                <input type="time" id="caderno-edit-time" max="15:00" />
               </label>
-              <label class="report-field">
-                <span>Horário de fim</span>
-                <input type="time" id="caderno-edit-end-time" />
-              </label>
+              <input type="hidden" id="caderno-edit-end-time" value="07:00" />
             </div>
 
-            <div id="caderno-edit-send-times-wrap" class="caderno-send-times-wrap">
+            <p class="report-sub" style="margin-top: 0.35rem">
+              Todas as questões do dia saem juntas nessa hora (máx. 15:00). Depois disso, <code>/omissas</code> já traz o
+              dia inteiro.
+            </p>
+
+            <div id="caderno-edit-send-times-wrap" class="caderno-send-times-wrap hidden" hidden>
               <p class="report-sub" id="caderno-edit-spread-hint" style="margin-top: -6px;">
                 Horário de cada questão do dia (envio em <strong>grupo</strong>).
               </p>
-              <button type="button" id="btn-caderno-edit-fill-uniform" class="btn-tutorial">
+              <button type="button" id="btn-caderno-edit-fill-uniform" class="btn-tutorial hidden" hidden>
                 Distribuir entre início e fim
               </button>
-              <div id="caderno-edit-send-times-list" class="caderno-send-times-list" role="group" aria-label="Horários por questão"></div>
+              <div id="caderno-edit-send-times-list" class="caderno-send-times-list" role="group" aria-label="Horários por questão" hidden></div>
             </div>
           </div>
 
