@@ -59,13 +59,30 @@
 
         <section id="panel-day" class="atv-panel">
           <div class="atv-panel-head">
-            <h1>Omissas de hoje</h1>
+            <h1>Passivo</h1>
             <p id="day-subtitle" class="atv-muted"></p>
           </div>
-          <div id="day-body" class="atv-day-body"></div>
-          <div class="atv-actions">
-            <button type="button" class="atv-btn primary" id="btn-responder-hoje">Responder agora</button>
-            <button type="button" class="atv-btn" id="btn-atrasadas">Abrir atrasadas</button>
+
+          <div class="atv-day-section">
+            <div class="atv-day-section-head">
+              <h2>Omissas de hoje</h2>
+              <p id="hoje-count" class="atv-muted"></p>
+            </div>
+            <div id="day-body" class="atv-day-body"></div>
+            <div class="atv-actions">
+              <button type="button" class="atv-btn primary" id="btn-responder-hoje">Responder agora</button>
+            </div>
+          </div>
+
+          <div class="atv-day-section atv-day-section-atrasadas">
+            <div class="atv-day-section-head">
+              <h2>Atrasadas</h2>
+              <p id="atrasadas-count" class="atv-muted"></p>
+            </div>
+            <div id="atrasadas-body" class="atv-day-body"></div>
+            <div class="atv-actions">
+              <button type="button" class="atv-btn" id="btn-atrasadas">Abrir atrasadas</button>
+            </div>
           </div>
         </section>
 

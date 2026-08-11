@@ -660,8 +660,34 @@
     return t || "usuario";
   }
 
+  async function ensureJSZip() {
+    if (typeof JSZip !== "undefined") return;
+    await new Promise((resolve, reject) => {
+      const existing = document.querySelector('script[data-jszip-loader="1"]');
+      if (existing) {
+        existing.addEventListener("load", () => resolve(), { once: true });
+        existing.addEventListener(
+          "error",
+          () => reject(new Error("JSZip não carregou. Recarregue a página.")),
+          { once: true }
+        );
+        return;
+      }
+      const s = document.createElement("script");
+      s.src = "/js/jszip.min.js";
+      s.async = true;
+      s.dataset.jszipLoader = "1";
+      s.onload = () => resolve();
+      s.onerror = () => reject(new Error("JSZip não carregou. Recarregue a página."));
+      document.head.appendChild(s);
+    });
+    if (typeof JSZip === "undefined") {
+      throw new Error("JSZip não carregou. Recarregue a página.");
+    }
+  }
+
   async function buildReportZip(scopeJid) {
-    if (typeof JSZip === "undefined") throw new Error("JSZip não carregou. Recarregue a página.");
+    await ensureJSZip();
 
     const qsAll = reportData.questions || [];
     const qs = qsAll.filter((q) => questionPassesReportFilters(q, scopeJid));

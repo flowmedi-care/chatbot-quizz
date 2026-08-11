@@ -338,17 +338,27 @@ async function handleAtividadesGet(req, res) {
 
   if (view === "day") {
     const day = url.searchParams.get("day") || todayIso;
-    const omissas = await listUnansweredToday(supabase, userJid, groupJid, day);
-    const engaged = (await listEngagedCadernos(supabase, userJid, groupJid)).map((c) => ({
-      id: c.id,
-      name: c.name
-    }));
+    const [omissas, buckets, engagedRows] = await Promise.all([
+      listUnansweredToday(supabase, userJid, groupJid, day),
+      listUnansweredOmissasForUser(supabase, userJid, groupJid, {
+        dayIso: day,
+        todayLimit: 80,
+        atrasadasLimit: 80,
+        includeAtrasadas: true
+      }),
+      listEngagedCadernos(supabase, userJid, groupJid)
+    ]);
+    const engaged = engagedRows.map((c) => ({ id: c.id, name: c.name }));
     return res.status(200).json({
       view: "day",
       todayIso,
       dayIso: day,
       engaged,
-      ...omissas
+      ...omissas,
+      todayShortIds: buckets.today,
+      atrasadasShortIds: buckets.atrasadas,
+      dueOnDayCount: buckets.dueOnDayCount,
+      openOnDayCount: buckets.openOnDayCount
     });
   }
 

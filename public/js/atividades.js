@@ -168,22 +168,58 @@
       API.atividades(`view=day&userJid=${encodeURIComponent(userJid)}`)
     );
     $("day-subtitle").textContent = `Hoje ${data.dayIso || data.todayIso || ""}`;
+
     const body = $("day-body");
     const cards = data.byCaderno || [];
+    const hojeIds = data.todayShortIds || data.shortIds || [];
+    const openHoje =
+      data.openOnDayCount != null
+        ? Number(data.openOnDayCount)
+        : hojeIds.length;
+    $("hoje-count").textContent =
+      openHoje > 0
+        ? `${openHoje} pendente(s) de hoje`
+        : "Nenhuma omissa de hoje";
+
     if (!cards.length) {
       body.innerHTML = `<p class="atv-muted">Você não está engajado em cadernos ativos.</p>`;
-      return;
+    } else {
+      body.innerHTML = cards
+        .map((c) => {
+          const pending = c.pendingShortIds || [];
+          const open = pending.length || Math.max(0, (c.totalCount || 0) - (c.answeredCount || 0));
+          const ids =
+            pending.length > 0
+              ? `<p class="atv-id-list">${pending.map((id) => `#${esc(id)}`).join(" ")}</p>`
+              : "";
+          return `<article class="atv-caderno-card">
+            <h3>#${esc(c.cadernoId)} ${esc(c.name)}</h3>
+            <p class="atv-muted">${statusLabel(c.status)} · ${c.answeredCount || 0}/${c.totalCount || 0} respondidas
+            ${open > 0 ? ` · ${open} pendente(s)` : ""}</p>
+            ${ids}
+          </article>`;
+        })
+        .join("");
     }
-    body.innerHTML = cards
-      .map((c) => {
-        const open = (c.totalCount || 0) - (c.answeredCount || 0);
-        return `<article class="atv-caderno-card">
-          <h3>#${esc(c.cadernoId)} ${esc(c.name)}</h3>
-          <p class="atv-muted">${statusLabel(c.status)} · ${c.answeredCount || 0}/${c.totalCount || 0} respondidas
-          ${open > 0 ? ` · ${open} pendente(s)` : ""}</p>
-        </article>`;
-      })
-      .join("");
+
+    const atrasadas = data.atrasadasShortIds || [];
+    $("atrasadas-count").textContent =
+      atrasadas.length > 0
+        ? `${atrasadas.length} atrasada(s) (não contam no streak)`
+        : "Nenhuma atrasada";
+    const atrasadasBody = $("atrasadas-body");
+    if (!atrasadas.length) {
+      atrasadasBody.innerHTML = `<p class="atv-muted">Backlog zerado. Bom trabalho!</p>`;
+    } else {
+      atrasadasBody.innerHTML = `<article class="atv-caderno-card atv-atrasadas-card">
+        <h3>Backlog em aberto</h3>
+        <p class="atv-muted">Questões de dias anteriores ainda sem resposta.</p>
+        <p class="atv-id-list">${atrasadas.map((id) => `#${esc(id)}`).join(" ")}</p>
+      </article>`;
+    }
+
+    $("btn-responder-hoje").disabled = openHoje === 0 && hojeIds.length === 0;
+    $("btn-atrasadas").disabled = atrasadas.length === 0;
   }
 
   async function loadWeek() {
