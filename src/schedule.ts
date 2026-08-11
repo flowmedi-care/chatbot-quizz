@@ -95,6 +95,24 @@ export function dateIsoInTimezone(date: Date, timeZone: string): string {
   return `${z.year}-${mm}-${dd}`;
 }
 
+/**
+ * Dia civil ISO (YYYY-MM-DD) de uma publicação, no fuso informado.
+ *
+ * Use SEMPRE esta função (ou `dateIsoInTimezone`) ao derivar “publicado no dia X”
+ * a partir de `published_at` — nunca misturar UTC cru com fuso do caderno.
+ *
+ * Convenção do produto:
+ * - Calendário / wait_for_answers / current_day do caderno → `caderno.timezone`
+ * - Streak / omissas / economia → `ECONOMY_TZ` (America/Sao_Paulo)
+ */
+export function publishedDayIso(
+  publishedAt: string | Date,
+  timeZone: string
+): string {
+  const d = publishedAt instanceof Date ? publishedAt : new Date(publishedAt);
+  return dateIsoInTimezone(d, timeZone);
+}
+
 /** Minutos desde 00:00 no fuso (0–1439). */
 export function minutesInTimezone(date: Date, timeZone: string): number {
   const z = getZonedParts(date, timeZone);

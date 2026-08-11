@@ -6,29 +6,21 @@ const crypto = require("crypto");
 const { getClient, pickTargetGroupJid } = require("./_lib.js");
 const {
   dateIsoInTimezone,
-  addDaysIso,
-  weekDayIsos,
-  monthDayIsos,
   startOfMonthIso,
   formatDayLabelPt
 } = require("./_schedule.js");
+const {
+  ECONOMY_TZ,
+  loadCadernosContext,
+  loadCalendarContext,
+  loadUserAnswersContext,
+  loadShortIdsContext,
+  listUnansweredOmissasForUser,
+  weekDayIsos,
+  monthDayIsos
+} = require("./_caderno-read-context.js");
 
-const TZ = "America/Sao_Paulo";
-const WEEKDAY_LABELS = ["segunda", "terça", "quarta", "quinta", "sexta", "sábado", "domingo"];
-
-function jidKey(jid) {
-  const raw = String(jid || "").trim().toLowerCase();
-  const at = raw.indexOf("@");
-  if (at < 0) return raw;
-  return `${raw.slice(0, at).split(":")[0]}@${raw.slice(at + 1)}`;
-}
-
-function weekdayLabel(iso) {
-  const [y, m, d] = iso.split("-").map(Number);
-  const utcDay = new Date(Date.UTC(y, m - 1, d, 12, 0, 0)).getUTCDay();
-  const idx = utcDay === 0 ? 6 : utcDay - 1;
-  return WEEKDAY_LABELS[idx];
-}
+const TZ = ECONOMY_TZ;
 
 function readBody(req) {
   return new Promise((resolve, reject) => {
@@ -54,47 +46,8 @@ function readBody(req) {
 }
 
 async function listEngagedCadernos(supabase, userJid, groupJid) {
-  const { data: cadernos, error } = await supabase
-    .from("cadernos")
-    .select(
-      "id, name, timezone, questions_per_day, random_order, target_group_jid, status, delivery_mode"
-    )
-    .eq("status", "active")
-    .eq("target_group_jid", groupJid)
-    .neq("delivery_mode", "private");
-
-  if (error) throw error;
-  const ids = (cadernos || []).map((c) => Number(c.id)).filter(Boolean);
-  if (!ids.length) return [];
-
-  const { data: eng, error: eErr } = await supabase
-    .from("caderno_engagement")
-    .select("caderno_id, user_jid, engaged")
-    .in("caderno_id", ids)
-    .eq("engaged", true);
-
-  if (eErr) {
-    const msg = String(eErr.message || "").toLowerCase();
-    if (msg.includes("relation") && msg.includes("does not exist")) return [];
-    throw eErr;
-  }
-
-  const userK = jidKey(userJid);
-  const engagedIds = new Set();
-  for (const row of eng || []) {
-    if (jidKey(row.user_jid) === userK) engagedIds.add(Number(row.caderno_id));
-  }
-
-  return (cadernos || [])
-    .filter((c) => engagedIds.has(Number(c.id)))
-    .map((c) => ({
-      id: Number(c.id),
-      name: String(c.name || ""),
-      timezone: c.timezone || TZ,
-      questionsPerDay: Math.max(1, Number(c.questions_per_day) || 1),
-      randomOrder: Boolean(c.random_order),
-      targetGroupJid: String(c.target_group_jid)
-    }));
+  const ctx = await loadCadernosContext(supabase, groupJid, { userJid, activeOnly: true });
+  return ctx.cadernos.filter((c) => ctx.engagedSinceMap.has(c.id));
 }
 
 async function listQueueForDay(supabase, cadernoId, dayIso) {
@@ -112,104 +65,16 @@ async function listQueueForDay(supabase, cadernoId, dayIso) {
   return data || [];
 }
 
-async function listPublishedOnDay(supabase, cadernoId, dayIso, tz) {
-  const { data, error } = await supabase
-    .from("caderno_questions")
-    .select("published_question_id, published_at")
-    .eq("caderno_id", cadernoId)
-    .not("published_question_id", "is", null);
-  if (error) throw error;
-  const out = [];
-  for (const row of data || []) {
-    if (!row.published_at || row.published_question_id == null) continue;
-    const iso = dateIsoInTimezone(new Date(row.published_at), tz);
-    if (iso === dayIso) out.push(Number(row.published_question_id));
-  }
-  return out;
-}
-
 async function shortIdsForQuestionIds(supabase, questionIds) {
-  if (!questionIds.length) return [];
-  const { data, error } = await supabase
-    .from("questions")
-    .select("id, short_id")
-    .in("id", questionIds);
-  if (error) throw error;
-  const map = new Map((data || []).map((r) => [Number(r.id), String(r.short_id || "").toUpperCase()]));
-  return questionIds.map((id) => map.get(id)).filter(Boolean);
+  const ctx = await loadShortIdsContext(supabase, questionIds);
+  return questionIds.map((id) => ctx.shortIdByQuestionId.get(id)).filter(Boolean);
 }
 
 async function answersByUser(supabase, questionIds, userJid) {
+  const ctx = await loadUserAnswersContext(supabase, questionIds, userJid);
   const out = new Map();
-  if (!questionIds.length) return out;
-  const userK = jidKey(userJid);
-  const CHUNK = 80;
-  for (let i = 0; i < questionIds.length; i += CHUNK) {
-    const chunk = questionIds.slice(i, i + CHUNK);
-    const { data, error } = await supabase
-      .from("answers")
-      .select("question_id, user_jid")
-      .in("question_id", chunk);
-    if (error) throw error;
-    for (const row of data || []) {
-      if (jidKey(row.user_jid) !== userK) continue;
-      out.set(Number(row.question_id), true);
-    }
-  }
+  for (const qid of ctx.answeredQuestionIds) out.set(qid, true);
   return out;
-}
-
-async function resolveDayQuestionIds(supabase, caderno, dayIso) {
-  const queue = await listQueueForDay(supabase, caderno.id, dayIso);
-  const fromQueue = queue
-    .map((q) => (q.published_question_id != null ? Number(q.published_question_id) : null))
-    .filter((id) => id != null && Number.isFinite(id));
-  if (fromQueue.length) return [...new Set(fromQueue)];
-  return listPublishedOnDay(supabase, caderno.id, dayIso, caderno.timezone || TZ);
-}
-
-async function dayStatusForCaderno(supabase, caderno, userJid, dayIso, todayIso) {
-  const questionIds = await resolveDayQuestionIds(supabase, caderno, dayIso);
-  const shortIds = await shortIdsForQuestionIds(supabase, questionIds);
-  const answered = await answersByUser(supabase, questionIds, userJid);
-  let answeredCount = 0;
-  for (const qid of questionIds) {
-    if (answered.get(qid)) answeredCount += 1;
-  }
-  const totalCount = questionIds.length;
-  const allDone = totalCount > 0 && answeredCount >= totalCount;
-
-  let status;
-  if (dayIso === todayIso) status = allDone ? "feito" : "hoje";
-  else if (dayIso < todayIso) {
-    if (totalCount === 0) status = "passou";
-    else if (allDone) status = "feito";
-    else status = "atrasado";
-  } else if (totalCount === 0) status = "pendente";
-  else if (allDone) status = "feito";
-  else status = "pendente";
-
-  return {
-    dayIso,
-    status,
-    shortIds,
-    answeredCount,
-    totalCount,
-    label: `${weekdayLabel(dayIso)} ${formatDayLabelPt(dayIso)}`,
-    selectable: dayIso > todayIso && status !== "feito"
-  };
-}
-
-function mergeStatus(statuses) {
-  if (!statuses.length) return "passou";
-  if (statuses.some((s) => s.status === "atrasado")) return "atrasado";
-  if (statuses.some((s) => s.status === "hoje")) return "hoje";
-  const withQ = statuses.filter((s) => s.totalCount > 0);
-  if (withQ.length && withQ.every((s) => s.status === "feito")) return "feito";
-  if (statuses.some((s) => s.status === "pendente")) return "pendente";
-  if (statuses.every((s) => s.status === "feito")) return "feito";
-  if (statuses.every((s) => s.status === "passou")) return "passou";
-  return "pendente";
 }
 
 async function listQueuedCadernoQuestionIds(supabase, cadernoId) {
@@ -439,35 +304,22 @@ async function addPrepaidDays(supabase, userJid, days) {
 }
 
 async function listUnansweredToday(supabase, userJid, groupJid, dayIso) {
-  const cadernos = await listEngagedCadernos(supabase, userJid, groupJid);
+  const cal = await loadCalendarContext(supabase, userJid, groupJid, [dayIso], dayIso);
   const shortIds = [];
   const byCaderno = [];
-  for (const c of cadernos) {
-    const st = await dayStatusForCaderno(supabase, c, userJid, dayIso, dayIso);
-    const pending = [];
-    if (st.totalCount > 0 && st.answeredCount < st.totalCount) {
-      const answered = await answersByUser(
-        supabase,
-        await resolveDayQuestionIds(supabase, c, dayIso),
-        userJid
-      );
-      const qids = await resolveDayQuestionIds(supabase, c, dayIso);
-      const sids = await shortIdsForQuestionIds(supabase, qids);
-      for (let i = 0; i < qids.length; i++) {
-        if (!answered.get(qids[i]) && sids[i]) {
-          pending.push(sids[i]);
-          shortIds.push(sids[i]);
-        }
-      }
+  for (const day of cal.days) {
+    for (const c of day.cadernos || []) {
+      const pending = c.pendingShortIds || [];
+      shortIds.push(...pending);
+      byCaderno.push({
+        cadernoId: c.cadernoId,
+        name: c.name,
+        status: c.status,
+        answeredCount: c.answeredCount,
+        totalCount: c.totalCount,
+        pendingShortIds: pending
+      });
     }
-    byCaderno.push({
-      cadernoId: c.id,
-      name: c.name,
-      status: st.status,
-      answeredCount: st.answeredCount,
-      totalCount: st.totalCount,
-      pendingShortIds: pending
-    });
   }
   return { shortIds: [...new Set(shortIds)], byCaderno };
 }
@@ -482,17 +334,20 @@ async function handleAtividadesGet(req, res) {
   if (!groupJid) return res.status(503).json({ error: "TARGET_GROUP_JIDS não configurado" });
 
   const supabase = getClient();
-  const cadernos = await listEngagedCadernos(supabase, userJid, groupJid);
   const todayIso = dateIsoInTimezone(new Date(), TZ);
 
   if (view === "day") {
     const day = url.searchParams.get("day") || todayIso;
     const omissas = await listUnansweredToday(supabase, userJid, groupJid, day);
+    const engaged = (await listEngagedCadernos(supabase, userJid, groupJid)).map((c) => ({
+      id: c.id,
+      name: c.name
+    }));
     return res.status(200).json({
       view: "day",
       todayIso,
       dayIso: day,
-      engaged: cadernos.map((c) => ({ id: c.id, name: c.name })),
+      engaged,
       ...omissas
     });
   }
@@ -500,27 +355,20 @@ async function handleAtividadesGet(req, res) {
   if (view === "month") {
     const month = url.searchParams.get("month") || todayIso.slice(0, 7);
     const daysList = monthDayIsos(month);
-    const days = [];
-    for (const dayIso of daysList) {
-      const perCaderno = [];
-      for (const c of cadernos) {
-        perCaderno.push(await dayStatusForCaderno(supabase, c, userJid, dayIso, todayIso));
-      }
-      const status = mergeStatus(perCaderno);
-      days.push({
-        dayIso,
-        status,
-        selectable: dayIso > todayIso && status !== "feito",
-        label: formatDayLabelPt(dayIso),
-        cadernos: perCaderno.map((s, i) => ({
-          cadernoId: cadernos[i].id,
-          name: cadernos[i].name,
-          status: s.status,
-          answeredCount: s.answeredCount,
-          totalCount: s.totalCount
-        }))
-      });
-    }
+    const cal = await loadCalendarContext(supabase, userJid, groupJid, daysList, todayIso);
+    const days = cal.days.map((d) => ({
+      dayIso: d.dayIso,
+      status: d.status,
+      selectable: d.selectable,
+      label: formatDayLabelPt(d.dayIso),
+      cadernos: d.cadernos.map((c) => ({
+        cadernoId: c.cadernoId,
+        name: c.name,
+        status: c.status,
+        answeredCount: c.answeredCount,
+        totalCount: c.totalCount
+      }))
+    }));
     const counts = {
       feito: days.filter((d) => d.status === "feito").length,
       atrasado: days.filter((d) => d.status === "atrasado").length,
@@ -531,7 +379,7 @@ async function handleAtividadesGet(req, res) {
       todayIso,
       month: startOfMonthIso(month).slice(0, 7),
       counts,
-      engaged: cadernos.map((c) => ({ id: c.id, name: c.name })),
+      engaged: cal.engaged.map((c) => ({ id: c.id, name: c.name })),
       days
     });
   }
@@ -540,37 +388,15 @@ async function handleAtividadesGet(req, res) {
   const weekStartParam = url.searchParams.get("weekStart");
   const anchor = weekStartParam || todayIso;
   const daysList = weekDayIsos(anchor);
-  const days = [];
-  for (const dayIso of daysList) {
-    const perCaderno = [];
-    for (const c of cadernos) {
-      perCaderno.push(await dayStatusForCaderno(supabase, c, userJid, dayIso, todayIso));
-    }
-    const status = mergeStatus(perCaderno);
-    days.push({
-      dayIso,
-      status,
-      selectable: dayIso > todayIso && status !== "feito",
-      label: `${weekdayLabel(dayIso)} ${formatDayLabelPt(dayIso)}`,
-      weekday: weekdayLabel(dayIso),
-      cadernos: perCaderno.map((s, i) => ({
-        cadernoId: cadernos[i].id,
-        name: cadernos[i].name,
-        status: s.status,
-        answeredCount: s.answeredCount,
-        totalCount: s.totalCount,
-        shortIds: s.shortIds
-      }))
-    });
-  }
+  const cal = await loadCalendarContext(supabase, userJid, groupJid, daysList, todayIso);
 
   return res.status(200).json({
     view: "week",
     todayIso,
     weekStart: daysList[0],
     weekEnd: daysList[6],
-    engaged: cadernos.map((c) => ({ id: c.id, name: c.name })),
-    days
+    engaged: cal.engaged.map((c) => ({ id: c.id, name: c.name })),
+    days: cal.days
   });
 }
 
@@ -609,24 +435,14 @@ async function handleAtividadesPost(req, res) {
       });
       return res.status(200).json({ ...session, message: "Sessão criada." });
     }
-    // atrasadas: collect atrasado short ids from last 60 days lightly via week/month would be heavy;
-    // reuse day statuses for past 30 days
-    const shortIds = [];
-    for (let i = 1; i <= 30; i++) {
-      const dayIsoPast = addDaysIso(todayIso, -i);
-      for (const c of cadernos) {
-        const st = await dayStatusForCaderno(supabase, c, userJid, dayIsoPast, todayIso);
-        if (st.status === "atrasado") {
-          const qids = await resolveDayQuestionIds(supabase, c, dayIsoPast);
-          const answered = await answersByUser(supabase, qids, userJid);
-          const sids = await shortIdsForQuestionIds(supabase, qids);
-          for (let j = 0; j < qids.length; j++) {
-            if (!answered.get(qids[j]) && sids[j]) shortIds.push(sids[j]);
-          }
-        }
-      }
-    }
-    const uniq = [...new Set(shortIds)];
+    // Atrasadas: composição omissas (mesma listagem do bot) — não loop 30×N.
+    const buckets = await listUnansweredOmissasForUser(supabase, userJid, groupJid, {
+      dayIso: todayIso,
+      todayLimit: 1,
+      atrasadasLimit: 80,
+      includeAtrasadas: true
+    });
+    const uniq = [...new Set(buckets.atrasadas)];
     if (!uniq.length) {
       return res.status(200).json({ token: null, shortIds: [], message: "Sem atrasadas." });
     }

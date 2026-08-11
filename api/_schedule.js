@@ -152,6 +152,15 @@ function firstSlotFromSchedule(from, timeZone, schedule) {
   return slot;
 }
 
+/**
+ * Dia civil ISO de uma publicação no fuso informado.
+ * Calendário do caderno → caderno.timezone; omissas/economia → America/Sao_Paulo.
+ */
+function publishedDayIso(publishedAt, timeZone) {
+  const d = publishedAt instanceof Date ? publishedAt : new Date(publishedAt);
+  return dateIsoInTimezone(d, timeZone);
+}
+
 module.exports = {
   computeNextRunAt,
   firstDailySlotUtc,
@@ -159,6 +168,7 @@ module.exports = {
   resolveDailySlotUtc,
   dailySlotUtc,
   dateIsoInTimezone,
+  publishedDayIso,
   addDaysIso,
   getZonedParts,
   zonedDateToUtc,

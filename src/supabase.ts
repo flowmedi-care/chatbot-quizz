@@ -9,11 +9,18 @@ import {
   nextNDayIsosAfter,
   omissaDayIsoForInstant,
   parseSendTimesJson,
-  WEEKDAY_LABELS_PT,
-  weekDayIsos
+  publishedDayIso,
+  WEEKDAY_LABELS_PT
 } from "./schedule";
 import { AnswerInput, CreateQuestionInput, QuestionType } from "./types";
 import { ECONOMY_TZ, OMISSAS_SCHEDULE } from "./economy/constants";
+import {
+  loadGroupOmissasContext,
+  loadPublishedQuestionsContext,
+  loadSemanaContext,
+  loadShortIdsContext,
+  loadUserAnswersContext
+} from "./caderno-read-context";
 
 const supabase = createClient(config.supabaseUrl, config.supabaseServiceRoleKey);
 const ASSETS_BUCKET = "question-assets";
@@ -1563,13 +1570,7 @@ function mapCadernoRow(row: Record<string, unknown>): CadernoRow {
 }
 
 function formatDateInTimezone(d: Date, timeZone: string): string {
-  const fmt = new Intl.DateTimeFormat("en-CA", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit"
-  });
-  return fmt.format(d);
+  return publishedDayIso(d, timeZone);
 }
 
 const CADERNO_SELECT_COLUMNS =
@@ -2257,24 +2258,11 @@ export async function listCadernoQuestionsPublishedOnDate(
   dayIso: string,
   timeZone: string
 ): Promise<{ publishedQuestionId: number; publishedAt: string }[]> {
-  const { data, error } = await supabase
-    .from("caderno_questions")
-    .select("published_question_id, published_at")
-    .eq("caderno_id", cadernoId)
-    .not("published_question_id", "is", null);
-
-  if (error) {
-    throw new Error(`Erro ao listar publicações do dia: ${error.message}`);
-  }
-
+  const published = await loadPublishedQuestionsContext([cadernoId]);
   const out: { publishedQuestionId: number; publishedAt: string }[] = [];
-  for (const row of data ?? []) {
-    const pubAt = row.published_at ? String(row.published_at) : null;
-    const pubId = row.published_question_id != null ? Number(row.published_question_id) : null;
-    if (!pubAt || !pubId) continue;
-    const isoDay = formatDateInTimezone(new Date(pubAt), timeZone);
-    if (isoDay === dayIso) {
-      out.push({ publishedQuestionId: pubId, publishedAt: pubAt });
+  for (const row of published.byCaderno.get(cadernoId) || []) {
+    if (publishedDayIso(row.publishedAt, timeZone) === dayIso) {
+      out.push({ publishedQuestionId: row.publishedQuestionId, publishedAt: row.publishedAt });
     }
   }
   return out;
@@ -2714,20 +2702,19 @@ export async function getUserCadernoDayStatus(
   dayIso: string,
   todayIso?: string
 ): Promise<UserCadernoDayStatus> {
-  const tz = caderno.timezone || "America/Sao_Paulo";
+  const tz = caderno.timezone || ECONOMY_TZ;
   const today = todayIso || dateIsoInTimezone(new Date(), tz);
   const { questionIds } = await resolveQuestionIdsForCadernoDay(caderno, dayIso);
+  const [shortCtx, answersCtx] = await Promise.all([
+    loadShortIdsContext(questionIds),
+    loadUserAnswersContext(questionIds, userJid)
+  ]);
   const shortIds: string[] = [];
-  for (const qid of questionIds) {
-    const sid = await getQuestionShortIdByDbId(qid);
-    if (sid) shortIds.push(sid);
-  }
-
-  const answersByQ = await listAnswersForQuestionIds(questionIds);
-  const userKey = jidComparableKeyShared(userJid);
   let answeredCount = 0;
   for (const qid of questionIds) {
-    if (answersByQ.get(qid)?.has(userKey)) answeredCount += 1;
+    const sid = shortCtx.shortIdByQuestionId.get(qid);
+    if (sid) shortIds.push(sid);
+    if (answersCtx.answeredQuestionIds.has(qid)) answeredCount += 1;
   }
   const totalCount = questionIds.length;
   const allDone = totalCount > 0 && answeredCount >= totalCount;
@@ -2943,27 +2930,14 @@ export async function buildSemanaReportForUser(
   groupJid: string,
   anchorIso?: string
 ): Promise<SemanaCadernoReport[]> {
-  const cadernos = await listEngagedGroupCadernosForUser(userJid, groupJid);
-  const reports: SemanaCadernoReport[] = [];
-
-  for (const caderno of cadernos) {
-    const tz = caderno.timezone || "America/Sao_Paulo";
-    const todayIso = dateIsoInTimezone(new Date(), tz);
-    const anchor = anchorIso || todayIso;
-    const daysList = weekDayIsos(anchor);
-    const days: UserCadernoDayStatus[] = [];
-    for (const dayIso of daysList) {
-      days.push(await getUserCadernoDayStatus(caderno, userJid, dayIso, todayIso));
-    }
-    reports.push({
-      caderno,
-      weekStart: daysList[0],
-      weekEnd: daysList[6],
-      todayIso,
-      days
-    });
-  }
-  return reports;
+  const reports = await loadSemanaContext(userJid, groupJid, anchorIso);
+  return reports.map((r) => ({
+    caderno: r.caderno,
+    weekStart: r.weekStart,
+    weekEnd: r.weekEnd,
+    todayIso: r.todayIso,
+    days: r.days
+  }));
 }
 
 export function formatSemanaReportText(reports: SemanaCadernoReport[]): string {
@@ -3490,23 +3464,12 @@ export async function listCadernoQuestionIdsPublishedFromDay(
   fromDayIso: string,
   timeZone: string
 ): Promise<number[]> {
-  const { data, error } = await supabase
-    .from("caderno_questions")
-    .select("published_question_id, published_at")
-    .eq("caderno_id", cadernoId)
-    .not("published_question_id", "is", null);
-
-  if (error) {
-    throw new Error(`Erro ao listar publicações desde o dia: ${error.message}`);
-  }
-
+  const published = await loadPublishedQuestionsContext([cadernoId]);
   const out: number[] = [];
-  for (const row of data ?? []) {
-    const pubAt = row.published_at ? String(row.published_at) : null;
-    const pubId = row.published_question_id != null ? Number(row.published_question_id) : null;
-    if (!pubAt || !pubId || !Number.isFinite(pubId)) continue;
-    const isoDay = formatDateInTimezone(new Date(pubAt), timeZone);
-    if (isoDay >= fromDayIso) out.push(pubId);
+  for (const row of published.byCaderno.get(cadernoId) || []) {
+    if (publishedDayIso(row.publishedAt, timeZone) >= fromDayIso) {
+      out.push(row.publishedQuestionId);
+    }
   }
   return out;
 }
@@ -3568,53 +3531,24 @@ export type ListOmissasOptions = {
  * Questões em aberto do usuário, separadas em “do dia” vs atrasadas.
  * Streak / bônus de zerar / miss eval usam só `today`.
  * `/omissas` mostra `today`; `/atrasadas` mostra o backlog.
+ *
+ * Usa composição `loadGroupOmissasContext` (loaders genéricos) —
+ * round-trips não crescem com nº de cadernos × dias.
  */
 export async function listUnansweredOmissasForUser(
   userJid: string,
   groupJid: string,
   opts: ListOmissasOptions = {}
 ): Promise<UnansweredOmissasBuckets> {
-  const dayIso = opts.dayIso || dateIsoInTimezone(new Date(), "America/Sao_Paulo");
   const todayLimit = Math.max(1, opts.todayLimit ?? 40);
   const atrasadasLimit = Math.max(0, opts.atrasadasLimit ?? 40);
   const includeAtrasadas = opts.includeAtrasadas !== false;
 
-  const publishedCadernoIds = await fetchPublishedCadernoQuestionIdsForGroup(groupJid);
-  const queuedVisibleIds = await listQueuedPublishedQuestionIdsForGroup(groupJid);
-  const visibleCadernoQuestionIds = new Set<number>([
-    ...publishedCadernoIds,
-    ...queuedVisibleIds
-  ]);
-  const engagedSinceMap = await getEngagedCadernoSinceMapForUser(userJid, groupJid);
-  const engagedCadernoIds = new Set(engagedSinceMap.keys());
-  const passiveCadernoIds = await getPassiveCadernoIdsForUser(userJid, groupJid);
-  const globallyEngaged = await isUserGloballyEngaged(userJid, groupJid);
-
-  const passiveTodayDbIds = new Set<number>();
-  for (const cadernoId of passiveCadernoIds) {
-    if (engagedCadernoIds.has(cadernoId)) continue;
-    const caderno = await getCadernoById(cadernoId);
-    if (!caderno) continue;
-    const tz = caderno.timezone || "America/Sao_Paulo";
-    const pubs = await listCadernoQuestionsPublishedOnDate(cadernoId, dayIso, tz);
-    for (const p of pubs) passiveTodayDbIds.add(p.publishedQuestionId);
-  }
-
-  const engagedSinceAllowedDbIds = new Set<number>();
-  const engagedRestrictedCadernos = new Set<number>();
-  for (const [cadernoId, sinceIso] of engagedSinceMap) {
-    if (!sinceIso) continue;
-    engagedRestrictedCadernos.add(cadernoId);
-    const caderno = await getCadernoById(cadernoId);
-    if (!caderno) continue;
-    const tz = caderno.timezone || "America/Sao_Paulo";
-    const fromDay = formatDateInTimezone(new Date(sinceIso), tz);
-    const ids = await listCadernoQuestionIdsPublishedFromDay(cadernoId, fromDay, tz);
-    for (const id of ids) engagedSinceAllowedDbIds.add(id);
-  }
-
-  const pubDayByQuestionId = await mapPublishedDayByQuestionIdForGroup(groupJid);
-  const unreleasedPlannedDay = await mapUnreleasedQueuePlannedDayByQuestionId(groupJid);
+  const ctx = await loadGroupOmissasContext(userJid, groupJid, opts.dayIso);
+  const dayIso = ctx.dayIso;
+  const engagedCadernoIds = new Set(ctx.cadernos.engagedSinceMap.keys());
+  const pubDayByQuestionId = ctx.pubDayEconomyByQuestionId;
+  const unreleasedPlannedDay = ctx.queue.unreleasedPlannedDayByQuestionId;
 
   const { data: questions, error: qErr } = await supabase
     .from("questions")
@@ -3653,11 +3587,11 @@ export async function listUnansweredOmissasForUser(
         pubDayByQuestionId,
         unreleasedPlannedDay,
         engagedCadernoIds,
-        passiveTodayDbIds,
-        engagedRestrictedCadernos,
-        engagedSinceAllowedDbIds,
-        visibleCadernoQuestionIds,
-        globallyEngaged
+        ctx.passiveTodayDbIds,
+        ctx.engagedRestrictedCadernos,
+        ctx.engagedSinceAllowedDbIds,
+        ctx.visibleCadernoQuestionIds,
+        ctx.cadernos.globallyEngaged
       );
     }
     throw new Error(`Erro ao listar questoes: ${qErr.message}`);
@@ -3681,11 +3615,11 @@ export async function listUnansweredOmissasForUser(
     pubDayByQuestionId,
     unreleasedPlannedDay,
     engagedCadernoIds,
-    passiveTodayDbIds,
-    engagedRestrictedCadernos,
-    engagedSinceAllowedDbIds,
-    visibleCadernoQuestionIds,
-    globallyEngaged
+    ctx.passiveTodayDbIds,
+    ctx.engagedRestrictedCadernos,
+    ctx.engagedSinceAllowedDbIds,
+    ctx.visibleCadernoQuestionIds,
+    ctx.cadernos.globallyEngaged
   );
 }
 
@@ -3767,8 +3701,7 @@ async function listUnansweredOmissasForUserFromRows(
   }
 
   const questionIds = candidates.map((c) => c.qid);
-  const answersByQ = await listAnswersForQuestionIds(questionIds);
-  const userKey = jidComparableKeyShared(userJid);
+  const answersCtx = await loadUserAnswersContext(questionIds, userJid);
 
   const today: string[] = [];
   const atrasadas: string[] = [];
@@ -3776,7 +3709,7 @@ async function listUnansweredOmissasForUserFromRows(
   let openOnDayCount = 0;
 
   for (const c of candidates) {
-    const answered = answersByQ.get(c.qid)?.has(userKey) ?? false;
+    const answered = answersCtx.answeredQuestionIds.has(c.qid);
     if (c.pubDay === dayIso) {
       dueOnDayCount += 1;
       if (!answered) {
@@ -3820,118 +3753,6 @@ export async function listAllUnansweredShortIdsForUser(
     atrasadasLimit: limit - half
   });
   return [...buckets.today, ...buckets.atrasadas].slice(0, limit);
-}
-
-/** published_question_id → dia ISO (America/Sao_Paulo) da publicação do caderno. */
-async function mapPublishedDayByQuestionIdForGroup(
-  groupJid: string
-): Promise<Map<number, string>> {
-  const { data: cadernos, error: cErr } = await supabase
-    .from("cadernos")
-    .select("id, timezone")
-    .eq("target_group_jid", groupJid);
-
-  if (cErr) {
-    throw new Error(`Erro ao listar cadernos do grupo: ${cErr.message}`);
-  }
-
-  const cadernoIds: number[] = [];
-  for (const c of cadernos ?? []) {
-    const id = Number(c.id);
-    if (!Number.isFinite(id)) continue;
-    cadernoIds.push(id);
-  }
-  if (cadernoIds.length === 0) return new Map();
-
-  const { data: rows, error } = await supabase
-    .from("caderno_questions")
-    .select("published_question_id, published_at")
-    .in("caderno_id", cadernoIds)
-    .not("published_question_id", "is", null);
-
-  if (error) {
-    throw new Error(`Erro ao mapear publicações: ${error.message}`);
-  }
-
-  const out = new Map<number, string>();
-  for (const row of rows ?? []) {
-    const qid = row.published_question_id != null ? Number(row.published_question_id) : NaN;
-    const pubAt = row.published_at ? String(row.published_at) : null;
-    if (!Number.isFinite(qid) || !pubAt) continue;
-    // Dia civil unificado na economia (streak/cutoff) — America/Sao_Paulo
-    out.set(qid, formatDateInTimezone(new Date(pubAt), "America/Sao_Paulo"));
-  }
-  return out;
-}
-
-/**
- * IDs de questions já liberadas via fila (released_at preenchido).
- * Itens só adiantados (ainda não liberados) NÃO entram — senão /omissas
- * trata created_at como “hoje” e lista omissas prematuras.
- */
-async function listQueuedPublishedQuestionIdsForGroup(groupJid: string): Promise<Set<number>> {
-  const { data: cadernos, error: cErr } = await supabase
-    .from("cadernos")
-    .select("id")
-    .eq("target_group_jid", groupJid);
-
-  if (cErr) {
-    throw new Error(`Erro ao listar cadernos do grupo: ${cErr.message}`);
-  }
-  const cadernoIds = (cadernos ?? []).map((c) => Number(c.id)).filter((id) => Number.isFinite(id));
-  if (cadernoIds.length === 0) return new Set();
-
-  const { data: rows, error } = await supabase
-    .from("caderno_send_queue")
-    .select("published_question_id, released_at")
-    .in("caderno_id", cadernoIds)
-    .not("published_question_id", "is", null)
-    .not("released_at", "is", null);
-
-  if (error) {
-    const msg = error.message.toLowerCase();
-    if (msg.includes("relation") && msg.includes("does not exist")) return new Set();
-    // Coluna released_at pode faltar em bases antigas — fallback: não usar a fila.
-    if (msg.includes("released_at") && msg.includes("does not exist")) return new Set();
-    throw new Error(`Erro ao listar questoes da fila: ${error.message}`);
-  }
-
-  const out = new Set<number>();
-  for (const row of rows ?? []) {
-    const id = row.published_question_id != null ? Number(row.published_question_id) : NaN;
-    if (Number.isFinite(id)) out.add(id);
-  }
-  return out;
-}
-
-/** planned_day_iso de itens ainda não liberados → evita fallback created_at=hoje. */
-async function mapUnreleasedQueuePlannedDayByQuestionId(
-  groupJid: string
-): Promise<Map<number, string>> {
-  const { data: cadernos, error: cErr } = await supabase
-    .from("cadernos")
-    .select("id")
-    .eq("target_group_jid", groupJid);
-  if (cErr) return new Map();
-  const cadernoIds = (cadernos ?? []).map((c) => Number(c.id)).filter((id) => Number.isFinite(id));
-  if (cadernoIds.length === 0) return new Map();
-
-  const { data: rows, error } = await supabase
-    .from("caderno_send_queue")
-    .select("published_question_id, planned_day_iso, released_at")
-    .in("caderno_id", cadernoIds)
-    .not("published_question_id", "is", null)
-    .is("released_at", null);
-
-  if (error) return new Map();
-
-  const out = new Map<number, string>();
-  for (const row of rows ?? []) {
-    const id = row.published_question_id != null ? Number(row.published_question_id) : NaN;
-    const day = row.planned_day_iso ? String(row.planned_day_iso) : "";
-    if (Number.isFinite(id) && /^\d{4}-\d{2}-\d{2}$/.test(day)) out.set(id, day);
-  }
-  return out;
 }
 
 /* ——— Omissas web sessions + bot pending events ——— */
