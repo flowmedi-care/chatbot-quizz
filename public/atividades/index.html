@@ -49,6 +49,26 @@
       </div>
 
       <div id="atv-main" class="atv-main hidden">
+        <section class="atv-cats-panel" aria-labelledby="atv-cats-title">
+          <div class="atv-cats-head">
+            <div>
+              <h2 id="atv-cats-title">Minhas categorias</h2>
+              <p class="atv-muted">Crie e organize tags pessoais usadas nas respostas (site e WhatsApp).</p>
+            </div>
+            <button type="button" class="atv-btn ghost" id="btn-toggle-cats" aria-expanded="false">
+              Mostrar
+            </button>
+          </div>
+          <div id="atv-cats-body" class="atv-cats-body hidden">
+            <div class="atv-cats-create">
+              <input type="text" id="atv-cat-name" maxlength="80" placeholder="Nome da categoria (ex: difíceis)" />
+              <button type="button" class="atv-btn primary" id="btn-atv-cat-add">Criar</button>
+            </div>
+            <p id="atv-cats-status" class="atv-muted" role="status"></p>
+            <ul id="atv-cats-list" class="atv-cats-list"></ul>
+          </div>
+        </section>
+
         <div class="atv-tabs" role="tablist">
           <button type="button" class="atv-tab active" data-view="day">Diária</button>
           <button type="button" class="atv-tab" data-view="week">Semanal</button>
@@ -147,11 +167,23 @@
             </div>
             <p id="q-progress" class="omissas-progress"></p>
           </div>
+          <div class="atv-q-nav">
+            <button type="button" class="atv-btn ghost" id="q-prev">Anterior</button>
+            <button type="button" class="atv-btn ghost" id="q-next">Próxima</button>
+          </div>
           <div id="q-statement" class="statement-box"></div>
           <label class="omissas-comment-field">
             <span>Comentário (opcional)</span>
             <textarea id="q-comment" rows="3" maxlength="2000" placeholder="Justificativa…"></textarea>
           </label>
+          <div id="q-categories" class="modal-categories">
+            <div class="modal-categories-head">
+              <span>Categorias</span>
+              <button type="button" id="q-new-cat" class="atv-btn ghost btn-sm">Nova</button>
+            </div>
+            <p id="q-categories-hint" class="atv-muted">Marque quantas quiser antes de responder.</p>
+            <div id="q-categories-toggles" class="cat-toggles"></div>
+          </div>
           <div id="q-assist" class="omissas-assist hidden">
             <button type="button" id="btn-assist" class="omissas-assist-btn">
               Verificar alternativa

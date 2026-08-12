@@ -9,7 +9,8 @@
     session: (t) => `/api/omissas-session?t=${encodeURIComponent(t)}`,
     answer: "/api/omissas-answer",
     assist: "/api/omissas-assist",
-    results: (t) => `/api/omissas-results?t=${encodeURIComponent(t)}`
+    results: (t) => `/api/omissas-results?t=${encodeURIComponent(t)}`,
+    userCategories: "/api/user-categories"
   };
 
   const $ = (id) => document.getElementById(id);
@@ -34,6 +35,13 @@
   let quizUserName = "";
   let assistMode = false;
   let assistBusy = false;
+  /** @type {{ id: number, name: string }[]} */
+  let userCategories = [];
+  /** @type {Set<number>} */
+  let selectedCategoryIds = new Set();
+  /** @type {Map<string, number[]>} draft category picks per shortId while navigating */
+  let draftCatsByShortId = new Map();
+  let catsPanelOpen = false;
 
   function esc(s) {
     return String(s ?? "")
@@ -86,6 +94,157 @@
   function setGate(hasUser) {
     $("atv-gate").classList.toggle("hidden", hasUser);
     $("atv-main").classList.toggle("hidden", !hasUser);
+    if (hasUser) void loadUserCategories();
+  }
+
+  async function loadUserCategories() {
+    if (!userJid) {
+      userCategories = [];
+      renderManageCatsList();
+      return;
+    }
+    try {
+      const data = await fetchJson(`${API.userCategories}?userJid=${encodeURIComponent(userJid)}`);
+      userCategories = data.categories || [];
+      renderManageCatsList();
+      renderQuizCategoryToggles();
+    } catch (e) {
+      const st = $("atv-cats-status");
+      if (st) st.textContent = e.message || "Erro ao carregar categorias";
+    }
+  }
+
+  function renderManageCatsList() {
+    const list = $("atv-cats-list");
+    if (!list) return;
+    if (!userCategories.length) {
+      list.innerHTML =
+        '<li class="atv-muted" style="background:transparent;font-weight:500">Nenhuma categoria ainda.</li>';
+      return;
+    }
+    list.innerHTML = userCategories
+      .map(
+        (c) => `<li>
+          <span>${esc(c.name)}</span>
+          <button type="button" class="atv-cat-del" data-id="${esc(String(c.id))}" aria-label="Apagar">×</button>
+        </li>`
+      )
+      .join("");
+    list.querySelectorAll(".atv-cat-del").forEach((btn) => {
+      btn.addEventListener("click", () => deleteUserCategory(Number(btn.dataset.id)));
+    });
+  }
+
+  async function createUserCategoryFromUi(nameInputId, statusId) {
+    const input = $(nameInputId);
+    const status = statusId ? $(statusId) : null;
+    const name = input ? String(input.value || "").trim() : "";
+    if (!userJid) {
+      if (status) status.textContent = "Selecione quem você é.";
+      return null;
+    }
+    if (!name) {
+      if (status) status.textContent = "Informe o nome.";
+      return null;
+    }
+    try {
+      const data = await fetchJson(API.userCategories, {
+        method: "POST",
+        body: JSON.stringify({ userJid, name })
+      });
+      const cat = data.category;
+      if (cat && !userCategories.some((c) => Number(c.id) === Number(cat.id))) {
+        userCategories.push(cat);
+        userCategories.sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
+      }
+      if (input) input.value = "";
+      if (status) {
+        status.textContent = cat?.alreadyExisted
+          ? `“${cat.name}” já existia.`
+          : `Categoria “${cat?.name || name}” criada.`;
+      }
+      renderManageCatsList();
+      renderQuizCategoryToggles();
+      return cat;
+    } catch (e) {
+      if (status) status.textContent = e.message || "Erro ao criar.";
+      return null;
+    }
+  }
+
+  async function deleteUserCategory(categoryId) {
+    if (!userJid || !categoryId) return;
+    const st = $("atv-cats-status");
+    try {
+      const data = await fetchJson(API.userCategories, {
+        method: "POST",
+        body: JSON.stringify({ userJid, action: "delete", categoryId })
+      });
+      userCategories = data.categories || userCategories.filter((c) => Number(c.id) !== categoryId);
+      selectedCategoryIds.delete(categoryId);
+      renderManageCatsList();
+      renderQuizCategoryToggles();
+      if (st) st.textContent = "Categoria removida.";
+    } catch (e) {
+      if (st) st.textContent = e.message || "Erro ao apagar.";
+    }
+  }
+
+  function saveDraftCatsForCurrent() {
+    const q = pending[index];
+    if (!q) return;
+    draftCatsByShortId.set(String(q.shortId).toUpperCase(), Array.from(selectedCategoryIds));
+  }
+
+  function loadDraftCatsForCurrent() {
+    const q = pending[index];
+    selectedCategoryIds = new Set();
+    if (!q) return;
+    const draft = draftCatsByShortId.get(String(q.shortId).toUpperCase());
+    if (draft) selectedCategoryIds = new Set(draft);
+  }
+
+  function renderQuizCategoryToggles() {
+    const wrap = $("q-categories-toggles");
+    if (!wrap) return;
+    if (!userCategories.length) {
+      wrap.innerHTML =
+        '<p class="atv-muted">Nenhuma categoria. Crie em “Minhas categorias” acima ou pelo botão Nova.</p>';
+      return;
+    }
+    wrap.innerHTML = userCategories
+      .map((c) => {
+        const on = selectedCategoryIds.has(Number(c.id));
+        return `<button type="button" class="cat-toggle ${on ? "is-on" : ""}" data-id="${esc(
+          String(c.id)
+        )}">${esc(c.name)}</button>`;
+      })
+      .join("");
+    wrap.querySelectorAll(".cat-toggle").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const id = Number(btn.dataset.id);
+        if (selectedCategoryIds.has(id)) selectedCategoryIds.delete(id);
+        else selectedCategoryIds.add(id);
+        btn.classList.toggle("is-on");
+        saveDraftCatsForCurrent();
+      });
+    });
+  }
+
+  function navigateQuiz(delta) {
+    if (submitting || !pending.length) return;
+    saveDraftCatsForCurrent();
+    const next = index + delta;
+    if (next < 0 || next >= pending.length) return;
+    index = next;
+    renderQuestion();
+  }
+
+  function syncQuizNavButtons() {
+    const prev = $("q-prev");
+    const next = $("q-next");
+    if (prev) prev.disabled = submitting || index <= 0;
+    if (next) next.disabled = submitting || index >= pending.length - 1;
   }
 
   function addDaysIso(iso, n) {
@@ -382,6 +541,8 @@
     assistBusy = false;
     assistQty = 0;
     quizUserName = userName || "";
+    draftCatsByShortId = new Map();
+    selectedCategoryIds = new Set();
     showQuizWrap(true);
     $("omissas-error").classList.add("hidden");
     $("omissas-results").classList.add("hidden");
@@ -390,6 +551,7 @@
     $("omissas-loading").textContent = "Carregando questões…";
 
     try {
+      await loadUserCategories();
       const data = await fetchJson(API.session(token));
       totalInSession = data.total || 0;
       answeredAtStart = data.answeredCount || 0;
@@ -484,6 +646,7 @@
     $("q-status").classList.add("hidden");
     $("q-comment").value = "";
     assistMode = false;
+    loadDraftCatsForCurrent();
 
     const doneSoFar = answeredAtStart + index;
     const hello = firstName(quizUserName || userName);
@@ -492,7 +655,7 @@
     if (hello) metaParts.push(`Olá, ${hello}`);
     if (q.creatorName) metaParts.push(`Por ${q.creatorName}`);
     $("q-meta").textContent = metaParts.join(" · ");
-    $("q-progress").textContent = `${doneSoFar + 1} / ${totalInSession}`;
+    $("q-progress").textContent = `${doneSoFar + 1} / ${totalInSession} · pendente ${index + 1}/${pending.length}`;
 
     let html = "";
     if (q.statementText) html += `<div class="statement-text">${esc(q.statementText)}</div>`;
@@ -504,6 +667,9 @@
       }
     }
     $("q-statement").innerHTML = html || "<p>(Sem enunciado)</p>";
+
+    renderQuizCategoryToggles();
+    syncQuizNavButtons();
 
     const isTf = q.questionType === "true_false";
     const choices = $("q-choices");
@@ -582,15 +748,23 @@
           t: token,
           shortId: q.shortId,
           letter,
-          comment: $("q-comment").value || ""
+          comment: $("q-comment").value || "",
+          categoryIds: Array.from(selectedCategoryIds)
         })
       });
+      draftCatsByShortId.delete(String(q.shortId).toUpperCase());
       if (data.sessionComplete) {
         await showResults();
         return;
       }
-      index += 1;
+      pending.splice(index, 1);
+      if (index >= pending.length) index = Math.max(0, pending.length - 1);
+      selectedCategoryIds = new Set();
       submitting = false;
+      if (!pending.length) {
+        await showResults();
+        return;
+      }
       renderQuestion();
     } catch (e) {
       submitting = false;
@@ -673,6 +847,47 @@
     $("btn-atrasadas").addEventListener("click", () => startSession("atrasadas"));
     $("btn-adiantar-week").addEventListener("click", () => adiantarSelected());
     $("btn-adiantar-month").addEventListener("click", () => adiantarSelected());
+
+    const btnToggleCats = $("btn-toggle-cats");
+    if (btnToggleCats) {
+      btnToggleCats.addEventListener("click", () => {
+        catsPanelOpen = !catsPanelOpen;
+        const body = $("atv-cats-body");
+        if (body) body.classList.toggle("hidden", !catsPanelOpen);
+        btnToggleCats.textContent = catsPanelOpen ? "Ocultar" : "Mostrar";
+        btnToggleCats.setAttribute("aria-expanded", catsPanelOpen ? "true" : "false");
+        if (catsPanelOpen) void loadUserCategories();
+      });
+    }
+    const btnCatAdd = $("btn-atv-cat-add");
+    if (btnCatAdd) {
+      btnCatAdd.addEventListener("click", () => createUserCategoryFromUi("atv-cat-name", "atv-cats-status"));
+    }
+    const catNameInput = $("atv-cat-name");
+    if (catNameInput) {
+      catNameInput.addEventListener("keydown", (ev) => {
+        if (ev.key === "Enter") {
+          ev.preventDefault();
+          void createUserCategoryFromUi("atv-cat-name", "atv-cats-status");
+        }
+      });
+    }
+    if ($("q-prev")) $("q-prev").addEventListener("click", () => navigateQuiz(-1));
+    if ($("q-next")) $("q-next").addEventListener("click", () => navigateQuiz(1));
+    if ($("q-new-cat")) {
+      $("q-new-cat").addEventListener("click", async () => {
+        const name = window.prompt("Nome da nova categoria:");
+        if (!name) return;
+        const input = $("atv-cat-name");
+        if (input) input.value = name;
+        const cat = await createUserCategoryFromUi("atv-cat-name", "q-categories-hint");
+        if (cat) {
+          selectedCategoryIds.add(Number(cat.id));
+          saveDraftCatsForCurrent();
+          renderQuizCategoryToggles();
+        }
+      });
+    }
 
     const btnAssist = $("btn-assist");
     if (btnAssist) {

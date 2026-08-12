@@ -311,8 +311,34 @@ async function handleCategories(req, res) {
       return res.status(400).json({ error: "JSON invalido" });
     }
     const userJid = String(body.userJid || "").trim();
-    const name = body.name != null ? String(body.name) : "";
     if (!userJid) return res.status(400).json({ error: "Informe userJid" });
+
+    const action = String(body.action || "create").trim().toLowerCase();
+    if (action === "delete") {
+      const categoryId = Number(body.categoryId);
+      if (!Number.isFinite(categoryId) || categoryId < 1) {
+        return res.status(400).json({ error: "Informe categoryId" });
+      }
+      try {
+        const { data: owned, error: findErr } = await supabase
+          .from("user_categories")
+          .select("id")
+          .eq("id", categoryId)
+          .eq("user_jid", userJid)
+          .maybeSingle();
+        if (findErr) throw findErr;
+        if (!owned) return res.status(404).json({ error: "Categoria nao encontrada" });
+        const { error: delErr } = await supabase.from("user_categories").delete().eq("id", categoryId);
+        if (delErr) throw delErr;
+        const categories = await listUserCategories(supabase, userJid);
+        return res.status(200).json({ ok: true, categories });
+      } catch (e) {
+        console.error(e);
+        return res.status(500).json({ error: e.message || "Erro ao apagar categoria" });
+      }
+    }
+
+    const name = body.name != null ? String(body.name) : "";
     try {
       const category = await createUserCategory(supabase, userJid, name);
       return res.status(200).json({ category });

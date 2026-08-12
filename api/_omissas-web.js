@@ -185,25 +185,36 @@ async function upsertAnswer(supabase, input) {
     const { error } = await supabase.from("answers").update(row).eq("id", existing.id);
     if (error) throw error;
     return {
+      answerId: Number(existing.id),
       wasUpdate: true,
       previousLetter: String(existing.answer_letter || "").toLowerCase()
     };
   }
 
-  const { error } = await supabase.from("answers").insert(row);
+  const { data: inserted, error } = await supabase.from("answers").insert(row).select("id").maybeSingle();
   if (error) {
     if (error.code === "23505") {
-      const { error: upErr } = await supabase
+      const { data: upd, error: upErr } = await supabase
         .from("answers")
         .update(row)
         .eq("question_id", questionId)
-        .eq("user_jid", userJid);
+        .eq("user_jid", userJid)
+        .select("id")
+        .maybeSingle();
       if (upErr) throw upErr;
-      return { wasUpdate: true, previousLetter: null };
+      return {
+        answerId: Number(upd?.id),
+        wasUpdate: true,
+        previousLetter: null
+      };
     }
     throw error;
   }
-  return { wasUpdate: false, previousLetter: null };
+  return {
+    answerId: Number(inserted?.id),
+    wasUpdate: false,
+    previousLetter: null
+  };
 }
 
 async function resolveSessionUserName(supabase, session) {
@@ -372,6 +383,7 @@ async function handleOmissasAnswer(req, res) {
     .trim()
     .toUpperCase();
   const comment = body.comment != null ? String(body.comment) : "";
+  const categoryIds = Array.isArray(body.categoryIds) ? body.categoryIds : null;
 
   try {
     const supabase = getClient();
@@ -415,6 +427,16 @@ async function handleOmissasAnswer(req, res) {
       throw e;
     }
 
+    let categories = [];
+    if (categoryIds && saveResult.answerId) {
+      try {
+        const { setAnswerCategories } = require("./_categories.js");
+        categories = await setAnswerCategories(supabase, saveResult.answerId, categoryIds);
+      } catch (catErr) {
+        console.warn("[omissas-answer] categories:", catErr.message || catErr);
+      }
+    }
+
     await enqueueBotEvent(supabase, "web_answer", {
       userJid: session.userJid,
       userName: session.userName,
@@ -440,7 +462,9 @@ async function handleOmissasAnswer(req, res) {
       shortId,
       answeredCount: session.shortIds.length - pendingIds.length,
       pendingCount: pendingIds.length,
-      sessionComplete: allDone
+      sessionComplete: allDone,
+      categories,
+      answerId: saveResult.answerId || null
     });
   } catch (e) {
     console.error(e);
