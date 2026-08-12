@@ -159,38 +159,42 @@
         <button type="button" class="atv-btn ghost" id="btn-close-quiz">← Voltar ao calendário</button>
         <div id="omissas-error" class="error-banner hidden" role="alert"></div>
         <div id="omissas-loading" class="omissas-loading hidden">Carregando…</div>
-        <section id="omissas-quiz" class="omissas-card hidden" aria-live="polite">
-          <div class="omissas-card-head">
+        <section id="omissas-quiz" class="omissas-card atv-quiz-card hidden" aria-live="polite">
+          <div class="omissas-card-head atv-quiz-meta">
             <div>
               <h1 id="q-title" class="omissas-q-title">Questão</h1>
               <p id="q-meta" class="omissas-q-meta"></p>
             </div>
             <p id="q-progress" class="omissas-progress"></p>
           </div>
-          <div class="atv-q-nav">
-            <button type="button" class="atv-btn ghost" id="q-prev">Anterior</button>
-            <button type="button" class="atv-btn ghost" id="q-next">Próxima</button>
-          </div>
-          <div id="q-statement" class="statement-box"></div>
-          <label class="omissas-comment-field">
-            <span>Comentário (opcional)</span>
-            <textarea id="q-comment" rows="3" maxlength="2000" placeholder="Justificativa…"></textarea>
-          </label>
-          <div id="q-categories" class="modal-categories">
-            <div class="modal-categories-head">
-              <span>Categorias</span>
-              <button type="button" id="q-new-cat" class="atv-btn ghost btn-sm">Nova</button>
+
+          <div class="atv-quiz-toolbar" role="toolbar" aria-label="Navegação e ferramentas">
+            <button type="button" class="atv-btn ghost atv-toolbar-nav" id="q-prev" title="Anterior">‹ Ant.</button>
+            <div id="q-assist" class="atv-toolbar-shop">
+              <button type="button" id="btn-assist" class="omissas-assist-btn">
+                Verificar alternativa
+              </button>
+              <p id="assist-hint" class="omissas-assist-hint"></p>
             </div>
-            <p id="q-categories-hint" class="atv-muted">Marque quantas quiser antes de responder.</p>
-            <div id="q-categories-toggles" class="cat-toggles"></div>
+            <div id="q-categories" class="atv-toolbar-cats">
+              <div id="q-categories-toggles" class="atv-cat-checks"></div>
+              <button type="button" id="q-new-cat" class="atv-btn ghost btn-sm" title="Nova categoria">+</button>
+            </div>
+            <button type="button" class="atv-btn ghost atv-toolbar-nav" id="q-next" title="Próxima">Próx. ›</button>
           </div>
-          <div id="q-assist" class="omissas-assist hidden">
-            <button type="button" id="btn-assist" class="omissas-assist-btn">
-              Verificar alternativa
-            </button>
-            <p id="assist-hint" class="omissas-assist-hint"></p>
+
+          <div id="q-statement" class="statement-box atv-quiz-statement"></div>
+
+          <label class="omissas-comment-field atv-quiz-justif">
+            <span>Justificativa (opcional)</span>
+            <textarea id="q-comment" rows="2" maxlength="2000" placeholder="Justificativa…"></textarea>
+          </label>
+
+          <div id="q-choices" class="choice-grid atv-quiz-choices"></div>
+
+          <div id="q-details" class="atv-quiz-details" aria-live="polite">
+            <p id="q-details-text" class="atv-quiz-details-text">Questão sem categoria</p>
           </div>
-          <div id="q-choices" class="choice-grid"></div>
           <p id="q-status" class="omissas-status hidden"></p>
         </section>
         <section id="omissas-results" class="omissas-card hidden">

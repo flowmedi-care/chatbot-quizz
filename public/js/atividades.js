@@ -208,27 +208,65 @@
     const wrap = $("q-categories-toggles");
     if (!wrap) return;
     if (!userCategories.length) {
-      wrap.innerHTML =
-        '<p class="atv-muted">Nenhuma categoria. Crie em “Minhas categorias” acima ou pelo botão Nova.</p>';
+      wrap.innerHTML = '<span class="atv-muted" style="font-size:0.75rem">Sem tags · use +</span>';
+      updateQuestionDetails();
       return;
     }
     wrap.innerHTML = userCategories
       .map((c) => {
-        const on = selectedCategoryIds.has(Number(c.id));
-        return `<button type="button" class="cat-toggle ${on ? "is-on" : ""}" data-id="${esc(
-          String(c.id)
-        )}">${esc(c.name)}</button>`;
+        const id = Number(c.id);
+        const on = selectedCategoryIds.has(id);
+        return `<label class="atv-cat-check">
+          <input type="checkbox" data-id="${esc(String(id))}" ${on ? "checked" : ""} />
+          <span>${esc(c.name)}</span>
+        </label>`;
       })
       .join("");
-    wrap.querySelectorAll(".cat-toggle").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const id = Number(btn.dataset.id);
-        if (selectedCategoryIds.has(id)) selectedCategoryIds.delete(id);
-        else selectedCategoryIds.add(id);
-        btn.classList.toggle("is-on");
+    wrap.querySelectorAll('input[type="checkbox"]').forEach((input) => {
+      input.addEventListener("change", () => {
+        const id = Number(input.dataset.id);
+        if (input.checked) selectedCategoryIds.add(id);
+        else selectedCategoryIds.delete(id);
         saveDraftCatsForCurrent();
+        updateQuestionDetails();
       });
     });
+    updateQuestionDetails();
+  }
+
+  function formatAssistDetail(q) {
+    if (!q || !q.assistUsed || !q.assistReveal) return null;
+    const r = q.assistReveal;
+    const L = (r.letter || r.removed || "?").toString().toUpperCase();
+    if (r.isCorrect === true) return `Utilizado item Verificar alternativa · ${L} é verdadeira`;
+    return `Utilizado item Verificar alternativa · ${L} é falsa`;
+  }
+
+  function updateQuestionDetails(extra) {
+    const el = $("q-details-text");
+    if (!el) return;
+    const parts = [];
+    const selected = userCategories.filter((c) => selectedCategoryIds.has(Number(c.id)));
+    if (selected.length) {
+      parts.push(`Categorias: <strong>${esc(selected.map((c) => c.name).join(", "))}</strong>`);
+    } else {
+      parts.push("Questão sem categoria");
+    }
+    const q = pending[index];
+    const assistLine = formatAssistDetail(q);
+    if (assistLine) parts.push(esc(assistLine));
+    if (extra && extra.correct != null && extra.answerKey) {
+      const key = String(extra.answerKey).toUpperCase();
+      const yours = String(extra.yourAnswer || "").toUpperCase();
+      if (extra.correct) {
+        parts.push(`<span class="ok">A letra ${esc(key)} está correta</span>`);
+      } else {
+        parts.push(
+          `<span class="bad">Você marcou ${esc(yours || "—")}</span> · <span class="ok">a letra ${esc(key)} está correta</span>`
+        );
+      }
+    }
+    el.innerHTML = parts.join(" · ");
   }
 
   function navigateQuiz(delta) {
@@ -611,27 +649,25 @@
     if (!q || q.assistUsed) {
       btn.disabled = true;
       btn.classList.remove("active");
-      btn.textContent = "Assistência usada nesta questão";
+      btn.textContent = "Item usado";
       const r = q && q.assistReveal;
       if (r && hint) {
         const L = (r.letter || r.removed || "?").toString().toUpperCase();
         hint.textContent =
-          r.isCorrect === true ? `${L} é verdadeira (gabarito).` : `${L} é falsa — descartada.`;
+          r.isCorrect === true ? `${L} verdadeira` : `${L} falsa`;
       } else if (hint) hint.textContent = "";
+      updateQuestionDetails();
       return;
     }
     btn.disabled = assistQty < 1 || submitting;
     btn.classList.remove("active");
     btn.textContent =
-      assistQty > 0
-        ? `Verificar alternativa (${assistQty} no inventário)`
-        : "Sem assistência no inventário";
+      assistQty > 0 ? `Verificar alt. (${assistQty})` : "Sem item loja";
     if (hint) {
       hint.textContent =
-        assistQty > 0
-          ? "Gasta 1 consumível · escolha uma letra · máx. 1 por questão"
-          : "Compre no Hub /loja (50 Créditos)";
+        assistQty > 0 ? "1 consumível · máx. 1/questão" : "Hub /loja · 50 créditos";
     }
+    updateQuestionDetails();
   }
 
   function renderQuestion() {
@@ -692,6 +728,7 @@
     });
     if (q.assistReveal) applyAssistReveal(q, q.assistReveal);
     syncAssistUi(q);
+    updateQuestionDetails();
   }
 
   async function onChoiceClick(letter) {
@@ -716,9 +753,11 @@
       });
       assistQty = data.assistEliminateQty != null ? data.assistEliminateQty : Math.max(0, assistQty - 1);
       applyAssistReveal(q, data.assistReveal || { letter: letter.toUpperCase(), isCorrect: data.isCorrect });
-      $("q-status").textContent = data.message || "Assistência usada.";
+      $("q-status").classList.add("hidden");
       syncAssistUi(q);
+      updateQuestionDetails();
     } catch (e) {
+      $("q-status").classList.remove("hidden");
       $("q-status").textContent = e.message || "Erro ao usar assistência.";
       assistMode = false;
       syncAssistUi(q);
@@ -733,6 +772,7 @@
     if (!q || !letter) return;
     submitting = true;
     assistMode = false;
+    syncQuizNavButtons();
     $("q-choices").querySelectorAll(".btn-choice").forEach((b) => {
       b.disabled = true;
       if (b.dataset.letter === letter) b.classList.add("selected");
@@ -753,6 +793,15 @@
         })
       });
       draftCatsByShortId.delete(String(q.shortId).toUpperCase());
+      $("q-status").classList.add("hidden");
+      updateQuestionDetails({
+        correct: data.correct,
+        answerKey: data.answerKey,
+        yourAnswer: data.yourAnswer || letter
+      });
+
+      await new Promise((r) => setTimeout(r, 1100));
+
       if (data.sessionComplete) {
         await showResults();
         return;
@@ -768,6 +817,8 @@
       renderQuestion();
     } catch (e) {
       submitting = false;
+      syncQuizNavButtons();
+      $("q-status").classList.remove("hidden");
       $("q-status").textContent = e.message || "Erro ao salvar.";
       $("q-choices").querySelectorAll(".btn-choice").forEach((b) => {
         if (!b.classList.contains("assist-false")) b.disabled = false;
@@ -880,7 +931,7 @@
         if (!name) return;
         const input = $("atv-cat-name");
         if (input) input.value = name;
-        const cat = await createUserCategoryFromUi("atv-cat-name", "q-categories-hint");
+        const cat = await createUserCategoryFromUi("atv-cat-name", "atv-cats-status");
         if (cat) {
           selectedCategoryIds.add(Number(cat.id));
           saveDraftCatsForCurrent();

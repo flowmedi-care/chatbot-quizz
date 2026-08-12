@@ -464,7 +464,14 @@ async function handleOmissasAnswer(req, res) {
       pendingCount: pendingIds.length,
       sessionComplete: allDone,
       categories,
-      answerId: saveResult.answerId || null
+      answerId: saveResult.answerId || null,
+      yourAnswer: letter.toUpperCase(),
+      answerKey: String(q.answer_key || "").toUpperCase().slice(0, 1),
+      correct:
+        String(letter || "").toUpperCase().slice(0, 1) ===
+        String(q.answer_key || "")
+          .toUpperCase()
+          .slice(0, 1)
     });
   } catch (e) {
     console.error(e);
