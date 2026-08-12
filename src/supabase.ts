@@ -352,7 +352,7 @@ export async function persistEngagementQuizDisplayName(
   }
 }
 
-export async function insertAnswer(input: AnswerInput): Promise<void> {
+export async function insertAnswer(input: AnswerInput): Promise<{ answerId: number }> {
   const { data: question, error: findError } = await supabase
     .from("questions")
     .select("id, question_type, creator_jid, target_group_jid, group_jid")
@@ -372,21 +372,24 @@ export async function insertAnswer(input: AnswerInput): Promise<void> {
     input.userJid
   );
 
-  const { error } = await supabase.from("answers").insert({
-    question_id: question.id,
-    question_short_id: input.questionShortId.toUpperCase(),
-    user_jid: input.userJid,
-    user_name: input.userName,
-    answer_letter: input.answerLetter.toLowerCase(),
-    answer_comment: input.answerComment?.trim() || null,
-    source_message_id: input.sourceMessageId,
-    sent_at: input.sentAt
-  });
+  const { data: inserted, error } = await supabase
+    .from("answers")
+    .insert({
+      question_id: question.id,
+      question_short_id: input.questionShortId.toUpperCase(),
+      user_jid: input.userJid,
+      user_name: input.userName,
+      answer_letter: input.answerLetter.toLowerCase(),
+      answer_comment: input.answerComment?.trim() || null,
+      source_message_id: input.sourceMessageId,
+      sent_at: input.sentAt
+    })
+    .select("id")
+    .maybeSingle();
 
   if (error) {
     if (error.code === "23505") {
-      await updateUserAnswer(input);
-      return;
+      return updateUserAnswer(input);
     }
     throw new Error(`Erro ao salvar resposta: ${error.message}`);
   }
@@ -399,15 +402,17 @@ export async function insertAnswer(input: AnswerInput): Promise<void> {
       console.warn("[engagement] quiz_display_name:", (e as Error).message);
     }
   }
+
+  return { answerId: Number(inserted?.id) };
 }
 
 export async function getUserAnswer(
   questionShortId: string,
   userJid: string
-): Promise<{ answerLetter: string } | null> {
+): Promise<{ answerId: number; answerLetter: string; answerComment: string | null } | null> {
   const { data, error } = await supabase
     .from("answers")
-    .select("answer_letter")
+    .select("id, answer_letter, answer_comment")
     .eq("question_short_id", questionShortId.toUpperCase())
     .eq("user_jid", userJid)
     .maybeSingle();
@@ -417,10 +422,15 @@ export async function getUserAnswer(
   }
 
   if (!data) return null;
-  return { answerLetter: String(data.answer_letter) };
+  const commentRaw = data.answer_comment != null ? String(data.answer_comment).trim() : "";
+  return {
+    answerId: Number(data.id),
+    answerLetter: String(data.answer_letter),
+    answerComment: commentRaw.length > 0 ? commentRaw : null
+  };
 }
 
-export async function updateUserAnswer(input: AnswerInput): Promise<void> {
+export async function updateUserAnswer(input: AnswerInput): Promise<{ answerId: number }> {
   const { data: question, error: findError } = await supabase
     .from("questions")
     .select("id, creator_jid, target_group_jid, group_jid")
@@ -459,19 +469,33 @@ export async function updateUserAnswer(input: AnswerInput): Promise<void> {
   }
 
   if (!updatedRows?.length) {
-    const { error: insErr } = await supabase.from("answers").insert({
-      question_id: question.id,
-      question_short_id: input.questionShortId.toUpperCase(),
-      user_jid: input.userJid,
-      user_name: input.userName,
-      answer_letter: input.answerLetter.toLowerCase(),
-      answer_comment: input.answerComment?.trim() || null,
-      source_message_id: input.sourceMessageId,
-      sent_at: input.sentAt
-    });
+    const { data: inserted, error: insErr } = await supabase
+      .from("answers")
+      .insert({
+        question_id: question.id,
+        question_short_id: input.questionShortId.toUpperCase(),
+        user_jid: input.userJid,
+        user_name: input.userName,
+        answer_letter: input.answerLetter.toLowerCase(),
+        answer_comment: input.answerComment?.trim() || null,
+        source_message_id: input.sourceMessageId,
+        sent_at: input.sentAt
+      })
+      .select("id")
+      .maybeSingle();
     if (insErr) {
       throw new Error(`Erro ao gravar resposta (fallback): ${insErr.message}`);
     }
+
+    const gjIns = question.target_group_jid || question.group_jid;
+    if (gjIns) {
+      try {
+        await persistEngagementQuizDisplayName(String(gjIns), input.userJid, input.userName);
+      } catch (e) {
+        console.warn("[engagement] quiz_display_name:", (e as Error).message);
+      }
+    }
+    return { answerId: Number(inserted?.id) };
   }
 
   const gj = question.target_group_jid || question.group_jid;
@@ -482,6 +506,8 @@ export async function updateUserAnswer(input: AnswerInput): Promise<void> {
       console.warn("[engagement] quiz_display_name:", (e as Error).message);
     }
   }
+
+  return { answerId: Number(updatedRows[0]!.id) };
 }
 
 export type QuestionRespondent = {
@@ -3919,4 +3945,175 @@ export async function markBotPendingEventProcessed(id: number): Promise<void> {
   if (error) {
     console.warn("[bot-pending] mark processed:", error.message);
   }
+}
+
+/* ——— Categorias pessoais (por user_jid, ligadas à resposta) ——— */
+
+export type UserCategory = {
+  id: number;
+  name: string;
+  nameNormalized: string;
+  createdAt: string;
+};
+
+function normalizeCategoryName(text: string): string {
+  return String(text || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase();
+}
+
+function displayCategoryName(raw: string): string {
+  return String(raw || "")
+    .trim()
+    .replace(/;+\s*$/g, "")
+    .trim();
+}
+
+export async function listUserCategories(userJid: string): Promise<UserCategory[]> {
+  const { data, error } = await supabase
+    .from("user_categories")
+    .select("id, name, name_normalized, created_at")
+    .eq("user_jid", userJid)
+    .order("name", { ascending: true });
+  if (error) {
+    throw new Error(`Erro ao listar categorias: ${error.message}`);
+  }
+  return (data || []).map((row) => ({
+    id: Number(row.id),
+    name: String(row.name),
+    nameNormalized: String(row.name_normalized),
+    createdAt: String(row.created_at)
+  }));
+}
+
+export async function createUserCategory(
+  userJid: string,
+  rawName: string
+): Promise<UserCategory & { alreadyExisted: boolean }> {
+  const name = displayCategoryName(rawName);
+  if (!name) throw new Error("Informe o nome da categoria");
+  const nameNormalized = normalizeCategoryName(name);
+  if (!nameNormalized) throw new Error("Nome de categoria invalido");
+
+  const { data, error } = await supabase
+    .from("user_categories")
+    .insert({
+      user_jid: userJid,
+      name,
+      name_normalized: nameNormalized
+    })
+    .select("id, name, name_normalized, created_at")
+    .maybeSingle();
+
+  if (error) {
+    if (error.code === "23505") {
+      const { data: existing, error: findErr } = await supabase
+        .from("user_categories")
+        .select("id, name, name_normalized, created_at")
+        .eq("user_jid", userJid)
+        .eq("name_normalized", nameNormalized)
+        .maybeSingle();
+      if (findErr) throw new Error(`Erro ao buscar categoria: ${findErr.message}`);
+      if (existing) {
+        return {
+          id: Number(existing.id),
+          name: String(existing.name),
+          nameNormalized: String(existing.name_normalized),
+          createdAt: String(existing.created_at),
+          alreadyExisted: true
+        };
+      }
+    }
+    throw new Error(`Erro ao criar categoria: ${error.message}`);
+  }
+
+  return {
+    id: Number(data!.id),
+    name: String(data!.name),
+    nameNormalized: String(data!.name_normalized),
+    createdAt: String(data!.created_at),
+    alreadyExisted: false
+  };
+}
+
+export async function resolveCategoryNames(
+  userJid: string,
+  names: string[]
+): Promise<{
+  known: { id: number; name: string }[];
+  unknown: string[];
+  catalog: UserCategory[];
+}> {
+  const catalog = await listUserCategories(userJid);
+  const byNorm = new Map(catalog.map((c) => [c.nameNormalized, c]));
+  const known: { id: number; name: string }[] = [];
+  const knownIds = new Set<number>();
+  const unknown: string[] = [];
+  const seenUnknown = new Set<string>();
+
+  for (const raw of names) {
+    const display = displayCategoryName(raw);
+    if (!display) continue;
+    const norm = normalizeCategoryName(display);
+    if (!norm) continue;
+    const hit = byNorm.get(norm);
+    if (hit) {
+      if (!knownIds.has(hit.id)) {
+        knownIds.add(hit.id);
+        known.push({ id: hit.id, name: hit.name });
+      }
+    } else if (!seenUnknown.has(norm)) {
+      seenUnknown.add(norm);
+      unknown.push(display);
+    }
+  }
+
+  return { known, unknown, catalog };
+}
+
+export async function listCategoriesForAnswer(
+  answerId: number
+): Promise<{ id: number; name: string }[]> {
+  const { data, error } = await supabase
+    .from("answer_categories")
+    .select("category_id, user_categories(id, name)")
+    .eq("answer_id", answerId);
+  if (error) throw new Error(`Erro ao listar categorias da resposta: ${error.message}`);
+  const out: { id: number; name: string }[] = [];
+  for (const row of data || []) {
+    const raw = (row as { user_categories?: unknown }).user_categories;
+    const cat = Array.isArray(raw) ? raw[0] : raw;
+    if (!cat || typeof cat !== "object") continue;
+    const c = cat as { id?: number; name?: string };
+    if (c.id == null || c.name == null) continue;
+    out.push({ id: Number(c.id), name: String(c.name) });
+  }
+  out.sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
+  return out;
+}
+
+export async function setAnswerCategories(
+  answerId: number,
+  categoryIds: number[]
+): Promise<{ id: number; name: string }[]> {
+  const ids = [
+    ...new Set(categoryIds.map((x) => Number(x)).filter((n) => Number.isFinite(n) && n > 0))
+  ];
+
+  const { error: delErr } = await supabase.from("answer_categories").delete().eq("answer_id", answerId);
+  if (delErr) throw new Error(`Erro ao limpar categorias: ${delErr.message}`);
+
+  if (!ids.length) return [];
+
+  const rows = ids.map((category_id) => ({ answer_id: answerId, category_id }));
+  const { error: insErr } = await supabase.from("answer_categories").insert(rows);
+  if (insErr) throw new Error(`Erro ao associar categorias: ${insErr.message}`);
+
+  return listCategoriesForAnswer(answerId);
+}
+
+export async function clearAnswerCategories(answerId: number): Promise<void> {
+  await setAnswerCategories(answerId, []);
 }

@@ -117,11 +117,16 @@
             <li>Múltipla escolha: <code>a 182</code>, <code>b 182</code>, … <code>e 182</code> (exemplo com questão
               182).</li>
             <li>Certo/errado: <code>c 182</code> (certo) ou <code>e 182</code> (errado).</li>
+            <li>Comentário: <code>b 182, prazo decadencial</code>.</li>
+            <li>Categorias pessoais: <code>b 182, comentario //dificeis, lei seca</code>.</li>
+            <li>Só categorias (já respondeu): <code>182 //dificeis</code> · limpar: <code>182 //</code>.</li>
+            <li>Criar categoria: <code>/newcat dificeis</code>.</li>
           </ul>
           <p>
             Cada pessoa tem <strong>uma resposta por questão</strong>. Se tentar de novo, o bot pergunta se você quer
             <strong>alterar</strong> a última resposta: responda <code>sim</code> para trocar ou <code>nao</code> para
-            manter.
+            manter. Categorias digitadas que não existirem entram num fluxo <code>sim/nao</code> para criar ou escolher
+            da lista.
           </p>
         </article>
 
@@ -129,25 +134,26 @@
           <h3>4. Usar a página do quiz no navegador</h3>
           <ol class="tutorial-steps">
             <li>
-              <strong>Ranking:</strong> na página inicial, na primeira seção, você vê o pódio e a tabela com posição,
-              nome e quantidade de acertos (dados do mesmo sistema do bot).
+              <strong>Quem sou eu:</strong> na seção Prática, selecione seu nome (mesmo seletor do Hub) para salvar
+              resposta e categorias no relatório.
             </li>
             <li>
               <strong>Questões:</strong> na grade, cada cartão é uma questão publicada. Use os filtros por pessoa e por
               acerto/erro para encontrar o que precisa. <strong>Clique no cartão</strong> para abrir o enunciado.
+              Use Anterior/Próxima; ao responder, o modal avança automaticamente.
             </li>
             <li>
-              O botão <strong>Relatório</strong> gera um ZIP com Markdown e mídias das questões e das respostas do
-              WhatsApp — útil para mandar a uma IA e montar revisões (por exemplo, só as questões erradas).
+              O botão <strong>Relatório</strong> gera um ZIP com Markdown e mídias. Dá para filtrar por resultado e
+              adicionar regras de categoria em modo <strong>filtro (AND)</strong> ou <strong>incremental (OR)</strong>.
             </li>
             <li>
-              Dentro da janela da questão, escolha a alternativa (A–E ou certo/errado). O site diz se você acertou e
-              permite abrir o <strong>gabarito oficial</strong> e o <strong>comentário do autor</strong> quando existir.
+              Dentro da janela da questão, escolha a alternativa (A–E ou certo/errado), marque categorias e, se quiser,
+              abra o <strong>gabarito oficial</strong> e o <strong>comentário do autor</strong>.
             </li>
           </ol>
           <aside class="tutorial-tip">
-            Respostas pelo site são só para estudo na hora; o ranking e o relatório usam as respostas registradas pelo
-            bot no WhatsApp.
+            Com “Quem sou eu” selecionado, a resposta do site também entra no relatório (como no WhatsApp). Sem seletor,
+            a prática continua só local.
           </aside>
         </article>
 

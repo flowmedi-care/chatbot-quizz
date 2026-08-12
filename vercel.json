@@ -13,6 +13,8 @@
     { "source": "/api/diario", "destination": "/api/economy?view=diario" },
     { "source": "/api/rankings", "destination": "/api/economy?view=rankings" },
     { "source": "/api/question-detail", "destination": "/api/question-submit?qz=detail" },
+    { "source": "/api/user-categories", "destination": "/api/question-submit?qz=categories" },
+    { "source": "/api/answer-categories", "destination": "/api/question-submit?qz=set-categories" },
     { "source": "/api/omissas-session", "destination": "/api/omissas-web?om=session" },
     { "source": "/api/omissas-answer", "destination": "/api/omissas-web?om=answer" },
     { "source": "/api/omissas-results", "destination": "/api/omissas-web?om=results" },

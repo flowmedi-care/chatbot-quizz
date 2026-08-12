@@ -5,8 +5,14 @@
     questions: "/api/questions",
     qaStats: "/api/qa-stats",
     reportData: "/api/report-data",
-    detail: (id) => `/api/question-detail?shortId=${encodeURIComponent(id)}`,
+    detail: (id, userJid) => {
+      let u = `/api/question-detail?shortId=${encodeURIComponent(id)}`;
+      if (userJid) u += `&userJid=${encodeURIComponent(userJid)}`;
+      return u;
+    },
     submit: "/api/question-submit",
+    userCategories: "/api/user-categories",
+    answerCategories: "/api/answer-categories",
     engagement: "/api/engagement",
     cadernoEngagement: (cadernoId) =>
       `/api/engagement?cadernoId=${encodeURIComponent(cadernoId)}`,
@@ -19,6 +25,8 @@
     diario: "/api/economy",
     rankings: "/api/economy"
   };
+
+  const STORAGE_USER = "papaVagasHubUser";
 
   const els = {
     qaStatsTotals: document.getElementById("qa-stats-totals"),
@@ -56,6 +64,21 @@
     reportQidTo: document.getElementById("report-qid-to"),
     reportOutcome: document.getElementById("report-outcome"),
     reportGenerate: document.getElementById("report-generate"),
+    reportCatAdd: document.getElementById("report-cat-add"),
+    reportCatRulesList: document.getElementById("report-cat-rules-list"),
+    practiceUserSelect: document.getElementById("practice-user-select"),
+    modalPrev: document.getElementById("modal-prev"),
+    modalNext: document.getElementById("modal-next"),
+    modalCategories: document.getElementById("modal-categories"),
+    modalCategoriesHint: document.getElementById("modal-categories-hint"),
+    modalCategoriesToggles: document.getElementById("modal-categories-toggles"),
+    modalNewCat: document.getElementById("modal-new-cat"),
+    modalSaveCats: document.getElementById("modal-save-cats"),
+    newcatOverlay: document.getElementById("newcat-overlay"),
+    newcatClose: document.getElementById("newcat-close"),
+    newcatName: document.getElementById("newcat-name"),
+    newcatStatus: document.getElementById("newcat-status"),
+    newcatSave: document.getElementById("newcat-save"),
     btnReportOpen: document.getElementById("btn-report-open"),
     btnCadernosOpen: document.getElementById("btn-cadernos-open"),
     cadernosOverlay: document.getElementById("cadernos-overlay"),
@@ -137,6 +160,15 @@
 
   let currentShortId = null;
   let submitPayload = null;
+  /** @type {{ id: number, name: string }[]} */
+  let modalUserCategories = [];
+  /** @type {Set<number>} */
+  let modalSelectedCategoryIds = new Set();
+  let modalHasAnswer = false;
+  /** @type {{ userJid: string, userName: string }[]} */
+  let practiceMembersCache = [];
+  /** @type {{ key: string, mode: "filter" | "incremental" }[]} */
+  let reportCategoryRules = [];
   /** @type {{ userJid: string, userLabel: string | null, displayLabel?: string | null, engaged: boolean, passive?: boolean }[]} */
   let engagementMembersCache = [];
   /** @type {{ userJid: string, userLabel: string | null, displayLabel?: string | null, engaged: boolean, passive?: boolean }[]} */
@@ -414,7 +446,69 @@
     }
   }
 
-  function questionPassesReportFilters(q, scopeJid) {
+  async function populatePracticeUserSelect() {
+    if (!els.practiceUserSelect) return;
+    const saved = localStorage.getItem(STORAGE_USER) || "";
+    els.practiceUserSelect.innerHTML = '<option value="">— Selecione —</option>';
+    try {
+      const res = await fetch(`${API.economy}?view=members`);
+      const data = await res.json();
+      const members = data.members || [];
+      practiceMembersCache = members
+        .map((m) => ({
+          userJid: m.userJid || m.jid || m.user_jid || "",
+          userName:
+            m.displayLabel ||
+            m.displayName ||
+            m.quizDisplayName ||
+            m.userLabel ||
+            m.name ||
+            "Participante"
+        }))
+        .filter((m) => m.userJid);
+      for (const m of practiceMembersCache) {
+        const opt = document.createElement("option");
+        opt.value = m.userJid;
+        opt.textContent = m.userName;
+        if (m.userJid === saved) opt.selected = true;
+        els.practiceUserSelect.appendChild(opt);
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  function getPracticeUserJid() {
+    return els.practiceUserSelect ? String(els.practiceUserSelect.value || "").trim() : "";
+  }
+
+  function getPracticeUserName() {
+    const jid = getPracticeUserJid();
+    if (!jid || !els.practiceUserSelect) return "";
+    const opt = els.practiceUserSelect.selectedOptions[0];
+    return opt ? String(opt.textContent || "").trim() : "";
+  }
+
+  function getNavigableShortIds() {
+    return (questionsList || [])
+      .filter((q) => questionPasses(q.shortId))
+      .map((q) => String(q.shortId).toUpperCase());
+  }
+
+  function navigateModal(delta) {
+    const ids = getNavigableShortIds();
+    if (!ids.length || !currentShortId) return;
+    const cur = String(currentShortId).toUpperCase();
+    const idx = ids.indexOf(cur);
+    if (idx < 0) {
+      openModal(ids[0]);
+      return;
+    }
+    const next = ids[idx + delta];
+    if (next) openModal(next);
+  }
+
+  function questionPassesGeneralFilters(q) {
     if (els.reportCaderno) {
       const cVal = els.reportCaderno.value;
       if (cVal === "__manual__") {
@@ -452,15 +546,148 @@
         return false;
       }
     }
-
-    const outcome = els.reportOutcome ? els.reportOutcome.value : "all";
-    if (outcome !== "all" && scopeJid && scopeJid !== "__all__") {
-      const ua = userAnswerFor(q.shortId, scopeJid);
-      if (outcome === "correct") return Boolean(ua && ua.correct);
-      if (outcome === "wrong") return Boolean(ua && !ua.correct);
-      if (outcome === "unanswered") return !ua;
-    }
     return true;
+  }
+
+  function answerMatchesCategoryRule(ua, ruleKey) {
+    const cats = (ua && Array.isArray(ua.categories) ? ua.categories : []) || [];
+    if (ruleKey === "__all__") return true;
+    if (ruleKey === "__none__") return cats.length === 0;
+    const id = Number(ruleKey);
+    if (!Number.isFinite(id)) return false;
+    return cats.some((c) => Number(c.id) === id);
+  }
+
+  function questionPassesOutcome(q, scopeJid) {
+    const outcome = els.reportOutcome ? els.reportOutcome.value : "all";
+    if (outcome === "all" || !scopeJid || scopeJid === "__all__") return true;
+    const ua = userAnswerFor(q.shortId, scopeJid);
+    if (outcome === "correct") return Boolean(ua && ua.correct);
+    if (outcome === "wrong") return Boolean(ua && !ua.correct);
+    if (outcome === "unanswered") return !ua;
+    return true;
+  }
+
+  function selectQuestionsForReport(qsAll, scopeJid) {
+    const general = qsAll.filter((q) => questionPassesGeneralFilters(q));
+    const filters = reportCategoryRules.filter((r) => r.mode === "filter");
+    const incrementals = reportCategoryRules.filter((r) => r.mode === "incremental");
+
+    const base = general.filter((q) => {
+      if (!questionPassesOutcome(q, scopeJid)) return false;
+      if (!filters.length) return true;
+      if (!scopeJid || scopeJid === "__all__") return true;
+      const ua = userAnswerFor(q.shortId, scopeJid);
+      for (const rule of filters) {
+        if (rule.key === "__all__") continue;
+        if (!answerMatchesCategoryRule(ua, rule.key)) return false;
+      }
+      return true;
+    });
+
+    const byId = new Map(base.map((q) => [String(q.shortId).toUpperCase(), q]));
+
+    if (scopeJid && scopeJid !== "__all__") {
+      for (const rule of incrementals) {
+        for (const q of general) {
+          const sid = String(q.shortId).toUpperCase();
+          if (byId.has(sid)) continue;
+          const ua = userAnswerFor(sid, scopeJid);
+          if (!ua) continue;
+          if (answerMatchesCategoryRule(ua, rule.key)) {
+            byId.set(sid, q);
+          }
+        }
+      }
+    }
+
+    return Array.from(byId.values());
+  }
+
+  function questionPassesReportFilters(q, scopeJid) {
+    return selectQuestionsForReport([q], scopeJid).length > 0;
+  }
+
+  function collectReportCategoryRulesFromDom() {
+    reportCategoryRules = [];
+    if (!els.reportCatRulesList) return;
+    els.reportCatRulesList.querySelectorAll(".report-cat-rule").forEach((row) => {
+      const catSel = row.querySelector(".report-cat-key");
+      const modeSel = row.querySelector(".report-cat-mode");
+      if (!catSel || !modeSel) return;
+      const key = String(catSel.value || "");
+      const mode = modeSel.value === "incremental" ? "incremental" : "filter";
+      if (!key) return;
+      reportCategoryRules.push({ key, mode });
+    });
+  }
+
+  function categoryOptionsHtml(selectedKey) {
+    const scopeJid = els.reportPerson ? els.reportPerson.value : "";
+    const catalog =
+      reportData && reportData.categoriesByUser && scopeJid && scopeJid !== "__all__"
+        ? reportData.categoriesByUser[scopeJid] || []
+        : [];
+    const opts = [
+      `<option value="__all__">Todas</option>`,
+      `<option value="__none__">Sem categorias</option>`,
+      ...catalog.map(
+        (c) => `<option value="${esc(String(c.id))}">${esc(c.name)}</option>`
+      )
+    ];
+    const html = opts.join("");
+    // re-select after build
+    return { html, selectedKey: selectedKey || "__all__" };
+  }
+
+  function renderReportCategoryRules() {
+    if (!els.reportCatRulesList) return;
+    if (!reportCategoryRules.length) {
+      els.reportCatRulesList.innerHTML =
+        '<p class="filters-hint">Nenhuma regra de categoria. O relatório usa só resultado/caderno/data.</p>';
+      return;
+    }
+    els.reportCatRulesList.innerHTML = reportCategoryRules
+      .map((rule, idx) => {
+        const { html } = categoryOptionsHtml(rule.key);
+        return `
+        <div class="report-cat-rule" data-idx="${idx}">
+          <select class="report-cat-key" aria-label="Categoria">${html}</select>
+          <select class="report-cat-mode" aria-label="Modo">
+            <option value="filter">Filtro (AND)</option>
+            <option value="incremental">Incremental (OR)</option>
+          </select>
+          <button type="button" class="btn-remove-rule" data-idx="${idx}" aria-label="Remover">×</button>
+        </div>`;
+      })
+      .join("");
+
+    els.reportCatRulesList.querySelectorAll(".report-cat-rule").forEach((row) => {
+      const idx = Number(row.dataset.idx);
+      const rule = reportCategoryRules[idx];
+      if (!rule) return;
+      const catSel = row.querySelector(".report-cat-key");
+      const modeSel = row.querySelector(".report-cat-mode");
+      if (catSel) catSel.value = rule.key;
+      if (modeSel) modeSel.value = rule.mode;
+      if (catSel) {
+        catSel.addEventListener("change", () => {
+          rule.key = catSel.value;
+        });
+      }
+      if (modeSel) {
+        modeSel.addEventListener("change", () => {
+          rule.mode = modeSel.value === "incremental" ? "incremental" : "filter";
+        });
+      }
+    });
+    els.reportCatRulesList.querySelectorAll(".btn-remove-rule").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const idx = Number(btn.dataset.idx);
+        reportCategoryRules.splice(idx, 1);
+        renderReportCategoryRules();
+      });
+    });
   }
 
   function resetModal() {
@@ -471,6 +698,46 @@
     els.modalCommentMedia.innerHTML = "";
     submitPayload = null;
     els.modalChoices.innerHTML = "";
+    modalUserCategories = [];
+    modalSelectedCategoryIds = new Set();
+    modalHasAnswer = false;
+    if (els.modalCategories) els.modalCategories.classList.add("hidden");
+    if (els.modalSaveCats) els.modalSaveCats.classList.add("hidden");
+    if (els.modalCategoriesToggles) els.modalCategoriesToggles.innerHTML = "";
+    if (els.modalCategoriesHint) els.modalCategoriesHint.textContent = "";
+  }
+
+  function renderModalCategoryToggles() {
+    if (!els.modalCategoriesToggles) return;
+    if (!modalUserCategories.length) {
+      els.modalCategoriesToggles.innerHTML =
+        '<p class="filters-hint">Nenhuma categoria ainda. Crie uma com “Nova categoria”.</p>';
+      return;
+    }
+    els.modalCategoriesToggles.innerHTML = modalUserCategories
+      .map((c) => {
+        const on = modalSelectedCategoryIds.has(Number(c.id));
+        return `<button type="button" class="cat-toggle ${on ? "is-on" : ""}" data-id="${esc(
+          String(c.id)
+        )}">${esc(c.name)}</button>`;
+      })
+      .join("");
+    els.modalCategoriesToggles.querySelectorAll(".cat-toggle").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const id = Number(btn.dataset.id);
+        if (modalSelectedCategoryIds.has(id)) modalSelectedCategoryIds.delete(id);
+        else modalSelectedCategoryIds.add(id);
+        btn.classList.toggle("is-on");
+        if (els.modalSaveCats && modalHasAnswer) els.modalSaveCats.classList.remove("hidden");
+      });
+    });
+  }
+
+  function showCategoriesPanel(hint) {
+    if (!els.modalCategories) return;
+    els.modalCategories.classList.remove("hidden");
+    if (els.modalCategoriesHint) els.modalCategoriesHint.textContent = hint || "";
+    renderModalCategoryToggles();
   }
 
   async function openModal(shortId) {
@@ -480,8 +747,9 @@
     els.modal.setAttribute("aria-hidden", "false");
     els.modalStatement.innerHTML = '<p class="loading">Carregando…</p>';
 
+    const userJid = getPracticeUserJid();
     try {
-      const q = await fetchJson(API.detail(shortId));
+      const q = await fetchJson(API.detail(shortId, userJid || undefined));
       els.modalTitle.textContent = `Questão #${q.shortId}`;
       els.modalAuthor.textContent = `Por ${q.creatorName}`;
 
@@ -500,22 +768,58 @@
       const isTf = q.questionType === "true_false";
       els.modalChoices.classList.toggle("tf", isTf);
 
-      if (isTf) {
-        els.modalChoices.innerHTML = `
-          <button type="button" class="btn-choice" data-letter="c">C — Certo</button>
-          <button type="button" class="btn-choice" data-letter="e">E — Errado</button>`;
-      } else {
-        els.modalChoices.innerHTML = ["A", "B", "C", "D", "E"]
-          .map(
-            (L) =>
-              `<button type="button" class="btn-choice" data-letter="${L.toLowerCase()}">${L}</button>`
-          )
-          .join("");
-      }
+      modalUserCategories = Array.isArray(q.userCategories) ? q.userCategories : [];
+      modalSelectedCategoryIds = new Set(
+        (q.categories || []).map((c) => Number(c.id)).filter((n) => Number.isFinite(n))
+      );
 
-      els.modalChoices.querySelectorAll(".btn-choice").forEach((b) => {
-        b.addEventListener("click", () => onAnswer(b.dataset.letter));
-      });
+      if (q.existingAnswer) {
+        modalHasAnswer = true;
+        const letter = String(q.existingAnswer.letter || "").toLowerCase();
+        if (isTf) {
+          els.modalChoices.innerHTML = `
+            <button type="button" class="btn-choice" data-letter="c">C — Certo</button>
+            <button type="button" class="btn-choice" data-letter="e">E — Errado</button>`;
+        } else {
+          els.modalChoices.innerHTML = ["A", "B", "C", "D", "E"]
+            .map(
+              (L) =>
+                `<button type="button" class="btn-choice" data-letter="${L.toLowerCase()}">${L}</button>`
+            )
+            .join("");
+        }
+        els.modalChoices.querySelectorAll(".btn-choice").forEach((b) => {
+          if (b.dataset.letter === letter) b.classList.add("selected");
+          b.addEventListener("click", () => onAnswer(b.dataset.letter));
+        });
+        if (!userJid) {
+          showCategoriesPanel("Selecione “Quem sou eu” para editar categorias.");
+        } else {
+          showCategoriesPanel("Resposta já registrada — ajuste as categorias e salve.");
+          if (els.modalSaveCats) els.modalSaveCats.classList.remove("hidden");
+        }
+      } else {
+        if (isTf) {
+          els.modalChoices.innerHTML = `
+            <button type="button" class="btn-choice" data-letter="c">C — Certo</button>
+            <button type="button" class="btn-choice" data-letter="e">E — Errado</button>`;
+        } else {
+          els.modalChoices.innerHTML = ["A", "B", "C", "D", "E"]
+            .map(
+              (L) =>
+                `<button type="button" class="btn-choice" data-letter="${L.toLowerCase()}">${L}</button>`
+            )
+            .join("");
+        }
+        els.modalChoices.querySelectorAll(".btn-choice").forEach((b) => {
+          b.addEventListener("click", () => onAnswer(b.dataset.letter));
+        });
+        if (userJid) {
+          showCategoriesPanel("Marque categorias (opcional) e responda. A resposta será salva.");
+        } else {
+          showCategoriesPanel('Selecione “Quem sou eu” acima para salvar resposta e categorias.');
+        }
+      }
     } catch (e) {
       els.modalStatement.innerHTML = `<p class="error-banner">${esc(e.message)}</p>`;
     }
@@ -534,26 +838,156 @@
       if (b.dataset.letter === letter) b.classList.add("selected");
     });
 
+    const userJid = getPracticeUserJid();
+    const body = { shortId: currentShortId, letter };
+    if (userJid) {
+      body.userJid = userJid;
+      body.userName = getPracticeUserName();
+      body.categoryIds = Array.from(modalSelectedCategoryIds);
+    }
+
     try {
       const data = await fetchJson(API.submit, {
         method: "POST",
-        body: JSON.stringify({ shortId: currentShortId, letter })
+        body: JSON.stringify(body)
       });
       submitPayload = data;
+      modalHasAnswer = Boolean(data.persisted) || modalHasAnswer;
+      if (Array.isArray(data.categories)) {
+        modalSelectedCategoryIds = new Set(data.categories.map((c) => Number(c.id)));
+      }
 
       els.modalFeedback.classList.remove("hidden");
       els.modalFeedback.classList.toggle("ok", data.correct);
       els.modalFeedback.classList.toggle("bad", !data.correct);
-      els.modalFeedback.textContent = data.correct
+      let msg = data.correct
         ? "Resposta correta!"
         : `Não foi dessa vez. Sua resposta: ${data.yourAnswer}.`;
+      if (data.persisted) msg += " Salva no relatório.";
+      else if (!userJid) msg += " (não salva — escolha “Quem sou eu”).";
+      els.modalFeedback.textContent = msg;
 
       els.modalRevealBtn.classList.remove("hidden");
       els.modalRevealBox.classList.add("hidden");
+
+      if (userJid) {
+        showCategoriesPanel("Categorias salvas com a resposta.");
+        if (els.modalSaveCats) els.modalSaveCats.classList.add("hidden");
+      }
+
+      if (reportData && data.persisted) {
+        // refresh local answer cache lightly
+        const shortId = String(currentShortId).toUpperCase();
+        const existing = (reportData.answers || []).find(
+          (a) => a.questionShortId === shortId && a.userJid === userJid
+        );
+        const cats = data.categories || [];
+        if (existing) {
+          existing.answerLetter = String(letter).toLowerCase();
+          existing.answerLetterDisplay = String(data.yourAnswer || letter).toUpperCase();
+          existing.correct = Boolean(data.correct);
+          existing.categories = cats;
+        } else {
+          reportData.answers = reportData.answers || [];
+          reportData.answers.push({
+            questionShortId: shortId,
+            userJid,
+            userName: getPracticeUserName(),
+            answerLetter: String(letter).toLowerCase(),
+            answerLetterDisplay: String(data.yourAnswer || letter).toUpperCase(),
+            correct: Boolean(data.correct),
+            categories: cats
+          });
+        }
+      }
+
+      setTimeout(() => navigateModal(1), 450);
     } catch (e) {
       els.modalFeedback.classList.remove("hidden");
       els.modalFeedback.classList.add("bad");
       els.modalFeedback.textContent = e.message || "Erro ao enviar.";
+      els.modalChoices.querySelectorAll(".btn-choice").forEach((b) => {
+        b.disabled = false;
+      });
+    }
+  }
+
+  async function saveModalCategories() {
+    const userJid = getPracticeUserJid();
+    if (!userJid || !currentShortId) {
+      if (els.modalCategoriesHint) {
+        els.modalCategoriesHint.textContent = 'Selecione “Quem sou eu” para salvar.';
+      }
+      return;
+    }
+    try {
+      const data = await fetchJson(API.answerCategories, {
+        method: "POST",
+        body: JSON.stringify({
+          userJid,
+          shortId: currentShortId,
+          categoryIds: Array.from(modalSelectedCategoryIds)
+        })
+      });
+      modalSelectedCategoryIds = new Set((data.categories || []).map((c) => Number(c.id)));
+      renderModalCategoryToggles();
+      if (els.modalSaveCats) els.modalSaveCats.classList.add("hidden");
+      if (els.modalCategoriesHint) els.modalCategoriesHint.textContent = "Categorias atualizadas.";
+      if (reportData) {
+        const shortId = String(currentShortId).toUpperCase();
+        const existing = (reportData.answers || []).find(
+          (a) => a.questionShortId === shortId && a.userJid === userJid
+        );
+        if (existing) existing.categories = data.categories || [];
+      }
+    } catch (e) {
+      if (els.modalCategoriesHint) els.modalCategoriesHint.textContent = e.message || "Erro ao salvar.";
+    }
+  }
+
+  function openNewCatModal() {
+    if (!els.newcatOverlay) return;
+    if (!getPracticeUserJid()) {
+      if (els.modalCategoriesHint) {
+        els.modalCategoriesHint.textContent = 'Selecione “Quem sou eu” antes de criar categoria.';
+      }
+      return;
+    }
+    if (els.newcatName) els.newcatName.value = "";
+    if (els.newcatStatus) els.newcatStatus.textContent = "";
+    els.newcatOverlay.classList.add("open");
+    els.newcatOverlay.setAttribute("aria-hidden", "false");
+  }
+
+  function closeNewCatModal() {
+    if (!els.newcatOverlay) return;
+    els.newcatOverlay.classList.remove("open");
+    els.newcatOverlay.setAttribute("aria-hidden", "true");
+  }
+
+  async function createNewCategoryFromModal() {
+    const userJid = getPracticeUserJid();
+    const name = els.newcatName ? els.newcatName.value.trim() : "";
+    if (!userJid || !name) {
+      if (els.newcatStatus) els.newcatStatus.textContent = "Informe o nome.";
+      return;
+    }
+    try {
+      const data = await fetchJson(API.userCategories, {
+        method: "POST",
+        body: JSON.stringify({ userJid, name })
+      });
+      const cat = data.category;
+      if (cat && !modalUserCategories.some((c) => Number(c.id) === Number(cat.id))) {
+        modalUserCategories.push(cat);
+        modalUserCategories.sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
+      }
+      if (cat) modalSelectedCategoryIds.add(Number(cat.id));
+      renderModalCategoryToggles();
+      if (els.modalSaveCats && modalHasAnswer) els.modalSaveCats.classList.remove("hidden");
+      closeNewCatModal();
+    } catch (e) {
+      if (els.newcatStatus) els.newcatStatus.textContent = e.message || "Erro ao criar.";
     }
   }
 
@@ -690,7 +1124,7 @@
     await ensureJSZip();
 
     const qsAll = reportData.questions || [];
-    const qs = qsAll.filter((q) => questionPassesReportFilters(q, scopeJid));
+    const qs = selectQuestionsForReport(qsAll, scopeJid);
     const qIds = new Set(qs.map((q) => q.shortId));
     const ans = (reportData.answers || []).filter((a) => qIds.has(a.questionShortId));
     if (!qs.length) throw new Error("Nenhuma questão combina com os filtros atuais.");
@@ -811,17 +1245,21 @@
       if (scopeJid === "__all__") {
         lines.push("### Respostas (WhatsApp)");
         lines.push("");
-        lines.push("| Participante | Marcou | Gabarito | Resultado | Comentário |");
-        lines.push("| --- | --- | --- | --- | --- |");
+        lines.push("| Participante | Marcou | Gabarito | Resultado | Comentário | Categorias |");
+        lines.push("| --- | --- | --- | --- | --- | --- |");
         if (!answersHere.length) {
-          lines.push("| — | — | — | Nenhuma resposta registrada | — |");
+          lines.push("| — | — | — | Nenhuma resposta registrada | — | — |");
         } else {
           for (const row of answersHere.sort((a, b) =>
             a.userName.localeCompare(b.userName, "pt-BR")
           )) {
             const commentCell = row.answerComment ? mdCell(row.answerComment) : "—";
+            const catsCell =
+              Array.isArray(row.categories) && row.categories.length
+                ? mdCell(row.categories.map((c) => c.name).join(", "))
+                : "—";
             lines.push(
-              `| ${mdCell(row.userName)} | ${formatMarcada(row.answerLetterDisplay, q)} | ${formatGabarito(q)} | ${row.correct ? "Certo" : "Errado"} | ${commentCell} |`
+              `| ${mdCell(row.userName)} | ${formatMarcada(row.answerLetterDisplay, q)} | ${formatGabarito(q)} | ${row.correct ? "Certo" : "Errado"} | ${commentCell} | ${catsCell} |`
             );
           }
         }
@@ -837,6 +1275,11 @@
           if (row.answerComment) {
             lines.push(`- **Comentário:** ${row.answerComment}`);
           }
+          const catNames =
+            Array.isArray(row.categories) && row.categories.length
+              ? row.categories.map((c) => c.name).join(", ")
+              : "—";
+          lines.push(`- **Categorias:** ${catNames}`);
           lines.push(`- **Gabarito:** ${formatGabarito(q)}`);
           lines.push(`- **Resultado:** ${row.correct ? "Certo" : "Errado"}`);
         }
@@ -878,6 +1321,7 @@
 
   function openReportModal() {
     populateReportSelect();
+    renderReportCategoryRules();
     if (els.reportStatus) els.reportStatus.textContent = "";
     els.reportOverlay.classList.add("open");
     els.reportOverlay.setAttribute("aria-hidden", "false");
@@ -2380,6 +2824,8 @@
         els.reportCaderno.value = keepCaderno;
       }
       if (els.reportOutcome) els.reportOutcome.value = keepOutcome;
+      collectReportCategoryRulesFromDom();
+      renderReportCategoryRules();
       if (els.reportStatus) els.reportStatus.textContent = "Gerando ZIP… pode levar alguns segundos.";
       await buildReportZip(scope);
       if (els.reportStatus) els.reportStatus.textContent = "Download iniciado.";
@@ -2422,6 +2868,7 @@
 
       populateFilters();
       populateReportSelect();
+      await populatePracticeUserSelect();
 
       if (els.filterPerson) {
         els.filterPerson.addEventListener("change", () => {
@@ -2464,6 +2911,38 @@
     });
   }
   if (els.modalRevealBtn) els.modalRevealBtn.addEventListener("click", showReveal);
+  if (els.modalPrev) els.modalPrev.addEventListener("click", () => navigateModal(-1));
+  if (els.modalNext) els.modalNext.addEventListener("click", () => navigateModal(1));
+  if (els.modalNewCat) els.modalNewCat.addEventListener("click", openNewCatModal);
+  if (els.modalSaveCats) els.modalSaveCats.addEventListener("click", () => saveModalCategories());
+  if (els.newcatClose) els.newcatClose.addEventListener("click", closeNewCatModal);
+  if (els.newcatSave) els.newcatSave.addEventListener("click", () => createNewCategoryFromModal());
+  if (els.newcatOverlay) {
+    els.newcatOverlay.addEventListener("click", (ev) => {
+      if (ev.target === els.newcatOverlay) closeNewCatModal();
+    });
+  }
+  if (els.practiceUserSelect) {
+    els.practiceUserSelect.addEventListener("change", () => {
+      const jid = getPracticeUserJid();
+      if (jid) localStorage.setItem(STORAGE_USER, jid);
+      else localStorage.removeItem(STORAGE_USER);
+      if (currentShortId) openModal(currentShortId);
+    });
+  }
+  if (els.reportCatAdd) {
+    els.reportCatAdd.addEventListener("click", () => {
+      collectReportCategoryRulesFromDom();
+      reportCategoryRules.push({ key: "__all__", mode: "filter" });
+      renderReportCategoryRules();
+    });
+  }
+  if (els.reportPerson) {
+    els.reportPerson.addEventListener("change", () => {
+      collectReportCategoryRulesFromDom();
+      renderReportCategoryRules();
+    });
+  }
 
   if (els.btnReportOpen) els.btnReportOpen.addEventListener("click", openReportModal);
   if (els.reportClose) els.reportClose.addEventListener("click", closeReportModal);

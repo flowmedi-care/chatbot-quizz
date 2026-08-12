@@ -371,14 +371,57 @@ function parseAnswerWithOptionalComment(text: string):
   return null;
 }
 
-export function parsePrivateCommand(text: string):
+/** Separa "resposta //cat1, cat2" — categories null = sem bloco //; [] = limpar. */
+export function splitCategoriesSuffix(text: string): {
+  left: string;
+  categories: string[] | null;
+} {
+  const raw = String(text || "");
+  const idx = raw.indexOf("//");
+  if (idx < 0) return { left: raw.trim(), categories: null };
+  const left = raw.slice(0, idx).trim();
+  const right = raw.slice(idx + 2).trim();
+  if (!right) return { left, categories: [] };
+  const categories = right
+    .split(",")
+    .map((s) => s.trim().replace(/;+\s*$/g, "").trim())
+    .filter(Boolean);
+  return { left, categories };
+}
+
+/** /newcat nome da categoria  ( ; final opcional ) */
+export function parseNewCatCommand(text: string): string | null {
+  const raw = String(text || "").trim();
+  const m = raw.match(/^\/newcat\s+(.+)$/i);
+  if (!m) return null;
+  const name = m[1].trim().replace(/;+\s*$/g, "").trim();
+  return name || null;
+}
+
+export type PrivateCommand =
   | { kind: "new_question" }
-  | { kind: "answer"; answer: string; questionId: string; comment?: string }
+  | {
+      kind: "answer";
+      answer: string;
+      questionId: string;
+      comment?: string;
+      categories?: string[] | null;
+    }
+  | { kind: "set_categories"; questionId: string; categories: string[] }
+  | { kind: "new_category"; name: string }
   | { kind: "answer_key"; questionId: string }
   | { kind: "ranking" }
   | { kind: "qa_stats" }
-  | { kind: "unknown" } {
-  const normalized = normalizeInput(text);
+  | { kind: "unknown" };
+
+export function parsePrivateCommand(text: string): PrivateCommand {
+  const newCat = parseNewCatCommand(text);
+  if (newCat) {
+    return { kind: "new_category", name: newCat };
+  }
+
+  const { left, categories } = splitCategoriesSuffix(text);
+  const normalized = normalizeInput(left);
 
   if (normalized === "nova questao") {
     return { kind: "new_question" };
@@ -392,13 +435,26 @@ export function parsePrivateCommand(text: string):
     return { kind: "qa_stats" };
   }
 
-  const withComment = parseAnswerWithOptionalComment(text);
+  /* Só categorias: "139 //difíceis" ou "139 //" (limpar) */
+  if (categories !== null) {
+    const idOnly = normalized.match(/^([a-z0-9-]+)$/i);
+    if (idOnly && !parseAnswerWithOptionalComment(left)) {
+      return {
+        kind: "set_categories",
+        questionId: idOnly[1].toUpperCase().trim(),
+        categories
+      };
+    }
+  }
+
+  const withComment = parseAnswerWithOptionalComment(left);
   if (withComment) {
     return {
       kind: "answer",
       answer: withComment.answer,
       questionId: withComment.questionId,
-      comment: withComment.comment
+      comment: withComment.comment,
+      categories: categories ?? undefined
     };
   }
 
@@ -410,14 +466,16 @@ export function parsePrivateCommand(text: string):
       return {
         kind: "answer",
         answer: answerMatch[2].toLowerCase(),
-        questionId: answerMatch[1].toUpperCase().trim()
+        questionId: answerMatch[1].toUpperCase().trim(),
+        categories: categories ?? undefined
       };
     }
   } else {
     return {
       kind: "answer",
       answer: answerMatch[1].toLowerCase(),
-      questionId: answerMatch[2].toUpperCase().trim()
+      questionId: answerMatch[2].toUpperCase().trim(),
+      categories: categories ?? undefined
     };
   }
 

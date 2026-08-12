@@ -950,6 +950,10 @@
       ["nova questao", "Fluxo de criação (ME ou C/E)"],
       ["a 5 / c 5", "Responder questão #5"],
       ["b 5, comentário", "Responder com comentário"],
+      ["b 5, comentário //difíceis", "Responder + categorias pessoais"],
+      ["139 //difíceis, lei seca", "Só categorizar (já respondeu)"],
+      ["139 //", "Limpar categorias da resposta"],
+      ["/newcat nome", "Criar categoria pessoal"],
       ["/questao 5", "Reenviar enunciado"],
       ["/gabarito 5", "Ver resultado"],
       ["quem respondeu 5", "Lista de respondentes"]

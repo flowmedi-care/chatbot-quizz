@@ -168,6 +168,10 @@
 
       <section class="panel home-panel" aria-labelledby="q-title">
         <h2 id="q-title"><span class="badge">Prática</span> Clique para responder</h2>
+        <label class="filter-field practice-who">
+          <span>Quem sou eu</span>
+          <select id="practice-user-select" aria-label="Selecionar membro para categorizar"></select>
+        </label>
         <div id="questions-filters" class="questions-filters hidden">
           <div class="filters-row">
             <label class="filter-field">
@@ -199,7 +203,7 @@
     </div>
 
     <div id="modal-overlay" class="modal-overlay" aria-hidden="true">
-      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+      <div class="modal modal-practice" role="dialog" aria-modal="true" aria-labelledby="modal-title">
         <div class="modal-header">
           <div>
             <h3 id="modal-title"></h3>
@@ -207,9 +211,22 @@
           </div>
           <button type="button" id="modal-close" class="btn-close" aria-label="Fechar">×</button>
         </div>
+        <div class="modal-nav-row">
+          <button type="button" id="modal-prev" class="btn-tutorial">Anterior</button>
+          <button type="button" id="modal-next" class="btn-tutorial">Próxima</button>
+        </div>
         <div id="modal-statement" class="statement-box"></div>
         <div id="modal-choices" class="choice-grid"></div>
         <div id="modal-feedback" class="feedback hidden"></div>
+        <div id="modal-categories" class="modal-categories hidden">
+          <div class="modal-categories-head">
+            <span>Categorias</span>
+            <button type="button" id="modal-new-cat" class="btn-tutorial btn-sm">Nova categoria</button>
+          </div>
+          <p id="modal-categories-hint" class="filters-hint"></p>
+          <div id="modal-categories-toggles" class="cat-toggles"></div>
+          <button type="button" id="modal-save-cats" class="btn-reveal hidden">Salvar categorias</button>
+        </div>
         <button type="button" id="modal-reveal-btn" class="btn-reveal hidden">
           Ver gabarito e comentário do autor
         </button>
@@ -222,14 +239,29 @@
       </div>
     </div>
 
+    <div id="newcat-overlay" class="modal-overlay" aria-hidden="true">
+      <div class="modal modal-newcat" role="dialog" aria-modal="true" aria-labelledby="newcat-title">
+        <div class="modal-header">
+          <h3 id="newcat-title">Nova categoria</h3>
+          <button type="button" id="newcat-close" class="btn-close" aria-label="Fechar">×</button>
+        </div>
+        <label class="report-field">
+          <span>Nome</span>
+          <input type="text" id="newcat-name" placeholder="ex: difíceis" aria-label="Nome da categoria" />
+        </label>
+        <p id="newcat-status" class="report-status" role="status"></p>
+        <button type="button" id="newcat-save" class="btn-reveal">Criar</button>
+      </div>
+    </div>
+
     <div id="report-overlay" class="modal-overlay" aria-hidden="true">
       <div class="modal modal-report" role="dialog" aria-modal="true" aria-labelledby="report-title">
         <div class="modal-header">
           <div>
             <h3 id="report-title">Gerar relatório</h3>
             <p class="report-sub">
-              Markdown + pasta <code>midias/</code> no ZIP. Inclui gabarito, o que cada um marcou (via WhatsApp) e
-              referência a arquivos de imagem/PDF quando existirem.
+              Markdown + pasta <code>midias/</code> no ZIP. Inclui gabarito, o que cada um marcou,
+              comentários, categorias pessoais e referência a arquivos de imagem/PDF quando existirem.
             </p>
           </div>
           <button type="button" id="report-close" class="btn-close" aria-label="Fechar">×</button>
@@ -273,6 +305,17 @@
             <option value="unanswered">Sem resposta</option>
           </select>
         </label>
+        <div class="report-field report-cat-rules">
+          <div class="modal-categories-head">
+            <span>Categorias (filtro / incremental)</span>
+            <button type="button" id="report-cat-add" class="btn-tutorial btn-sm">Adicionar regra</button>
+          </div>
+          <p class="report-sub" style="margin: 0.35rem 0 0.5rem">
+            Filtro = AND (interseção com o resultado). Incremental = OR (une certas e erradas da categoria, sem duplicar).
+            Pseudos: <strong>Todas</strong> e <strong>Sem categorias</strong>.
+          </p>
+          <div id="report-cat-rules-list" class="report-cat-rules-list"></div>
+        </div>
         <p id="report-status" class="report-status" role="status" aria-live="polite"></p>
         <button type="button" id="report-generate" class="btn-reveal">Baixar ZIP</button>
       </div>

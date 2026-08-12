@@ -69,7 +69,11 @@ import {
   setQuizModePrivate,
   updateUserAnswer,
   upsertGroupMembersFromSync,
-  createOmissasWebSession
+  createOmissasWebSession,
+  createUserCategory,
+  listUserCategories,
+  resolveCategoryNames,
+  setAnswerCategories
 } from "./supabase";
 import {
   computeNextRunAt,
@@ -158,8 +162,20 @@ type PendingChange = {
   newAnswerLetter: string;
   newAnswerComment?: string | null;
   previousAnswerLetter?: string | null;
+  categories?: string[] | null;
 };
 const pendingAnswerChanges = new Map<string, PendingChange>();
+
+type PendingCategoryResolve = {
+  questionId: string;
+  answerId: number;
+  resolvedIds: number[];
+  unknownQueue: string[];
+  stage: "ask_create" | "pick_existing";
+  currentUnknown: string;
+  catalog: { id: number; name: string }[];
+};
+const pendingCategoryResolve = new Map<string, PendingCategoryResolve>();
 
 /** Privado: lista de short_ids apos /omissas; usuario confirma sim para receber enunciados. */
 const omissasOfferByUser = new Map<string, string[]>();
@@ -168,6 +184,180 @@ const autoGabaritoPostedQuestionIds = new Set<string>();
 
 function delayMs(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function formatCategoryList(cats: { id: number; name: string }[]): string {
+  if (!cats.length) return "(nenhuma)";
+  return cats.map((c, i) => `${i + 1}. ${c.name}`).join("\n");
+}
+
+async function beginCategoryResolve(
+  sock: WASocket,
+  remoteJid: string,
+  sender: string,
+  questionId: string,
+  answerId: number,
+  categoryNames: string[] | null | undefined
+): Promise<void> {
+  if (categoryNames === undefined) return;
+  if (categoryNames === null) return;
+
+  if (categoryNames.length === 0) {
+    await setAnswerCategories(answerId, []);
+    await sock.sendMessage(remoteJid, {
+      text: `Categorias da questao #${questionId} limpas.`
+    });
+    return;
+  }
+
+  const { known, unknown, catalog } = await resolveCategoryNames(sender, categoryNames);
+  const resolvedIds = known.map((k) => k.id);
+
+  if (!unknown.length) {
+    const finalCats = await setAnswerCategories(answerId, resolvedIds);
+    const names = finalCats.map((c) => c.name).join(", ") || "(nenhuma)";
+    await sock.sendMessage(remoteJid, {
+      text: `Categorias da #${questionId}: ${names}`
+    });
+    return;
+  }
+
+  const currentUnknown = unknown[0]!;
+  pendingCategoryResolve.set(sender, {
+    questionId,
+    answerId,
+    resolvedIds,
+    unknownQueue: unknown.slice(1),
+    stage: "ask_create",
+    currentUnknown,
+    catalog: catalog.map((c) => ({ id: c.id, name: c.name }))
+  });
+
+  await sock.sendMessage(remoteJid, {
+    text: [
+      `Categoria "${currentUnknown}" nao existe.`,
+      "Deseja criar uma nova? Responda *sim* ou *nao*."
+    ].join("\n")
+  });
+}
+
+async function finishCategoryResolve(
+  sock: WASocket,
+  remoteJid: string,
+  sender: string,
+  pending: PendingCategoryResolve
+): Promise<void> {
+  const finalCats = await setAnswerCategories(pending.answerId, pending.resolvedIds);
+  pendingCategoryResolve.delete(sender);
+  const names = finalCats.map((c) => c.name).join(", ") || "(nenhuma)";
+  await sock.sendMessage(remoteJid, {
+    text: `Categorias da #${pending.questionId} atualizadas: ${names}`
+  });
+}
+
+async function advanceCategoryResolveQueue(
+  sock: WASocket,
+  remoteJid: string,
+  sender: string,
+  pending: PendingCategoryResolve
+): Promise<void> {
+  if (!pending.unknownQueue.length) {
+    await finishCategoryResolve(sock, remoteJid, sender, pending);
+    return;
+  }
+  const currentUnknown = pending.unknownQueue[0]!;
+  pending.unknownQueue = pending.unknownQueue.slice(1);
+  pending.currentUnknown = currentUnknown;
+  pending.stage = "ask_create";
+  const catalog = await listUserCategories(sender);
+  pending.catalog = catalog.map((c) => ({ id: c.id, name: c.name }));
+  pendingCategoryResolve.set(sender, pending);
+  await sock.sendMessage(remoteJid, {
+    text: [
+      `Categoria "${currentUnknown}" nao existe.`,
+      "Deseja criar uma nova? Responda *sim* ou *nao*."
+    ].join("\n")
+  });
+}
+
+async function handlePendingCategoryResolve(
+  sock: WASocket,
+  remoteJid: string,
+  sender: string,
+  text: string
+): Promise<boolean> {
+  const pending = pendingCategoryResolve.get(sender);
+  if (!pending) return false;
+
+  const normalized = normalizeInput(text);
+
+  if (pending.stage === "ask_create") {
+    if (normalized === "sim" || normalized === "s") {
+      const created = await createUserCategory(sender, pending.currentUnknown);
+      if (!pending.resolvedIds.includes(created.id)) {
+        pending.resolvedIds.push(created.id);
+      }
+      await sock.sendMessage(remoteJid, {
+        text: created.alreadyExisted
+          ? `Categoria "${created.name}" ja existia — associada.`
+          : `Categoria "${created.name}" criada e associada.`
+      });
+      await advanceCategoryResolveQueue(sock, remoteJid, sender, pending);
+      return true;
+    }
+    if (normalized === "nao" || normalized === "não" || normalized === "n") {
+      const catalog = await listUserCategories(sender);
+      pending.catalog = catalog.map((c) => ({ id: c.id, name: c.name }));
+      if (!pending.catalog.length) {
+        await sock.sendMessage(remoteJid, {
+          text: [
+            "Voce ainda nao tem categorias.",
+            `Envie *sim* para criar "${pending.currentUnknown}", ou /newcat nome.`
+          ].join("\n")
+        });
+        return true;
+      }
+      pending.stage = "pick_existing";
+      pendingCategoryResolve.set(sender, pending);
+      await sock.sendMessage(remoteJid, {
+        text: [
+          `Ok. Escolha o numero da categoria para associar no lugar de "${pending.currentUnknown}":`,
+          "",
+          formatCategoryList(pending.catalog)
+        ].join("\n")
+      });
+      return true;
+    }
+    await sock.sendMessage(remoteJid, {
+      text: `Categoria "${pending.currentUnknown}" nao existe. Deseja criar? Responda *sim* ou *nao*.`
+    });
+    return true;
+  }
+
+  if (pending.stage === "pick_existing") {
+    const n = Number(String(text || "").trim());
+    if (!Number.isInteger(n) || n < 1 || n > pending.catalog.length) {
+      await sock.sendMessage(remoteJid, {
+        text: [
+          `Envie um numero de 1 a ${pending.catalog.length}:`,
+          "",
+          formatCategoryList(pending.catalog)
+        ].join("\n")
+      });
+      return true;
+    }
+    const picked = pending.catalog[n - 1]!;
+    if (!pending.resolvedIds.includes(picked.id)) {
+      pending.resolvedIds.push(picked.id);
+    }
+    await sock.sendMessage(remoteJid, {
+      text: `Associada: ${picked.name}`
+    });
+    await advanceCategoryResolveQueue(sock, remoteJid, sender, pending);
+    return true;
+  }
+
+  return true;
 }
 
 function jidComparableKey(jid: string): string {
@@ -1372,12 +1562,16 @@ async function startBot(): Promise<void> {
         }
 
         if (fromPrivate && quizModePrivateEnabled) {
+          if (await handlePendingCategoryResolve(sock, remoteJid, sender, text)) {
+            continue;
+          }
+
           const pending = pendingAnswerChanges.get(sender);
           if (pending) {
             const normalized = normalizeInput(text);
             if (normalized === "sim" || normalized === "s") {
               try {
-                await updateUserAnswer({
+                const updated = await updateUserAnswer({
                   questionShortId: pending.questionId,
                   userJid: sender,
                   userName: getDisplayName(msg, sender),
@@ -1386,6 +1580,36 @@ async function startBot(): Promise<void> {
                   sentAt,
                   sourceMessageId: messageId
                 });
+                pendingAnswerChanges.delete(sender);
+                await sock.sendMessage(remoteJid, { text: "Resposta atualizada ✅" });
+                if (pending.categories !== undefined) {
+                  await beginCategoryResolve(
+                    sock,
+                    remoteJid,
+                    sender,
+                    pending.questionId,
+                    updated.answerId,
+                    pending.categories
+                  );
+                }
+                await maybePostAutoGabaritoToGroup(sock, pending.questionId);
+                await maybeWakeCadernoAfterAnswer(sock, pending.questionId);
+                try {
+                  const result = await getQuestionResult(pending.questionId);
+                  await processEconomyAfterAnswer(sock, {
+                    userJid: sender,
+                    userName: getDisplayName(msg, sender),
+                    questionShortId: pending.questionId,
+                    questionId: pending.questionId,
+                    answerLetter: pending.newAnswerLetter,
+                    answerKey: result.answerKey,
+                    groupJid: getQuizTargetGroupJid(),
+                    wasUpdate: true,
+                    previousLetter: pending.previousAnswerLetter ?? null
+                  });
+                } catch (ecoErr) {
+                  console.warn("[economy] update answer:", (ecoErr as Error).message);
+                }
               } catch (ansErr) {
                 pendingAnswerChanges.delete(sender);
                 if (ansErr instanceof SelfAnswerNotAllowedError) {
@@ -1393,26 +1617,6 @@ async function startBot(): Promise<void> {
                   continue;
                 }
                 throw ansErr;
-              }
-              pendingAnswerChanges.delete(sender);
-              await sock.sendMessage(remoteJid, { text: "Resposta atualizada ✅" });
-              await maybePostAutoGabaritoToGroup(sock, pending.questionId);
-              await maybeWakeCadernoAfterAnswer(sock, pending.questionId);
-              try {
-                const result = await getQuestionResult(pending.questionId);
-                await processEconomyAfterAnswer(sock, {
-                  userJid: sender,
-                  userName: getDisplayName(msg, sender),
-                  questionShortId: pending.questionId,
-                  questionId: pending.questionId,
-                  answerLetter: pending.newAnswerLetter,
-                  answerKey: result.answerKey,
-                  groupJid: getQuizTargetGroupJid(),
-                  wasUpdate: true,
-                  previousLetter: pending.previousAnswerLetter ?? null
-                });
-              } catch (ecoErr) {
-                console.warn("[economy] update answer:", (ecoErr as Error).message);
               }
               continue;
             }
@@ -1636,6 +1840,7 @@ async function startBot(): Promise<void> {
 
           if (command.kind === "new_question") {
             pendingAnswerChanges.delete(sender);
+            pendingCategoryResolve.delete(sender);
             creationSessions.set(sender, { stage: "awaiting_type" });
             console.log(`[wizard] sessao iniciada para ${sender}`);
             await sock.sendMessage(remoteJid, {
@@ -1645,6 +1850,47 @@ async function startBot(): Promise<void> {
                 "2 - Certo ou errado"
               ].join("\n")
             });
+            continue;
+          }
+
+          if (command.kind === "new_category") {
+            try {
+              const created = await createUserCategory(sender, command.name);
+              await sock.sendMessage(remoteJid, {
+                text: created.alreadyExisted
+                  ? `Categoria "${created.name}" ja existia no seu catalogo.`
+                  : `Categoria "${created.name}" criada.`
+              });
+            } catch (catErr) {
+              await sock.sendMessage(remoteJid, {
+                text: `Nao foi possivel criar a categoria: ${(catErr as Error).message}`
+              });
+            }
+            continue;
+          }
+
+          if (command.kind === "set_categories") {
+            const existing = await getUserAnswer(command.questionId, sender);
+            if (!existing) {
+              await sock.sendMessage(remoteJid, {
+                text: `Voce ainda nao respondeu a #${command.questionId}. Responda antes de categorizar (ex: b ${command.questionId} //minha categoria).`
+              });
+              continue;
+            }
+            try {
+              await beginCategoryResolve(
+                sock,
+                remoteJid,
+                sender,
+                command.questionId,
+                existing.answerId,
+                command.categories
+              );
+            } catch (catErr) {
+              await sock.sendMessage(remoteJid, {
+                text: `Erro ao categorizar: ${(catErr as Error).message}`
+              });
+            }
             continue;
           }
 
@@ -1663,18 +1909,26 @@ async function startBot(): Promise<void> {
                 questionId: command.questionId,
                 newAnswerLetter: command.answer,
                 newAnswerComment: command.comment ?? null,
-                previousAnswerLetter: existing.answerLetter
+                previousAnswerLetter: existing.answerLetter,
+                categories: command.categories
               });
 
               const commentNote = command.comment ? "\n(com comentario)" : "";
+              const cats = command.categories;
+              const catNote =
+                cats !== undefined && cats !== null
+                  ? cats.length
+                    ? `\n(categorias: ${cats.join(", ")})`
+                    : "\n(limpar categorias)"
+                  : "";
               await sock.sendMessage(remoteJid, {
-                text: `Voce ja respondeu essa questao.\nDeseja alterar sua ultima resposta para ${command.answer.toUpperCase()}?${commentNote}\nResponda "sim" ou "nao".`
+                text: `Voce ja respondeu essa questao.\nDeseja alterar sua ultima resposta para ${command.answer.toUpperCase()}?${commentNote}${catNote}\nResponda "sim" ou "nao".`
               });
               continue;
             }
 
             try {
-              await insertAnswer({
+              const saved = await insertAnswer({
                 questionShortId: command.questionId,
                 userJid: sender,
                 userName: getDisplayName(msg, sender),
@@ -1683,6 +1937,19 @@ async function startBot(): Promise<void> {
                 sentAt,
                 sourceMessageId: messageId
               });
+              await sock.sendMessage(remoteJid, {
+                text: "Resposta salva."
+              });
+              if (command.categories !== undefined) {
+                await beginCategoryResolve(
+                  sock,
+                  remoteJid,
+                  sender,
+                  command.questionId,
+                  saved.answerId,
+                  command.categories
+                );
+              }
             } catch (ansErr) {
               if (ansErr instanceof SelfAnswerNotAllowedError) {
                 await sock.sendMessage(remoteJid, { text: ansErr.message });
@@ -1691,9 +1958,6 @@ async function startBot(): Promise<void> {
               throw ansErr;
             }
 
-            await sock.sendMessage(remoteJid, {
-              text: "Resposta salva."
-            });
             await maybePostAutoGabaritoToGroup(sock, command.questionId);
             await maybeWakeCadernoAfterAnswer(sock, command.questionId);
             try {

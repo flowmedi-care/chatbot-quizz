@@ -1,4 +1,5 @@
 const { getClient, pickTargetGroupJid, applyCors, fetchQuestionsForGroup } = require("./_lib.js");
+const { mapCategoriesByAnswerIds, listUserCategories } = require("./_categories.js");
 
 function normalizeLetter(raw) {
   const s = String(raw || "")
@@ -33,6 +34,7 @@ module.exports = async (req, res) => {
         questions: [],
         answers: [],
         participants: [],
+        categoriesByUser: {},
         warning: "TARGET_GROUP_JIDS nao configurado no Vercel."
       });
     }
@@ -45,11 +47,19 @@ module.exports = async (req, res) => {
     if (questionIds.length) {
       const { data: ans, error: aErr } = await supabase
         .from("answers")
-        .select("question_id, question_short_id, user_jid, user_name, answer_letter, answer_comment")
+        .select("id, question_id, question_short_id, user_jid, user_name, answer_letter, answer_comment")
         .in("question_id", questionIds);
 
       if (aErr) throw aErr;
       answersRaw = ans || [];
+    }
+
+    const answerIds = answersRaw.map((r) => Number(r.id)).filter((n) => Number.isFinite(n));
+    let categoriesByAnswer = new Map();
+    try {
+      categoriesByAnswer = await mapCategoriesByAnswerIds(supabase, answerIds);
+    } catch (catErr) {
+      console.warn("[report-data] categories:", catErr.message || catErr);
     }
 
     const cadernoByQuestionId = new Map();
@@ -97,7 +107,9 @@ module.exports = async (req, res) => {
       const q = qById.get(row.question_id);
       const key = q ? q.answer_key : null;
       const correct = q ? answerIsCorrect(row.answer_letter, key) : false;
+      const answerId = Number(row.id);
       return {
+        answerId: Number.isFinite(answerId) ? answerId : null,
         questionId: row.question_id,
         questionShortId: String(row.question_short_id || "").toUpperCase(),
         userJid: row.user_jid,
@@ -108,7 +120,8 @@ module.exports = async (req, res) => {
           row.answer_comment != null && String(row.answer_comment).trim()
             ? String(row.answer_comment).trim()
             : null,
-        correct
+        correct,
+        categories: categoriesByAnswer.get(answerId) || []
       };
     });
 
@@ -121,6 +134,15 @@ module.exports = async (req, res) => {
     const participants = Array.from(partMap.values()).sort((x, y) =>
       x.userName.localeCompare(y.userName, "pt-BR")
     );
+
+    const categoriesByUser = {};
+    for (const p of participants) {
+      try {
+        categoriesByUser[p.userJid] = await listUserCategories(supabase, p.userJid);
+      } catch {
+        categoriesByUser[p.userJid] = [];
+      }
+    }
 
     const questions = rows.map((row) => {
       const cadernoId = cadernoByQuestionId.get(row.id) ?? null;
@@ -146,7 +168,8 @@ module.exports = async (req, res) => {
       groupJid,
       questions,
       answers,
-      participants
+      participants,
+      categoriesByUser
     });
   } catch (e) {
     console.error("[report-data]", e);
