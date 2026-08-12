@@ -20,8 +20,8 @@
     <link rel="stylesheet" href="/css/discussoes.css" />
   </head>
   <body class="disc-page">
-    <div class="wrap disc-wrap">
-      <nav class="site-nav" aria-label="Principal">
+    <div class="disc-shell">
+      <nav class="site-nav disc-nav" aria-label="Principal">
         <a class="site-nav-brand" href="/">
           <img class="brand-mark" src="/img/logo.svg" width="40" height="40" alt="" />
           <strong>Papa Vagas</strong>
@@ -34,64 +34,66 @@
         </div>
       </nav>
 
-      <header class="disc-hero">
-        <h1>Discussões</h1>
-        <p>
-          Comentários sobre gabaritos do grupo — WhatsApp (reply) ou site.
-          Botão <strong>WPP</strong> anuncia o comentário no grupo com contexto.
-        </p>
-        <label class="disc-who">
-          <span>Quem sou eu</span>
-          <select id="disc-user" aria-label="Selecionar participante"></select>
-        </label>
-      </header>
+      <div class="disc-board">
+        <!-- 1 Quem sou eu -->
+        <div class="disc-who-box">
+          <h1 class="disc-title">Discussões</h1>
+          <label class="disc-who">
+            <span>Quem sou eu</span>
+            <select id="disc-user" aria-label="Selecionar participante"></select>
+          </label>
+          <p id="disc-status" class="disc-status" role="status" aria-live="polite"></p>
+        </div>
 
-      <p id="disc-status" class="disc-status" role="status" aria-live="polite"></p>
+        <!-- 2 Filtros -->
+        <div class="disc-filters-bar" id="disc-filters">
+          <label class="disc-filter">
+            <span>Dia no feed</span>
+            <select id="filter-day" aria-label="Filtrar por dia"></select>
+          </label>
+          <label class="disc-filter">
+            <span>Meu vínculo</span>
+            <select id="filter-role" aria-label="Filtrar por engajamento">
+              <option value="engaged_passive" selected>Engajado + passivo</option>
+              <option value="engaged">Só engajado</option>
+              <option value="passive">Só passivo</option>
+              <option value="all">Todos os cadernos</option>
+            </select>
+          </label>
+          <label class="disc-filter">
+            <span>Caderno</span>
+            <select id="filter-caderno" aria-label="Filtrar por caderno">
+              <option value="__all__">Todos (do vínculo)</option>
+            </select>
+          </label>
+          <label class="disc-filter">
+            <span>Comentários</span>
+            <select id="filter-comments" aria-label="Filtrar por comentários">
+              <option value="all">Todas</option>
+              <option value="with">Com discussão</option>
+              <option value="without">Sem discussão</option>
+            </select>
+          </label>
+          <label class="disc-filter">
+            <span>Eu na thread</span>
+            <select id="filter-mine" aria-label="Filtrar pela minha participação">
+              <option value="all">Todas</option>
+              <option value="mine">Que eu comentei ou respondi</option>
+              <option value="not_mine">Que eu não participei</option>
+            </select>
+          </label>
+        </div>
 
-      <div class="disc-layout">
-        <aside class="disc-list-panel" aria-label="Questões em discussão">
-          <div class="disc-filters" id="disc-filters">
-            <label class="disc-filter">
-              <span>Dia no feed</span>
-              <select id="filter-day" aria-label="Filtrar por dia"></select>
-            </label>
-            <label class="disc-filter">
-              <span>Meu vínculo</span>
-              <select id="filter-role" aria-label="Filtrar por engajamento">
-                <option value="engaged_passive" selected>Engajado + passivo</option>
-                <option value="engaged">Só engajado</option>
-                <option value="passive">Só passivo</option>
-                <option value="all">Todos os cadernos</option>
-              </select>
-            </label>
-            <label class="disc-filter">
-              <span>Caderno</span>
-              <select id="filter-caderno" aria-label="Filtrar por caderno">
-                <option value="__all__">Todos (do vínculo)</option>
-              </select>
-            </label>
-            <label class="disc-filter">
-              <span>Comentários</span>
-              <select id="filter-comments" aria-label="Filtrar por comentários">
-                <option value="all">Todas</option>
-                <option value="with">Com comentários</option>
-                <option value="without">Sem comentários</option>
-              </select>
-            </label>
-            <label class="disc-filter">
-              <span>Eu</span>
-              <select id="filter-mine" aria-label="Filtrar pelas minhas">
-                <option value="all">Todas</option>
-                <option value="mine">Que eu comentei</option>
-                <option value="not_mine">Que eu não comentei</option>
-              </select>
-            </label>
-          </div>
+        <!-- 3 Lista de questões -->
+        <aside class="disc-list-panel" aria-label="Questões">
+          <div class="disc-panel-label">Questões</div>
           <div id="disc-feed" class="disc-feed"></div>
         </aside>
-        <section class="disc-thread-panel" aria-label="Thread">
+
+        <!-- 4–6 Detalhe -->
+        <section class="disc-main-panel" aria-label="Detalhe da discussão">
           <div id="disc-thread-empty" class="disc-empty">
-            Selecione uma questão à esquerda para ver respostas, comentários e discutir.
+            Selecione uma questão à esquerda.
           </div>
           <div id="disc-thread" class="disc-thread" hidden></div>
         </section>

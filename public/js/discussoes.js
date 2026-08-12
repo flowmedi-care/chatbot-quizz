@@ -88,20 +88,36 @@
     return { engaged: Boolean(hit.engaged), passive: Boolean(hit.passive), linked: true };
   }
 
+  const STORAGE_CONTEXT = "papaVagasDiscContextOpen";
+  let contextOpen = localStorage.getItem(STORAGE_CONTEXT) !== "0";
+
   function iCommentedOnPost(p) {
+    // Só discussion_comments (raiz OU reply a amigo). NÃO usa answers.answer_comment.
     const me = jidKey(getUserJid());
     const myName = normalizeName(getUserName());
+    const discussants = Array.isArray(p.discussants) ? p.discussants : [];
+
+    for (const d of discussants) {
+      const dj = jidKey(d.jidKey || d.userJid || "");
+      const local = String(d.local || dj.split("@")[0] || "").toLowerCase();
+      if (me && (dj === me || (local && local === me.split("@")[0]))) return true;
+      const dn = normalizeName(d.name || "");
+      if (
+        myName &&
+        dn &&
+        myName !== "participante" &&
+        myName !== "selecione…" &&
+        dn === myName
+      ) {
+        return true;
+      }
+    }
+
+    // fallback legado se API antiga
     const authors = Array.isArray(p.authorJidKeys) ? p.authorJidKeys : [];
     const names = Array.isArray(p.authorNames) ? p.authorNames : [];
-    if (me) {
-      if (authors.includes(me)) return true;
-      const local = me.split("@")[0];
-      if (local && authors.includes(local)) return true;
-    }
-    // WhatsApp costuma gravar @lid; o seletor usa telefone — casa pelo nome exibido
-    if (myName && myName !== "participante" && myName !== "selecione…") {
-      if (names.some((n) => normalizeName(n) === myName)) return true;
-    }
+    if (me && (authors.includes(me) || authors.includes(me.split("@")[0]))) return true;
+    if (myName && names.some((n) => normalizeName(n) === myName)) return true;
     return false;
   }
 
@@ -309,9 +325,9 @@
     }
   }
 
-  function buildAnswersBlock(answers, answerKey) {
+  function buildAnswersPanel(answers, answerKey) {
     if (!answers || !answers.length) {
-      return `<div class="disc-context"><h3>Respostas</h3><p class="disc-compose-hint">Nenhuma resposta registrada ainda.</p></div>`;
+      return `<div class="disc-panel-block"><h3>5 · Gabarito e marcas</h3><p class="disc-compose-hint">Nenhuma resposta registrada.</p></div>`;
     }
     const rows = answers
       .slice()
@@ -324,8 +340,8 @@
         return `<li class="${cls}"><strong>${esc(a.userName)}</strong> marcou <strong>${esc(a.letter)}</strong> (${result})${comment}</li>`;
       })
       .join("");
-    return `<div class="disc-context">
-      <h3>Gabarito: ${esc(answerKey || "—")} · O que cada um marcou</h3>
+    return `<div class="disc-panel-block">
+      <h3>5 · Gabarito: ${esc(answerKey || "—")}</h3>
       <ul class="disc-context-list">${rows}</ul>
     </div>`;
   }
@@ -377,32 +393,56 @@
     els.thread.hidden = false;
     const p = activeDetail.post;
     const tree = buildTree(activeDetail.comments || []);
-    const answersBlock = buildAnswersBlock(activeDetail.answers || [], p.answerKey);
+    const answersPanel = buildAnswersPanel(activeDetail.answers || [], p.answerKey);
+    const statement = p.statementText || p.statementPreview || "Sem enunciado em texto.";
     const expl = p.explanationText
-      ? `<div class="disc-context"><h3>Comentário do autor</h3><p>${esc(p.explanationText)}</p></div>`
+      ? `\n\n— Comentário do autor —\n${p.explanationText}`
       : "";
     const replyHint =
       replyToId != null
         ? `Respondendo ao comentário #${replyToId}`
-        : "Comentário na questão (nível raiz)";
+        : "Novo comentário na questão (ou responda alguém abaixo)";
 
     els.thread.innerHTML = `
-      <div class="disc-thread-head">
+      <div class="disc-context-toggle">
         <h2>Questão #${esc(p.shortId)}</h2>
-        <p>${esc(p.statementText || p.statementPreview || "Sem enunciado em texto.")}</p>
+        <button type="button" class="disc-btn" id="disc-toggle-context">
+          ${contextOpen ? "Ocultar enunciado/gabarito" : "Mostrar enunciado/gabarito"}
+        </button>
       </div>
-      ${answersBlock}
-      ${expl}
-      <div class="disc-comments">${tree || `<p class="disc-empty">Nenhum comentário ainda. Seja o primeiro.</p>`}</div>
-      <form class="disc-compose" id="disc-compose-form">
-        <label class="disc-compose-hint" id="disc-reply-hint">${esc(replyHint)}</label>
-        <textarea id="disc-body" placeholder="Escreva seu comentário…" required maxlength="4000"></textarea>
-        <div class="disc-compose-row">
-          <button type="submit" class="disc-btn disc-btn-primary">Publicar</button>
-          <button type="button" class="disc-btn" id="disc-cancel-reply" ${replyToId == null ? "hidden" : ""}>Cancelar reply</button>
+      <div class="disc-context-panels${contextOpen ? "" : " is-hidden"}" id="disc-context-panels">
+        <div class="disc-panel-block">
+          <h3>4 · Enunciado + comentário do autor</h3>
+          <p class="statement">${esc(statement + expl)}</p>
         </div>
-      </form>
+        ${answersPanel}
+      </div>
+      <div class="disc-comments-wrap">
+        <h3>6 · Comentários da discussão</h3>
+        <div class="disc-comments">${tree || `<p class="disc-empty">Nenhum comentário ainda. Seja o primeiro.</p>`}</div>
+        <form class="disc-compose" id="disc-compose-form">
+          <label class="disc-compose-hint" id="disc-reply-hint">${esc(replyHint)}</label>
+          <textarea id="disc-body" placeholder="Escreva um comentário ou reply…" required maxlength="4000"></textarea>
+          <div class="disc-compose-row">
+            <button type="submit" class="disc-btn disc-btn-primary">Publicar</button>
+            <button type="button" class="disc-btn" id="disc-cancel-reply" ${replyToId == null ? "hidden" : ""}>Cancelar reply</button>
+          </div>
+        </form>
+      </div>
     `;
+
+    document.getElementById("disc-toggle-context")?.addEventListener("click", () => {
+      contextOpen = !contextOpen;
+      localStorage.setItem(STORAGE_CONTEXT, contextOpen ? "1" : "0");
+      const panels = document.getElementById("disc-context-panels");
+      const btn = document.getElementById("disc-toggle-context");
+      if (panels) panels.classList.toggle("is-hidden", !contextOpen);
+      if (btn) {
+        btn.textContent = contextOpen
+          ? "Ocultar enunciado/gabarito"
+          : "Mostrar enunciado/gabarito";
+      }
+    });
 
     els.thread.querySelectorAll("[data-reply]").forEach((btn) => {
       btn.addEventListener("click", () => {
@@ -426,7 +466,7 @@
     cancel?.addEventListener("click", () => {
       replyToId = null;
       const hint = document.getElementById("disc-reply-hint");
-      if (hint) hint.textContent = "Comentário na questão (nível raiz)";
+      if (hint) hint.textContent = "Novo comentário na questão (ou responda alguém abaixo)";
       cancel.hidden = true;
     });
 

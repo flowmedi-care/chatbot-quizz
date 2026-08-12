@@ -172,24 +172,23 @@ async function enrichPostsList(supabase, rows) {
     .in("post_id", postIds);
 
   const countByPost = new Map();
-  const authorsByPost = new Map();
-  const namesByPost = new Map();
+  /** @type {Map<number, Map<string, { jidKey: string, local: string, name: string }>>} */
+  const discussantsByPost = new Map();
   for (const row of cRows || []) {
     const pid = Number(row.post_id);
     countByPost.set(pid, (countByPost.get(pid) || 0) + 1);
-    if (!authorsByPost.has(pid)) authorsByPost.set(pid, new Set());
-    if (!namesByPost.has(pid)) namesByPost.set(pid, new Set());
-    authorsByPost.get(pid).add(jidKey(row.author_jid));
-    // também a parte local (antes do @) — ajuda pouco lid↔phone, mas não atrapalha
+    if (!discussantsByPost.has(pid)) discussantsByPost.set(pid, new Map());
+    const jk = jidKey(row.author_jid);
     const local = String(row.author_jid || "")
       .split("@")[0]
       .split(":")[0]
       .toLowerCase();
-    if (local) authorsByPost.get(pid).add(local);
-    const nm = String(row.author_name || "")
-      .trim()
-      .toLowerCase();
-    if (nm && nm !== "participante") namesByPost.get(pid).add(nm);
+    const nm = String(row.author_name || "").trim();
+    const map = discussantsByPost.get(pid);
+    const prev = map.get(jk) || { jidKey: jk, local, name: "" };
+    if (nm && (!prev.name || nm.length > prev.name.length)) prev.name = nm;
+    prev.local = local || prev.local;
+    map.set(jk, prev);
   }
 
   // Mapa de engajamento por caderno (todos os membros) — o front filtra pelo user selecionado
@@ -224,14 +223,17 @@ async function enrichPostsList(supabase, rows) {
     if (cadernoId != null) {
       cadernoSet.set(cadernoId, cadernoName);
     }
+    const discussants = [...(discussantsByPost.get(p.id)?.values() || [])];
     return {
       ...p,
       cadernoId,
       cadernoName,
       statementPreview: previewById.get(p.questionId) ?? null,
       commentCount: countByPost.get(p.id) || 0,
-      authorJidKeys: [...(authorsByPost.get(p.id) || [])],
-      authorNames: [...(namesByPost.get(p.id) || [])]
+      // quem escreveu na thread (raiz ou reply) — NÃO usa answers.answer_comment
+      discussants,
+      authorJidKeys: discussants.map((d) => d.jidKey),
+      authorNames: discussants.map((d) => d.name).filter(Boolean)
     };
   });
 
