@@ -204,36 +204,6 @@
     if (draft) selectedCategoryIds = new Set(draft);
   }
 
-  function renderQuizCategoryToggles() {
-    const wrap = $("q-categories-toggles");
-    if (!wrap) return;
-    if (!userCategories.length) {
-      wrap.innerHTML = '<span class="atv-muted" style="font-size:0.75rem">Sem tags · use +</span>';
-      updateQuestionDetails();
-      return;
-    }
-    wrap.innerHTML = userCategories
-      .map((c) => {
-        const id = Number(c.id);
-        const on = selectedCategoryIds.has(id);
-        return `<label class="atv-cat-check">
-          <input type="checkbox" data-id="${esc(String(id))}" ${on ? "checked" : ""} />
-          <span>${esc(c.name)}</span>
-        </label>`;
-      })
-      .join("");
-    wrap.querySelectorAll('input[type="checkbox"]').forEach((input) => {
-      input.addEventListener("change", () => {
-        const id = Number(input.dataset.id);
-        if (input.checked) selectedCategoryIds.add(id);
-        else selectedCategoryIds.delete(id);
-        saveDraftCatsForCurrent();
-        updateQuestionDetails();
-      });
-    });
-    updateQuestionDetails();
-  }
-
   function formatAssistDetail(q) {
     if (!q || !q.assistUsed || !q.assistReveal) return null;
     const r = q.assistReveal;
@@ -272,6 +242,7 @@
   function navigateQuiz(delta) {
     if (submitting || !pending.length) return;
     saveDraftCatsForCurrent();
+    setCatsPanelOpen(false);
     const next = index + delta;
     if (next < 0 || next >= pending.length) return;
     index = next;
@@ -643,19 +614,12 @@
     assistMode = false;
     const wrap = $("q-assist");
     const btn = $("btn-assist");
-    const hint = $("assist-hint");
     if (!wrap || !btn) return;
     wrap.classList.remove("hidden");
     if (!q || q.assistUsed) {
       btn.disabled = true;
       btn.classList.remove("active");
       btn.textContent = "Item usado";
-      const r = q && q.assistReveal;
-      if (r && hint) {
-        const L = (r.letter || r.removed || "?").toString().toUpperCase();
-        hint.textContent =
-          r.isCorrect === true ? `${L} verdadeira` : `${L} falsa`;
-      } else if (hint) hint.textContent = "";
       updateQuestionDetails();
       return;
     }
@@ -663,10 +627,52 @@
     btn.classList.remove("active");
     btn.textContent =
       assistQty > 0 ? `Verificar alt. (${assistQty})` : "Sem item loja";
-    if (hint) {
-      hint.textContent =
-        assistQty > 0 ? "1 consumível · máx. 1/questão" : "Hub /loja · 50 créditos";
+    updateQuestionDetails();
+  }
+
+  function setCatsPanelOpen(open) {
+    const panel = $("q-cats-panel");
+    const toggle = $("q-cats-toggle");
+    if (!panel || !toggle) return;
+    panel.classList.toggle("hidden", !open);
+    toggle.setAttribute("aria-expanded", open ? "true" : "false");
+  }
+
+  function syncCatsToggleLabel() {
+    const countEl = $("q-cats-toggle-count");
+    if (!countEl) return;
+    const n = selectedCategoryIds.size;
+    countEl.textContent = n > 0 ? String(n) : "";
+  }
+
+  function renderQuizCategoryToggles() {
+    const wrap = $("q-categories-toggles");
+    if (!wrap) return;
+    if (!userCategories.length) {
+      wrap.innerHTML = '<p class="atv-muted" style="margin:0 0 0.35rem;font-size:0.78rem;font-weight:500">Nenhuma ainda.</p>';
+    } else {
+      wrap.innerHTML = userCategories
+        .map((c) => {
+          const id = Number(c.id);
+          const on = selectedCategoryIds.has(id);
+          return `<label class="atv-cat-check">
+            <input type="checkbox" data-id="${esc(String(id))}" ${on ? "checked" : ""} />
+            <span>${esc(c.name)}</span>
+          </label>`;
+        })
+        .join("");
+      wrap.querySelectorAll('input[type="checkbox"]').forEach((input) => {
+        input.addEventListener("change", () => {
+          const id = Number(input.dataset.id);
+          if (input.checked) selectedCategoryIds.add(id);
+          else selectedCategoryIds.delete(id);
+          saveDraftCatsForCurrent();
+          syncCatsToggleLabel();
+          updateQuestionDetails();
+        });
+      });
     }
+    syncCatsToggleLabel();
     updateQuestionDetails();
   }
 
@@ -682,6 +688,7 @@
     $("q-status").classList.add("hidden");
     $("q-comment").value = "";
     assistMode = false;
+    setCatsPanelOpen(false);
     loadDraftCatsForCurrent();
 
     const doneSoFar = answeredAtStart + index;
@@ -925,8 +932,16 @@
     }
     if ($("q-prev")) $("q-prev").addEventListener("click", () => navigateQuiz(-1));
     if ($("q-next")) $("q-next").addEventListener("click", () => navigateQuiz(1));
+    if ($("q-cats-toggle")) {
+      $("q-cats-toggle").addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        const open = $("q-cats-panel") && !$("q-cats-panel").classList.contains("hidden");
+        setCatsPanelOpen(!open);
+      });
+    }
     if ($("q-new-cat")) {
-      $("q-new-cat").addEventListener("click", async () => {
+      $("q-new-cat").addEventListener("click", async (ev) => {
+        ev.stopPropagation();
         const name = window.prompt("Nome da nova categoria:");
         if (!name) return;
         const input = $("atv-cat-name");
@@ -936,9 +951,15 @@
           selectedCategoryIds.add(Number(cat.id));
           saveDraftCatsForCurrent();
           renderQuizCategoryToggles();
+          setCatsPanelOpen(true);
         }
       });
     }
+    document.addEventListener("click", (ev) => {
+      const wrap = document.querySelector(".atv-toolbar-cats-wrap");
+      if (!wrap || wrap.contains(ev.target)) return;
+      setCatsPanelOpen(false);
+    });
 
     const btnAssist = $("btn-assist");
     if (btnAssist) {
@@ -947,12 +968,6 @@
         if (!q || q.assistUsed || assistQty < 1 || submitting || assistBusy) return;
         assistMode = !assistMode;
         btnAssist.classList.toggle("active", assistMode);
-        const hint = $("assist-hint");
-        if (hint) {
-          hint.textContent = assistMode
-            ? "Modo verificação: toque na alternativa que quer checar."
-            : "Gasta 1 consumível · escolha uma letra · máx. 1 por questão";
-        }
         $("q-choices").classList.toggle("assist-picking", assistMode);
       });
     }

@@ -174,11 +174,17 @@
               <button type="button" id="btn-assist" class="omissas-assist-btn">
                 Verificar alternativa
               </button>
-              <p id="assist-hint" class="omissas-assist-hint"></p>
             </div>
-            <div id="q-categories" class="atv-toolbar-cats">
-              <div id="q-categories-toggles" class="atv-cat-checks"></div>
-              <button type="button" id="q-new-cat" class="atv-btn ghost btn-sm" title="Nova categoria">+</button>
+            <div class="atv-toolbar-cats-wrap">
+              <button type="button" id="q-cats-toggle" class="atv-cats-toggle" aria-expanded="false" aria-controls="q-cats-panel">
+                Categorias
+                <span id="q-cats-toggle-count" class="atv-cats-toggle-count"></span>
+                <span class="atv-cats-caret" aria-hidden="true">▾</span>
+              </button>
+              <div id="q-cats-panel" class="atv-cats-panel-pop hidden" role="group" aria-label="Selecionar categorias">
+                <div id="q-categories-toggles" class="atv-cat-checks"></div>
+                <button type="button" id="q-new-cat" class="atv-btn atv-cats-add">+ Nova categoria</button>
+              </div>
             </div>
             <button type="button" class="atv-btn ghost atv-toolbar-nav" id="q-next" title="Próxima">Próx. ›</button>
           </div>
