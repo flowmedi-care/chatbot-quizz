@@ -81,7 +81,9 @@ import {
   findQuestionByWaMessageId,
   findDiscussionCommentByWaMessageId,
   getDiscussionPostByQuestionId,
-  insertDiscussionComment
+  insertDiscussionComment,
+  listDiscussionCommentsForPost,
+  formatDiscussionCommentsTree
 } from "./supabase";
 import {
   computeNextRunAt,
@@ -865,14 +867,47 @@ async function publishQuestionResult(
     }
     if (options.discussionSource) {
       try {
-        await upsertDiscussionPost({
+        const post = await upsertDiscussionPost({
           questionId: result.questionId,
           shortId: result.shortId,
           groupJid: jid,
           source: options.discussionSource
         });
+        if (post) {
+          const comments = await listDiscussionCommentsForPost(post.id);
+          const tree = formatDiscussionCommentsTree(comments);
+          if (tree) {
+            const discText = [
+              `[Discussão] #${result.shortId}`,
+              "Comentários já registrados (site/adiantar/WhatsApp):",
+              tree
+            ].join("\n");
+            const discSent = await sock.sendMessage(
+              jid,
+              { text: discText },
+              resultId
+                ? {
+                    quoted: {
+                      key: { remoteJid: jid, id: resultId, fromMe: true },
+                      message: { conversation: `Resultado da Questao #${result.shortId}` }
+                    }
+                  }
+                : undefined
+            );
+            const discId = discSent?.key?.id ? String(discSent.key.id) : null;
+            if (discId) {
+              await insertQuestionWaMessage({
+                questionId: result.questionId,
+                shortId: result.shortId,
+                groupJid: jid,
+                waMessageId: discId,
+                role: "statement"
+              });
+            }
+          }
+        }
       } catch (e) {
-        console.warn("[discussions] upsert post:", (e as Error).message);
+        console.warn("[discussions] upsert/send digest:", (e as Error).message);
       }
     }
   }

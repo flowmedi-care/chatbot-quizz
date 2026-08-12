@@ -354,6 +354,7 @@ async function handleOmissasSession(req, res) {
     return res.status(200).json({
       mode: session.mode,
       userName,
+      userJid: session.userJid,
       assistEliminateQty: assistQty,
       expiresAt: session.expiresAt,
       completedAt: session.completedAt,

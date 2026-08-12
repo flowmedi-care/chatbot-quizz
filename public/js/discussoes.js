@@ -6,14 +6,21 @@
     status: document.getElementById("disc-status"),
     feed: document.getElementById("disc-feed"),
     thread: document.getElementById("disc-thread"),
-    threadEmpty: document.getElementById("disc-thread-empty")
+    threadEmpty: document.getElementById("disc-thread-empty"),
+    filterDay: document.getElementById("filter-day"),
+    filterComments: document.getElementById("filter-comments"),
+    filterMine: document.getElementById("filter-mine")
   };
 
   /** @type {any[]} */
   let posts = [];
+  /** @type {string[]} */
+  let availableDays = [];
+  /** @type {string} */
+  let today = "";
   /** @type {number | null} */
   let activePostId = null;
-  /** @type {{ post: any, comments: any[] } | null} */
+  /** @type {{ post: any, comments: any[], answers?: any[] } | null} */
   let activeDetail = null;
   /** @type {number | null} */
   let replyToId = null;
@@ -24,6 +31,17 @@
       .replace(/</g, "&lt;")
       .replace(/>/g, "&gt;")
       .replace(/"/g, "&quot;");
+  }
+
+  function jidKey(jid) {
+    const raw = String(jid || "")
+      .trim()
+      .toLowerCase();
+    const at = raw.indexOf("@");
+    if (at < 0) return raw;
+    const user = raw.slice(0, at).split(":")[0];
+    const domain = raw.slice(at + 1);
+    return `${user}@${domain}`;
   }
 
   function setStatus(msg) {
@@ -44,6 +62,56 @@
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
     return data;
+  }
+
+  function filteredPosts() {
+    const day = els.filterDay?.value || "today";
+    const comments = els.filterComments?.value || "all";
+    const mine = els.filterMine?.value || "all";
+    const me = jidKey(getUserJid());
+
+    return posts.filter((p) => {
+      if (day === "today") {
+        if (!today || p.feedDay !== today) return false;
+      } else if (day !== "all") {
+        if (p.feedDay !== day) return false;
+      }
+
+      const count = Number(p.commentCount || 0);
+      if (comments === "with" && count <= 0) return false;
+      if (comments === "without" && count > 0) return false;
+
+      if (mine !== "all") {
+        if (!me) return false;
+        const authors = Array.isArray(p.authorJidKeys) ? p.authorJidKeys : [];
+        const iCommented = authors.includes(me);
+        if (mine === "mine" && !iCommented) return false;
+        if (mine === "not_mine" && iCommented) return false;
+      }
+      return true;
+    });
+  }
+
+  function fillDayFilter() {
+    if (!els.filterDay) return;
+    const prev = els.filterDay.value;
+    const days = [...availableDays];
+    if (today && !days.includes(today)) days.unshift(today);
+
+    const opts = [
+      `<option value="today">Hoje (${esc(today || "—")})</option>`,
+      `<option value="all">Todos os dias</option>`,
+      ...days
+        .filter((d) => d !== today)
+        .map((d) => `<option value="${esc(d)}">${esc(d.split("-").reverse().join("/"))}</option>`)
+    ];
+    els.filterDay.innerHTML = opts.join("");
+
+    if (prev && [...els.filterDay.options].some((o) => o.value === prev)) {
+      els.filterDay.value = prev;
+    } else {
+      els.filterDay.value = "today";
+    }
   }
 
   async function loadMembers() {
@@ -67,6 +135,7 @@
     }
     els.user.addEventListener("change", () => {
       if (els.user.value) localStorage.setItem(STORAGE_USER, els.user.value);
+      renderFeed();
     });
   }
 
@@ -75,8 +144,11 @@
     try {
       const data = await fetchJson("/api/discussions");
       posts = data.posts || [];
+      availableDays = data.availableDays || [];
+      today = data.today || "";
+      fillDayFilter();
       if (data.warning) setStatus(data.warning);
-      else setStatus(posts.length ? "" : "Nenhuma discussão ainda. Aparecem após auto-gabarito ou /gabarito.");
+      else setStatus("");
       renderFeed();
     } catch (e) {
       setStatus(e.message || "Erro ao carregar");
@@ -87,15 +159,24 @@
 
   function renderFeed() {
     if (!els.feed) return;
+    const list = filteredPosts();
     if (!posts.length) {
-      els.feed.innerHTML = `<p class="disc-empty">Nada por aqui ainda.</p>`;
+      els.feed.innerHTML = `<p class="disc-empty">Nada no feed ainda. Aparece após auto-gabarito ou /gabarito.</p>`;
       return;
     }
-    els.feed.innerHTML = posts
+    if (!list.length) {
+      els.feed.innerHTML = `<p class="disc-empty">Nenhuma questão com esses filtros.</p>`;
+      return;
+    }
+    els.feed.innerHTML = list
       .map((p) => {
         const active = p.id === activePostId ? " is-active" : "";
         const preview = p.statementPreview || "Sem enunciado em texto.";
-        const when = p.createdAt ? new Date(p.createdAt).toLocaleString("pt-BR") : "";
+        const when = p.feedAt
+          ? new Date(p.feedAt).toLocaleString("pt-BR")
+          : p.createdAt
+            ? new Date(p.createdAt).toLocaleString("pt-BR")
+            : "";
         return `<button type="button" class="disc-card${active}" data-post-id="${p.id}">
           <div class="disc-card-meta">
             <span>#${esc(p.shortId)}</span>
@@ -132,6 +213,27 @@
     }
   }
 
+  function buildAnswersBlock(answers, answerKey) {
+    if (!answers || !answers.length) {
+      return `<div class="disc-context"><h3>Respostas</h3><p class="disc-compose-hint">Nenhuma resposta registrada ainda.</p></div>`;
+    }
+    const rows = answers
+      .slice()
+      .sort((a, b) => String(a.userName || "").localeCompare(String(b.userName || ""), "pt-BR"))
+      .map((a) => {
+        const cls = a.correct === true ? "ok" : a.correct === false ? "bad" : "";
+        const result =
+          a.correct === true ? "certo" : a.correct === false ? "errado" : "—";
+        const comment = a.comment ? ` — “${esc(a.comment)}”` : "";
+        return `<li class="${cls}"><strong>${esc(a.userName)}</strong> marcou <strong>${esc(a.letter)}</strong> (${result})${comment}</li>`;
+      })
+      .join("");
+    return `<div class="disc-context">
+      <h3>Gabarito: ${esc(answerKey || "—")} · O que cada um marcou</h3>
+      <ul class="disc-context-list">${rows}</ul>
+    </div>`;
+  }
+
   function buildTree(comments) {
     const byParent = new Map();
     for (const c of comments || []) {
@@ -139,14 +241,14 @@
       if (!byParent.has(key)) byParent.set(key, []);
       byParent.get(key).push(c);
     }
-    function renderNodes(parentKey, depth) {
+    function renderNodes(parentKey) {
       const list = byParent.get(parentKey) || [];
       return list
         .map((c) => {
           const when = c.createdAt ? new Date(c.createdAt).toLocaleString("pt-BR") : "";
           const name = c.authorName || "Participante";
           const shared = Boolean(c.sharedToWaAt);
-          const children = renderNodes(String(c.id), depth + 1);
+          const children = renderNodes(String(c.id));
           return `<article class="disc-comment" data-comment-id="${c.id}">
             <div class="disc-comment-meta">
               <span class="disc-comment-author">${esc(name)}</span>
@@ -165,7 +267,7 @@
         })
         .join("");
     }
-    return renderNodes("root", 0);
+    return renderNodes("root");
   }
 
   function renderThread() {
@@ -179,6 +281,10 @@
     els.thread.hidden = false;
     const p = activeDetail.post;
     const tree = buildTree(activeDetail.comments || []);
+    const answersBlock = buildAnswersBlock(activeDetail.answers || [], p.answerKey);
+    const expl = p.explanationText
+      ? `<div class="disc-context"><h3>Comentário do autor</h3><p>${esc(p.explanationText)}</p></div>`
+      : "";
     const replyHint =
       replyToId != null
         ? `Respondendo ao comentário #${replyToId}`
@@ -189,6 +295,8 @@
         <h2>Questão #${esc(p.shortId)}</h2>
         <p>${esc(p.statementText || p.statementPreview || "Sem enunciado em texto.")}</p>
       </div>
+      ${answersBlock}
+      ${expl}
       <div class="disc-comments">${tree || `<p class="disc-empty">Nenhum comentário ainda. Seja o primeiro.</p>`}</div>
       <form class="disc-compose" id="disc-compose-form">
         <label class="disc-compose-hint" id="disc-reply-hint">${esc(replyHint)}</label>
@@ -293,7 +401,14 @@
     }
   }
 
+  function bindFilters() {
+    for (const el of [els.filterDay, els.filterComments, els.filterMine]) {
+      el?.addEventListener("change", () => renderFeed());
+    }
+  }
+
   async function init() {
+    bindFilters();
     try {
       await loadMembers();
     } catch (e) {

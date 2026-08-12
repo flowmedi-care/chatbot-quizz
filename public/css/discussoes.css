@@ -34,7 +34,8 @@
   font-weight: 600;
 }
 
-.disc-who select {
+.disc-who select,
+.disc-filter select {
   font: inherit;
   font-weight: 500;
   padding: 0.55rem 0.75rem;
@@ -52,9 +53,10 @@
 
 .disc-layout {
   display: grid;
-  grid-template-columns: minmax(240px, 340px) 1fr;
+  grid-template-columns: minmax(260px, 360px) 1fr;
   gap: 1.25rem;
-  align-items: start;
+  align-items: stretch;
+  min-height: 520px;
 }
 
 .disc-list-panel,
@@ -64,12 +66,43 @@
   border-radius: 16px;
   padding: 0.85rem;
   min-height: 420px;
+  display: flex;
+  flex-direction: column;
+  max-height: min(72vh, 820px);
+}
+
+.disc-filters {
+  display: grid;
+  gap: 0.45rem;
+  margin-bottom: 0.65rem;
+  padding-bottom: 0.65rem;
+  border-bottom: 1px solid var(--disc-border);
+  flex-shrink: 0;
+}
+
+.disc-filter {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--muted);
 }
 
 .disc-feed {
   display: flex;
   flex-direction: column;
   gap: 0.55rem;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+  padding-right: 0.2rem;
+}
+
+.disc-thread {
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
 }
 
 .disc-card {
@@ -81,6 +114,7 @@
   padding: 0.75rem 0.85rem;
   cursor: pointer;
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  flex-shrink: 0;
 }
 
 .disc-card:hover,
@@ -138,6 +172,42 @@
   color: var(--muted);
   font-size: 0.92rem;
   white-space: pre-wrap;
+}
+
+.disc-context {
+  margin: 0.85rem 0 1rem;
+  padding: 0.75rem 0.85rem;
+  background: #fff;
+  border: 1px solid var(--disc-border);
+  border-radius: 12px;
+}
+
+.disc-context h3 {
+  margin: 0 0 0.45rem;
+  font-size: 0.92rem;
+  color: var(--disc-navy);
+}
+
+.disc-context-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.disc-context-list li {
+  font-size: 0.88rem;
+  line-height: 1.4;
+}
+
+.disc-context-list .ok {
+  color: #047857;
+}
+
+.disc-context-list .bad {
+  color: #be123c;
 }
 
 .disc-comments {
@@ -258,5 +328,9 @@
   .disc-list-panel,
   .disc-thread-panel {
     min-height: 0;
+    max-height: none;
+  }
+  .disc-feed {
+    max-height: 42vh;
   }
 }

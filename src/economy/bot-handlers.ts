@@ -41,7 +41,9 @@ import {
   getDiscussionCommentById,
   getDiscussionPostById,
   getResultWaMessageIdForQuestion,
-  markDiscussionCommentSharedToWa
+  markDiscussionCommentSharedToWa,
+  listDiscussionCommentsForPost,
+  getQuestionResult
 } from "../supabase";
 import { tryAdvanceCadernoAfterAnswer } from "../caderno-scheduler";
 import { todayIso, addDaysToIso, economyDb } from "./db";
@@ -63,11 +65,56 @@ async function handleDiscussionSharePending(
     (comment.authorName && comment.authorName.trim()) ||
     String(payload.authorLabel || "").trim() ||
     "Alguém";
+
+  const allComments = await listDiscussionCommentsForPost(post.id);
+  const byId = new Map(allComments.map((c) => [c.id, c]));
+  const chain: typeof allComments = [];
+  let cur: (typeof allComments)[number] | undefined = comment;
+  const seen = new Set<number>();
+  while (cur && !seen.has(cur.id)) {
+    seen.add(cur.id);
+    chain.unshift(cur);
+    cur = cur.parentId != null ? byId.get(cur.parentId) : undefined;
+  }
+
+  let resultHint = "";
+  try {
+    const result = await getQuestionResult(post.shortId);
+    const me = result.correctRespondents
+      .concat(result.wrongRespondents)
+      .find((r) => r.name === author);
+    const letterLine = me
+      ? `Marcou: ${me.letter}${me.comment ? ` — "${me.comment}"` : ""}`
+      : null;
+    resultHint = [
+      `Gabarito: ${result.answerKey}`,
+      letterLine,
+      `Acertaram: ${result.correctUsers.length} · Erraram: ${result.wrongUsers.length}`
+    ]
+      .filter(Boolean)
+      .join("\n");
+  } catch {
+    /* ignore */
+  }
+
+  const chainLines = chain.map((c, i) => {
+    const who = (c.authorName && c.authorName.trim()) || "Participante";
+    const prefix = i === 0 ? "└" : `${"  ".repeat(i)}└`;
+    return `${prefix} ${who}: ${c.body}`;
+  });
+
   const text = [
     `[Discussão site] #${post.shortId}`,
-    `${author} comentou:`,
-    `"${comment.body}"`
-  ].join("\n");
+    resultHint,
+    resultHint ? "" : null,
+    `${author} comentou${comment.parentId ? " (em resposta)" : ""}:`,
+    `"${comment.body}"`,
+    chain.length > 1 ? "" : null,
+    chain.length > 1 ? "Contexto da thread:" : null,
+    chain.length > 1 ? chainLines.join("\n") : null
+  ]
+    .filter((x) => x != null)
+    .join("\n");
 
   const resultWaId = await getResultWaMessageIdForQuestion(post.questionId, post.groupJid);
   if (resultWaId) {

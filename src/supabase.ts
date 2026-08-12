@@ -4122,7 +4122,7 @@ export async function clearAnswerCategories(answerId: number): Promise<void> {
 
 /* ——— Discussões (WA anchors + feed) ——— */
 
-export type DiscussionPostSource = "auto_gabarito" | "gabarito";
+export type DiscussionPostSource = "auto_gabarito" | "gabarito" | "early";
 export type DiscussionCommentSource = "whatsapp" | "web";
 export type QuestionWaMessageRole = "statement" | "result" | "explanation_media";
 
@@ -4133,6 +4133,7 @@ export type DiscussionPost = {
   groupJid: string;
   source: DiscussionPostSource;
   createdAt: string;
+  feedAt?: string | null;
   statementPreview?: string | null;
   commentCount?: number;
 };
@@ -4157,7 +4158,8 @@ function mapDiscussionPost(row: Record<string, unknown>): DiscussionPost {
     shortId: String(row.short_id || "").toUpperCase(),
     groupJid: String(row.group_jid || ""),
     source: String(row.source) as DiscussionPostSource,
-    createdAt: String(row.created_at)
+    createdAt: String(row.created_at),
+    feedAt: row.feed_at != null ? String(row.feed_at) : null
   };
 }
 
@@ -4179,6 +4181,13 @@ function mapDiscussionComment(row: Record<string, unknown>): DiscussionComment {
 function discussionsMissingTable(error: { message?: string } | null): boolean {
   const msg = String(error?.message || "").toLowerCase();
   return msg.includes("relation") && msg.includes("does not exist");
+}
+
+const DISCUSSION_POST_SELECT =
+  "id, question_id, short_id, group_jid, source, created_at, feed_at";
+
+function isFeedSource(source: string): boolean {
+  return source === "auto_gabarito" || source === "gabarito";
 }
 
 export async function insertQuestionWaMessage(input: {
@@ -4211,6 +4220,7 @@ export async function insertQuestionWaMessage(input: {
   }
 }
 
+/** Cria ou promove post. early não entra no feed; auto_gabarito/gabarito seta feed_at. */
 export async function upsertDiscussionPost(input: {
   questionId: number;
   shortId: string;
@@ -4219,7 +4229,7 @@ export async function upsertDiscussionPost(input: {
 }): Promise<DiscussionPost | null> {
   const { data: existing, error: findErr } = await supabase
     .from("discussion_posts")
-    .select("id, question_id, short_id, group_jid, source, created_at")
+    .select(DISCUSSION_POST_SELECT)
     .eq("question_id", input.questionId)
     .maybeSingle();
 
@@ -4233,26 +4243,52 @@ export async function upsertDiscussionPost(input: {
     throw new Error(`Erro ao buscar discussion_post: ${findErr.message}`);
   }
 
+  const nowIso = new Date().toISOString();
+  const promoteToFeed = isFeedSource(input.source);
+
   if (existing) {
+    const prevSource = String(existing.source || "");
+    const patch: Record<string, unknown> = {};
+    if (promoteToFeed) {
+      if (!isFeedSource(prevSource)) patch.source = input.source;
+      if (existing.feed_at == null) patch.feed_at = nowIso;
+    }
+
+    if (Object.keys(patch).length > 0) {
+      const { data: updated, error: upErr } = await supabase
+        .from("discussion_posts")
+        .update(patch)
+        .eq("id", existing.id)
+        .select(DISCUSSION_POST_SELECT)
+        .single();
+      if (upErr) {
+        console.warn("[discussions] promote post:", upErr.message);
+        return mapDiscussionPost(existing as Record<string, unknown>);
+      }
+      return mapDiscussionPost(updated as Record<string, unknown>);
+    }
     return mapDiscussionPost(existing as Record<string, unknown>);
   }
 
+  const insertRow: Record<string, unknown> = {
+    question_id: input.questionId,
+    short_id: input.shortId.toUpperCase(),
+    group_jid: input.groupJid,
+    source: input.source,
+    feed_at: promoteToFeed ? nowIso : null
+  };
+
   const { data, error } = await supabase
     .from("discussion_posts")
-    .insert({
-      question_id: input.questionId,
-      short_id: input.shortId.toUpperCase(),
-      group_jid: input.groupJid,
-      source: input.source
-    })
-    .select("id, question_id, short_id, group_jid, source, created_at")
+    .insert(insertRow)
+    .select(DISCUSSION_POST_SELECT)
     .single();
 
   if (error) {
     if (String(error.message || "").toLowerCase().includes("duplicate")) {
       const { data: again } = await supabase
         .from("discussion_posts")
-        .select("id, question_id, short_id, group_jid, source, created_at")
+        .select(DISCUSSION_POST_SELECT)
         .eq("question_id", input.questionId)
         .maybeSingle();
       return again ? mapDiscussionPost(again as Record<string, unknown>) : null;
@@ -4306,7 +4342,7 @@ export async function getDiscussionPostByQuestionId(
 ): Promise<DiscussionPost | null> {
   const { data, error } = await supabase
     .from("discussion_posts")
-    .select("id, question_id, short_id, group_jid, source, created_at")
+    .select(DISCUSSION_POST_SELECT)
     .eq("question_id", questionId)
     .maybeSingle();
   if (error) {
@@ -4319,7 +4355,7 @@ export async function getDiscussionPostByQuestionId(
 export async function getDiscussionPostById(postId: number): Promise<DiscussionPost | null> {
   const { data, error } = await supabase
     .from("discussion_posts")
-    .select("id, question_id, short_id, group_jid, source, created_at")
+    .select(DISCUSSION_POST_SELECT)
     .eq("id", postId)
     .maybeSingle();
   if (error) {
@@ -4327,6 +4363,56 @@ export async function getDiscussionPostById(postId: number): Promise<DiscussionP
     throw new Error(`Erro ao buscar discussion_post: ${error.message}`);
   }
   return data ? mapDiscussionPost(data as Record<string, unknown>) : null;
+}
+
+export async function getDiscussionPostByShortId(
+  shortId: string
+): Promise<DiscussionPost | null> {
+  const id = String(shortId || "").trim().toUpperCase();
+  if (!id) return null;
+  const { data, error } = await supabase
+    .from("discussion_posts")
+    .select(DISCUSSION_POST_SELECT)
+    .eq("short_id", id)
+    .maybeSingle();
+  if (error) {
+    if (discussionsMissingTable(error)) return null;
+    throw new Error(`Erro ao buscar discussion_post: ${error.message}`);
+  }
+  return data ? mapDiscussionPost(data as Record<string, unknown>) : null;
+}
+
+/** Árvore de comentários formatada para WhatsApp. */
+export function formatDiscussionCommentsTree(
+  comments: DiscussionComment[],
+  maxChars = 3500
+): string {
+  if (!comments.length) return "";
+  const byId = new Map(comments.map((c) => [c.id, c]));
+  const byParent = new Map<string, DiscussionComment[]>();
+  for (const c of comments) {
+    const key = c.parentId == null ? "root" : String(c.parentId);
+    if (!byParent.has(key)) byParent.set(key, []);
+    byParent.get(key)!.push(c);
+  }
+  const lines: string[] = [];
+  function walk(parentKey: string, depth: number) {
+    const list = byParent.get(parentKey) || [];
+    for (const c of list) {
+      const indent = "  ".repeat(Math.min(depth, 6));
+      const author = (c.authorName && c.authorName.trim()) || "Participante";
+      const parent = c.parentId != null ? byId.get(c.parentId) : null;
+      const replyBit = parent
+        ? ` → ${((parent.authorName && parent.authorName.trim()) || "Participante")}`
+        : "";
+      lines.push(`${indent}• ${author}${replyBit}: ${c.body}`);
+      walk(String(c.id), depth + 1);
+    }
+  }
+  walk("root", 0);
+  let text = lines.join("\n");
+  if (text.length > maxChars) text = `${text.slice(0, maxChars - 1)}…`;
+  return text;
 }
 
 export async function getResultWaMessageIdForQuestion(

@@ -860,18 +860,80 @@
               : item.correct === false
                 ? '<span class="omissas-badge bad">Erro</span>'
                 : '<span class="omissas-badge">—</span>';
-          return `<article class="omissas-result-item">
+          return `<article class="omissas-result-item" data-short-id="${esc(item.shortId)}">
             <div class="omissas-result-head"><h3>#${esc(item.shortId)}</h3>${badge}</div>
             <p><strong>Sua:</strong> ${(item.yourLetter || "—").toUpperCase()}
               · <strong>Gabarito:</strong> ${esc(item.answerKey || "—")}</p>
+            <div class="omissas-discuss">
+              <label class="omissas-discuss-label">Discussão antecipada
+                <textarea class="omissas-discuss-input" rows="2" maxlength="4000" placeholder="Comente agora — vai no feed quando o gabarito sair no grupo"></textarea>
+              </label>
+              <button type="button" class="btn-secondary btn-sm omissas-discuss-btn" data-discuss="${esc(item.shortId)}">Discutir</button>
+              <p class="omissas-discuss-status" hidden></p>
+            </div>
           </article>`;
         })
         .join("");
+
+      $("results-list").querySelectorAll("[data-discuss]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const shortId = btn.getAttribute("data-discuss");
+          const card = btn.closest(".omissas-result-item");
+          const ta = card?.querySelector(".omissas-discuss-input");
+          const st = card?.querySelector(".omissas-discuss-status");
+          void postEarlyDiscussion(shortId, ta, st, btn);
+        });
+      });
     } catch (e) {
       $("omissas-loading").classList.add("hidden");
       $("omissas-error").classList.remove("hidden");
       $("omissas-error").textContent = e.message || "Erro no resultado.";
     }
+  }
+
+  async function postEarlyDiscussion(shortId, ta, st, btn) {
+    const body = String(ta?.value || "").trim();
+    if (!body) {
+      if (st) {
+        st.hidden = false;
+        st.textContent = "Escreva um comentário.";
+      }
+      return;
+    }
+    if (!userJid) {
+      if (st) {
+        st.hidden = false;
+        st.textContent = "Selecione quem você é.";
+      }
+      return;
+    }
+    btn.disabled = true;
+    if (st) {
+      st.hidden = false;
+      st.textContent = "Salvando…";
+    }
+    try {
+      await fetchJson("/api/discussions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          shortId,
+          userJid,
+          userName,
+          body
+        })
+      });
+      if (ta) ta.value = "";
+      if (st) {
+        st.textContent =
+          "Discussão salva. Quando o gabarito for ao grupo, o bot manda enunciado + resultado + discussão.";
+      }
+    } catch (e) {
+      if (st) st.textContent = e.message || "Erro ao salvar discussão";
+      btn.disabled = false;
+      return;
+    }
+    btn.disabled = false;
   }
 
   async function init() {

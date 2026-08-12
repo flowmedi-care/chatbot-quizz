@@ -1,8 +1,9 @@
 /**
  * Discussões do feed (via /api/questions?view=discussions*).
- * GET  /api/discussions              → list posts
- * GET  /api/discussions?postId=      → post + comments
- * POST /api/discussions              → { postId, userJid, userName?, body, parentId? }
+ * GET  /api/discussions
+ * GET  /api/discussions?postId=
+ * GET  /api/discussions?shortId=   → detalhe (cria early se precisar? só lê)
+ * POST /api/discussions            → { postId? | shortId?, userJid, body, parentId? }
  * POST /api/discussions/share-whatsapp → { commentId, userJid }
  */
 const { pickTargetGroupJid } = require("./_lib.js");
@@ -12,9 +13,43 @@ const {
   pickDisplayLabel
 } = require("./_group-members.js");
 
+const FEED_TZ = "America/Sao_Paulo";
+const POST_SELECT = "id, question_id, short_id, group_jid, source, created_at, feed_at";
+
 function discussionsMissing(err) {
   const msg = String(err?.message || "").toLowerCase();
   return msg.includes("relation") && msg.includes("does not exist");
+}
+
+function jidKey(jid) {
+  const raw = String(jid || "")
+    .trim()
+    .toLowerCase();
+  const at = raw.indexOf("@");
+  if (at < 0) return raw;
+  const user = raw.slice(0, at).split(":")[0];
+  const domain = raw.slice(at + 1);
+  return `${user}@${domain}`;
+}
+
+function dayInTz(iso, timeZone = FEED_TZ) {
+  if (!iso) return null;
+  try {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return null;
+    return new Intl.DateTimeFormat("en-CA", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit"
+    }).format(d);
+  } catch {
+    return String(iso).slice(0, 10);
+  }
+}
+
+function todayInTz(timeZone = FEED_TZ) {
+  return dayInTz(new Date().toISOString(), timeZone);
 }
 
 function mapComment(row) {
@@ -33,33 +68,60 @@ function mapComment(row) {
 }
 
 function mapPost(row) {
+  const feedAt = row.feed_at != null ? String(row.feed_at) : null;
   return {
     id: Number(row.id),
     questionId: Number(row.question_id),
     shortId: String(row.short_id || "").toUpperCase(),
     groupJid: String(row.group_jid || ""),
     source: String(row.source || ""),
-    createdAt: String(row.created_at)
+    createdAt: String(row.created_at),
+    feedAt,
+    feedDay: dayInTz(feedAt || row.created_at)
   };
 }
 
-async function listPosts(supabase, limit = 40) {
+function isFeedSource(source) {
+  return source === "auto_gabarito" || source === "gabarito";
+}
+
+async function listPosts(supabase, limit = 120) {
   const { data, error } = await supabase
     .from("discussion_posts")
-    .select("id, question_id, short_id, group_jid, source, created_at")
-    .order("created_at", { ascending: false })
+    .select(POST_SELECT)
+    .in("source", ["auto_gabarito", "gabarito"])
+    .order("feed_at", { ascending: false, nullsFirst: false })
     .limit(limit);
   if (error) {
     if (discussionsMissing(error)) {
       return {
         posts: [],
+        availableDays: [],
+        today: todayInTz(),
         warning: "Rode supabase-migration-discussions.sql no Supabase."
       };
     }
+    // fallback se feed_at ainda não existe
+    const msg = String(error.message || "").toLowerCase();
+    if (msg.includes("feed_at")) {
+      const legacy = await supabase
+        .from("discussion_posts")
+        .select("id, question_id, short_id, group_jid, source, created_at")
+        .in("source", ["auto_gabarito", "gabarito"])
+        .order("created_at", { ascending: false })
+        .limit(limit);
+      if (legacy.error) throw legacy.error;
+      return enrichPostsList(supabase, (legacy.data || []).map((r) => ({ ...r, feed_at: r.created_at })));
+    }
     throw error;
   }
-  const posts = (data || []).map(mapPost);
-  if (!posts.length) return { posts: [] };
+  return enrichPostsList(supabase, data || []);
+}
+
+async function enrichPostsList(supabase, rows) {
+  const posts = rows.map(mapPost);
+  const today = todayInTz();
+  if (!posts.length) return { posts: [], availableDays: [], today };
 
   const questionIds = posts.map((p) => p.questionId);
   const { data: qRows } = await supabase
@@ -75,28 +137,96 @@ async function listPosts(supabase, limit = 40) {
   const postIds = posts.map((p) => p.id);
   const { data: cRows } = await supabase
     .from("discussion_comments")
-    .select("post_id")
+    .select("post_id, author_jid")
     .in("post_id", postIds);
+
   const countByPost = new Map();
+  const authorsByPost = new Map();
   for (const row of cRows || []) {
     const pid = Number(row.post_id);
     countByPost.set(pid, (countByPost.get(pid) || 0) + 1);
+    if (!authorsByPost.has(pid)) authorsByPost.set(pid, new Set());
+    authorsByPost.get(pid).add(jidKey(row.author_jid));
   }
 
-  return {
-    posts: posts.map((p) => ({
+  const daySet = new Set();
+  const enriched = posts.map((p) => {
+    if (p.feedDay) daySet.add(p.feedDay);
+    return {
       ...p,
       statementPreview: previewById.get(p.questionId) ?? null,
-      commentCount: countByPost.get(p.id) || 0
-    }))
-  };
+      commentCount: countByPost.get(p.id) || 0,
+      authorJidKeys: [...(authorsByPost.get(p.id) || [])]
+    };
+  });
+
+  const availableDays = [...daySet].sort((a, b) => b.localeCompare(a));
+  return { posts: enriched, availableDays, today };
+}
+
+async function loadAnswersContext(supabase, questionId, answerKey) {
+  const { data: answers } = await supabase
+    .from("answers")
+    .select("user_jid, user_name, answer_letter, answer_comment")
+    .eq("question_id", questionId);
+  const key = String(answerKey || "")
+    .toUpperCase()
+    .slice(0, 1);
+  return (answers || []).map((row) => {
+    const letter = String(row.answer_letter || "")
+      .toUpperCase()
+      .slice(0, 1);
+    const name = (row.user_name && String(row.user_name).trim()) || "Participante";
+    const comment =
+      row.answer_comment != null && String(row.answer_comment).trim()
+        ? String(row.answer_comment).trim()
+        : null;
+    return {
+      userJid: String(row.user_jid || ""),
+      userName: name,
+      letter,
+      comment,
+      correct: key ? letter === key : null
+    };
+  });
 }
 
 async function getPostDetail(supabase, postId) {
   const { data: post, error } = await supabase
     .from("discussion_posts")
-    .select("id, question_id, short_id, group_jid, source, created_at")
+    .select(POST_SELECT)
     .eq("id", postId)
+    .maybeSingle();
+  if (error) {
+    if (discussionsMissing(error)) {
+      return { error: "Rode supabase-migration-discussions.sql no Supabase.", status: 503 };
+    }
+    const msg = String(error.message || "").toLowerCase();
+    if (msg.includes("feed_at")) {
+      const legacy = await supabase
+        .from("discussion_posts")
+        .select("id, question_id, short_id, group_jid, source, created_at")
+        .eq("id", postId)
+        .maybeSingle();
+      if (legacy.error) throw legacy.error;
+      if (!legacy.data) return { error: "Discussão não encontrada.", status: 404 };
+      return getPostDetailFromRow(supabase, { ...legacy.data, feed_at: legacy.data.created_at });
+    }
+    throw error;
+  }
+  if (!post) return { error: "Discussão não encontrada.", status: 404 };
+  return getPostDetailFromRow(supabase, post);
+}
+
+async function getPostDetailByShortId(supabase, shortId) {
+  const id = String(shortId || "")
+    .trim()
+    .toUpperCase();
+  if (!id) return { error: "shortId inválido.", status: 400 };
+  const { data: post, error } = await supabase
+    .from("discussion_posts")
+    .select(POST_SELECT)
+    .eq("short_id", id)
     .maybeSingle();
   if (error) {
     if (discussionsMissing(error)) {
@@ -104,22 +234,62 @@ async function getPostDetail(supabase, postId) {
     }
     throw error;
   }
-  if (!post) return { error: "Discussão não encontrada.", status: 404 };
+  if (!post) {
+    // ainda sem post: devolve contexto da questão para discussão antecipada
+    const { data: q, error: qErr } = await supabase
+      .from("questions")
+      .select(
+        "id, short_id, statement_text, answer_key, target_group_jid, explanation_text"
+      )
+      .eq("short_id", id)
+      .maybeSingle();
+    if (qErr) throw qErr;
+    if (!q) return { error: "Questão não encontrada.", status: 404 };
+    const answers = await loadAnswersContext(supabase, Number(q.id), q.answer_key);
+    return {
+      post: null,
+      early: true,
+      shortId: id,
+      questionId: Number(q.id),
+      groupJid: String(q.target_group_jid || pickTargetGroupJid() || ""),
+      statementText: q.statement_text ? String(q.statement_text).trim() : null,
+      answerKey: String(q.answer_key || "")
+        .toUpperCase()
+        .slice(0, 1),
+      explanationText: q.explanation_text ? String(q.explanation_text).trim() : null,
+      answers,
+      comments: []
+    };
+  }
+  return getPostDetailFromRow(supabase, post);
+}
 
+async function getPostDetailFromRow(supabase, post) {
   const mapped = mapPost(post);
   const { data: q } = await supabase
     .from("questions")
-    .select("statement_text")
+    .select("statement_text, answer_key, explanation_text")
     .eq("id", mapped.questionId)
     .maybeSingle();
   const statementRaw = q?.statement_text != null ? String(q.statement_text).trim() : "";
+  const answerKey = q?.answer_key
+    ? String(q.answer_key)
+        .toUpperCase()
+        .slice(0, 1)
+    : null;
+  const explanationText =
+    q?.explanation_text != null && String(q.explanation_text).trim()
+      ? String(q.explanation_text).trim()
+      : null;
+
+  const answers = await loadAnswersContext(supabase, mapped.questionId, answerKey);
 
   const { data: comments, error: cErr } = await supabase
     .from("discussion_comments")
     .select(
       "id, post_id, parent_id, author_jid, author_name, body, source, wa_message_id, shared_to_wa_at, created_at"
     )
-    .eq("post_id", postId)
+    .eq("post_id", mapped.id)
     .order("created_at", { ascending: true });
   if (cErr) throw cErr;
 
@@ -127,9 +297,13 @@ async function getPostDetail(supabase, postId) {
     post: {
       ...mapped,
       statementPreview: statementRaw ? statementRaw.slice(0, 400) : null,
-      statementText: statementRaw || null
+      statementText: statementRaw || null,
+      answerKey,
+      explanationText
     },
-    comments: (comments || []).map(mapComment)
+    answers,
+    comments: (comments || []).map(mapComment),
+    early: mapped.source === "early"
   };
 }
 
@@ -159,19 +333,94 @@ async function resolveAuthorName(supabase, groupJid, userJid, fallbackName) {
   return given || "Participante";
 }
 
-async function createComment(supabase, body) {
+async function ensurePostForComment(supabase, body) {
   const postId = Number(body.postId);
+  if (Number.isFinite(postId) && postId > 0) {
+    const { data: post, error } = await supabase
+      .from("discussion_posts")
+      .select(POST_SELECT)
+      .eq("id", postId)
+      .maybeSingle();
+    if (error) {
+      if (discussionsMissing(error)) {
+        return { error: "Rode supabase-migration-discussions.sql no Supabase.", status: 503 };
+      }
+      throw error;
+    }
+    if (!post) return { error: "Discussão não encontrada.", status: 404 };
+    return { post: mapPost(post) };
+  }
+
+  const shortId = String(body.shortId || "")
+    .trim()
+    .toUpperCase();
+  if (!shortId) return { error: "Informe postId ou shortId.", status: 400 };
+
+  const { data: existing } = await supabase
+    .from("discussion_posts")
+    .select(POST_SELECT)
+    .eq("short_id", shortId)
+    .maybeSingle();
+  if (existing) return { post: mapPost(existing) };
+
+  const { data: q, error: qErr } = await supabase
+    .from("questions")
+    .select("id, short_id, target_group_jid")
+    .eq("short_id", shortId)
+    .maybeSingle();
+  if (qErr) throw qErr;
+  if (!q) return { error: "Questão não encontrada.", status: 404 };
+
+  const groupJid =
+    String(q.target_group_jid || "").trim() || pickTargetGroupJid() || "";
+  if (!groupJid || !groupJid.endsWith("@g.us")) {
+    return {
+      error: "Discussão antecipada só para questões do grupo.",
+      status: 400
+    };
+  }
+
+  const { data: created, error: cErr } = await supabase
+    .from("discussion_posts")
+    .insert({
+      question_id: Number(q.id),
+      short_id: shortId,
+      group_jid: groupJid,
+      source: "early",
+      feed_at: null
+    })
+    .select(POST_SELECT)
+    .single();
+
+  if (cErr) {
+    const msg = String(cErr.message || "").toLowerCase();
+    if (msg.includes("early") || msg.includes("check")) {
+      return {
+        error:
+          "Rode supabase-migration-discussions-early.sql no Supabase para discussões antecipadas.",
+        status: 503
+      };
+    }
+    if (msg.includes("duplicate")) {
+      const { data: again } = await supabase
+        .from("discussion_posts")
+        .select(POST_SELECT)
+        .eq("short_id", shortId)
+        .maybeSingle();
+      if (again) return { post: mapPost(again) };
+    }
+    throw cErr;
+  }
+  return { post: mapPost(created), createdEarly: true };
+}
+
+async function createComment(supabase, body) {
   const userJid = String(body.userJid || "").trim();
   const text = String(body.body || "").trim();
   const parentIdRaw = body.parentId;
   const parentId =
-    parentIdRaw == null || parentIdRaw === ""
-      ? null
-      : Number(parentIdRaw);
+    parentIdRaw == null || parentIdRaw === "" ? null : Number(parentIdRaw);
 
-  if (!Number.isFinite(postId) || postId <= 0) {
-    return { error: "postId inválido.", status: 400 };
-  }
   if (!userJid) return { error: "Informe userJid.", status: 400 };
   if (!text) return { error: "Comentário vazio.", status: 400 };
   if (text.length > 4000) return { error: "Comentário muito longo.", status: 400 };
@@ -179,18 +428,9 @@ async function createComment(supabase, body) {
     return { error: "parentId inválido.", status: 400 };
   }
 
-  const { data: post, error: pErr } = await supabase
-    .from("discussion_posts")
-    .select("id, group_jid")
-    .eq("id", postId)
-    .maybeSingle();
-  if (pErr) {
-    if (discussionsMissing(pErr)) {
-      return { error: "Rode supabase-migration-discussions.sql no Supabase.", status: 503 };
-    }
-    throw pErr;
-  }
-  if (!post) return { error: "Discussão não encontrada.", status: 404 };
+  const ensured = await ensurePostForComment(supabase, body);
+  if (ensured.error) return ensured;
+  const post = ensured.post;
 
   if (parentId != null) {
     const { data: parent, error: parErr } = await supabase
@@ -199,14 +439,14 @@ async function createComment(supabase, body) {
       .eq("id", parentId)
       .maybeSingle();
     if (parErr) throw parErr;
-    if (!parent || Number(parent.post_id) !== postId) {
+    if (!parent || Number(parent.post_id) !== post.id) {
       return { error: "Comentário pai inválido.", status: 400 };
     }
   }
 
   const authorName = await resolveAuthorName(
     supabase,
-    String(post.group_jid),
+    String(post.groupJid),
     userJid,
     body.userName
   );
@@ -214,7 +454,7 @@ async function createComment(supabase, body) {
   const { data, error } = await supabase
     .from("discussion_comments")
     .insert({
-      post_id: postId,
+      post_id: post.id,
       parent_id: parentId,
       author_jid: userJid,
       author_name: authorName,
@@ -226,7 +466,7 @@ async function createComment(supabase, body) {
     )
     .single();
   if (error) throw error;
-  return { comment: mapComment(data) };
+  return { comment: mapComment(data), postId: post.id, early: post.source === "early" };
 }
 
 async function shareCommentToWhatsApp(supabase, body) {
@@ -239,9 +479,7 @@ async function shareCommentToWhatsApp(supabase, body) {
 
   const { data: comment, error } = await supabase
     .from("discussion_comments")
-    .select(
-      "id, post_id, author_jid, author_name, body, shared_to_wa_at"
-    )
+    .select("id, post_id, author_jid, author_name, body, parent_id, shared_to_wa_at")
     .eq("id", commentId)
     .maybeSingle();
   if (error) {
@@ -257,11 +495,18 @@ async function shareCommentToWhatsApp(supabase, body) {
 
   const { data: post, error: pErr } = await supabase
     .from("discussion_posts")
-    .select("id, short_id, group_jid")
+    .select("id, short_id, group_jid, source")
     .eq("id", comment.post_id)
     .maybeSingle();
   if (pErr) throw pErr;
   if (!post) return { error: "Discussão não encontrada.", status: 404 };
+  if (String(post.source) === "early") {
+    return {
+      error:
+        "Essa questão ainda não foi para o feed do grupo. O bot anuncia a discussão junto com o gabarito.",
+      status: 400
+    };
+  }
 
   const { error: evErr } = await supabase.from("bot_pending_events").insert({
     kind: "discussion_share",
@@ -271,6 +516,7 @@ async function shareCommentToWhatsApp(supabase, body) {
       groupJid: String(post.group_jid || ""),
       authorLabel: comment.author_name || null,
       body: comment.body,
+      parentId: comment.parent_id,
       requestedByJid: userJid
     }
   });
@@ -354,7 +600,13 @@ async function handleDiscussionsRequest(req, res, supabase, view) {
       if (detail.error) return res.status(detail.status || 400).json({ error: detail.error });
       return res.status(200).json(detail);
     }
-    const listed = await listPosts(supabase, 50);
+    const shortId = url.searchParams.get("shortId") || req.query?.shortId;
+    if (shortId) {
+      const detail = await getPostDetailByShortId(supabase, shortId);
+      if (detail.error) return res.status(detail.status || 400).json({ error: detail.error });
+      return res.status(200).json(detail);
+    }
+    const listed = await listPosts(supabase, 120);
     return res.status(200).json({
       groupJid: pickTargetGroupJid(),
       ...listed

@@ -37,8 +37,8 @@
       <header class="disc-hero">
         <h1>Discussões</h1>
         <p>
-          Comentários sobre gabaritos do grupo — vindos do WhatsApp (reply) ou daqui do site.
-          Use o botão <strong>WPP</strong> para o bot anunciar um comentário no grupo.
+          Comentários sobre gabaritos do grupo — WhatsApp (reply) ou site.
+          Botão <strong>WPP</strong> anuncia o comentário no grupo com contexto.
         </p>
         <label class="disc-who">
           <span>Quem sou eu</span>
@@ -50,11 +50,33 @@
 
       <div class="disc-layout">
         <aside class="disc-list-panel" aria-label="Questões em discussão">
+          <div class="disc-filters" id="disc-filters">
+            <label class="disc-filter">
+              <span>Dia no feed</span>
+              <select id="filter-day" aria-label="Filtrar por dia"></select>
+            </label>
+            <label class="disc-filter">
+              <span>Comentários</span>
+              <select id="filter-comments" aria-label="Filtrar por comentários">
+                <option value="all">Todas</option>
+                <option value="with">Com comentários</option>
+                <option value="without">Sem comentários</option>
+              </select>
+            </label>
+            <label class="disc-filter">
+              <span>Eu</span>
+              <select id="filter-mine" aria-label="Filtrar pelas minhas">
+                <option value="all">Todas</option>
+                <option value="mine">Que eu comentei</option>
+                <option value="not_mine">Que eu não comentei</option>
+              </select>
+            </label>
+          </div>
           <div id="disc-feed" class="disc-feed"></div>
         </aside>
         <section class="disc-thread-panel" aria-label="Thread">
           <div id="disc-thread-empty" class="disc-empty">
-            Selecione uma questão à esquerda para ver e comentar a thread.
+            Selecione uma questão à esquerda para ver respostas, comentários e discutir.
           </div>
           <div id="disc-thread" class="disc-thread" hidden></div>
         </section>

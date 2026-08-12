@@ -2631,6 +2631,42 @@ table.tutorial-table code {
   color: var(--danger);
 }
 
+.omissas-discuss {
+  margin-top: 0.85rem;
+  padding-top: 0.75rem;
+  border-top: 1px dashed var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.omissas-discuss-label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.omissas-discuss-input {
+  font: inherit;
+  font-weight: 500;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  padding: 0.55rem 0.65rem;
+  resize: vertical;
+  min-height: 64px;
+  color: var(--text);
+  background: var(--bg-card);
+}
+
+.omissas-discuss-status {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
 .omissas-your-comment {
   margin: 0.5rem 0;
 }

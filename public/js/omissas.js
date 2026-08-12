@@ -38,6 +38,7 @@
   let submitting = false;
   let assistQty = 0;
   let userName = "";
+  let userJid = "";
   let assistMode = false;
   let assistBusy = false;
 
@@ -322,7 +323,7 @@
             }
           }
           return `
-            <article class="omissas-result-item">
+            <article class="omissas-result-item" data-short-id="${esc(item.shortId)}">
               <div class="omissas-result-head">
                 <h3>Questão #${esc(item.shortId)}</h3>
                 ${badge}
@@ -343,10 +344,27 @@
                 <div class="comment">${esc(item.explanationText || "Sem comentário do autor.")}</div>
                 ${explMedia}
               </div>
+              <div class="omissas-discuss">
+                <label class="omissas-discuss-label">Discussão antecipada
+                  <textarea class="omissas-discuss-input" rows="2" maxlength="4000" placeholder="Comente agora — vai no feed quando o gabarito sair no grupo"></textarea>
+                </label>
+                <button type="button" class="btn-secondary btn-sm omissas-discuss-btn" data-discuss="${esc(item.shortId)}">Discutir</button>
+                <p class="omissas-discuss-status" hidden></p>
+              </div>
             </article>
           `;
         })
         .join("");
+
+      els.list.querySelectorAll("[data-discuss]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const shortId = btn.getAttribute("data-discuss");
+          const card = btn.closest(".omissas-result-item");
+          const ta = card?.querySelector(".omissas-discuss-input");
+          const st = card?.querySelector(".omissas-discuss-status");
+          void postEarlyDiscussion(shortId, ta, st, btn);
+        });
+      });
     } catch (e) {
       if (e.status === 409) {
         showError("Ainda há questões pendentes. Recarregue o link ou continue respondendo.");
@@ -354,6 +372,51 @@
       }
       showError(e.message || "Erro ao carregar resultado.");
     }
+  }
+
+  async function postEarlyDiscussion(shortId, ta, st, btn) {
+    const body = String(ta?.value || "").trim();
+    if (!body) {
+      if (st) {
+        st.hidden = false;
+        st.textContent = "Escreva um comentário.";
+      }
+      return;
+    }
+    if (!userJid) {
+      if (st) {
+        st.hidden = false;
+        st.textContent = "Identidade da sessão ausente.";
+      }
+      return;
+    }
+    btn.disabled = true;
+    if (st) {
+      st.hidden = false;
+      st.textContent = "Salvando…";
+    }
+    try {
+      await fetchJson("/api/discussions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          shortId,
+          userJid,
+          userName,
+          body
+        })
+      });
+      if (ta) ta.value = "";
+      if (st) {
+        st.textContent =
+          "Discussão salva. Quando o gabarito for ao grupo, o bot manda enunciado + resultado + discussão.";
+      }
+    } catch (e) {
+      if (st) st.textContent = e.message || "Erro ao salvar discussão";
+      btn.disabled = false;
+      return;
+    }
+    btn.disabled = false;
   }
 
   async function init() {
@@ -382,6 +445,7 @@
       answeredAtStart = data.answeredCount || 0;
       assistQty = data.assistEliminateQty || 0;
       userName = data.userName || "";
+      userJid = data.userJid || data.user_jid || "";
       if (els.greeting && userName && userName !== "Participante") {
         els.greeting.textContent = `${firstName(userName)}, suas omissas · sessão pessoal`;
       }
