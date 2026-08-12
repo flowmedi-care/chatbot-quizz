@@ -885,6 +885,20 @@ button.btn-tutorial {
   font: inherit;
 }
 
+.report-check {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.55rem;
+  font-weight: 600;
+  margin: 0.75rem 0 0.25rem;
+}
+
+.report-check input {
+  width: 1.05rem;
+  height: 1.05rem;
+}
+
 .report-status {
   min-height: 1.5rem;
   font-size: 0.88rem;

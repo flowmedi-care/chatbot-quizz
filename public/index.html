@@ -40,6 +40,7 @@
           <a href="/atividades" class="site-nav-link is-accent"><span class="nav-ico" aria-hidden="true">🏠</span> Hoje</a>
           <a href="/atividades" class="site-nav-link"><span class="nav-ico" aria-hidden="true">📚</span> Estudos</a>
           <a href="/hub" class="site-nav-link"><span class="nav-ico" aria-hidden="true">🏆</span> Ranking</a>
+          <a href="/discussoes" class="site-nav-link"><span class="nav-ico" aria-hidden="true">💬</span> Discussões</a>
           <a href="/engajamento" class="site-nav-link"><span class="nav-ico" aria-hidden="true">🔥</span> Matérias</a>
           <a href="/hub#perfil" class="site-nav-link"><span class="nav-ico" aria-hidden="true">👤</span> Perfil</a>
           <button type="button" id="btn-report-open" class="site-nav-link site-nav-btn">Relatório</button>
@@ -316,6 +317,10 @@
           </p>
           <div id="report-cat-rules-list" class="report-cat-rules-list"></div>
         </div>
+        <label class="report-field report-check">
+          <input type="checkbox" id="report-include-discussions" />
+          <span>Levar discussões (threads do grupo/site por questão)</span>
+        </label>
         <p id="report-status" class="report-status" role="status" aria-live="polite"></p>
         <button type="button" id="report-generate" class="btn-reveal">Baixar ZIP</button>
       </div>

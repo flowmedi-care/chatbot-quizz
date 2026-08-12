@@ -1,5 +1,6 @@
 const { getClient, pickTargetGroupJid, applyCors, fetchQuestionsForGroup } = require("./_lib.js");
 const { mapCategoriesByAnswerIds, listUserCategories } = require("./_categories.js");
+const { listThreadsForShortIds } = require("./_discussions.js");
 
 function normalizeLetter(raw) {
   const s = String(raw || "")
@@ -164,12 +165,23 @@ module.exports = async (req, res) => {
       };
     });
 
+    let discussions = {};
+    try {
+      discussions = await listThreadsForShortIds(
+        supabase,
+        questions.map((q) => q.shortId)
+      );
+    } catch (discErr) {
+      console.warn("[report-data] discussions:", discErr.message || discErr);
+    }
+
     return res.status(200).json({
       groupJid,
       questions,
       answers,
       participants,
-      categoriesByUser
+      categoriesByUser,
+      discussions
     });
   } catch (e) {
     console.error("[report-data]", e);

@@ -37,10 +37,60 @@ import {
   listUnansweredShortIdsForUser,
   listUnprocessedBotPendingEvents,
   markBotPendingEventProcessed,
-  getCadernoIdForQuestion
+  getCadernoIdForQuestion,
+  getDiscussionCommentById,
+  getDiscussionPostById,
+  getResultWaMessageIdForQuestion,
+  markDiscussionCommentSharedToWa
 } from "../supabase";
 import { tryAdvanceCadernoAfterAnswer } from "../caderno-scheduler";
 import { todayIso, addDaysToIso, economyDb } from "./db";
+
+async function handleDiscussionSharePending(
+  sock: WASocket,
+  payload: Record<string, unknown>
+): Promise<void> {
+  const commentId = Number(payload.commentId);
+  if (!Number.isFinite(commentId) || commentId <= 0) return;
+
+  const comment = await getDiscussionCommentById(commentId);
+  if (!comment) return;
+
+  const post = await getDiscussionPostById(comment.postId);
+  if (!post) return;
+
+  const author =
+    (comment.authorName && comment.authorName.trim()) ||
+    String(payload.authorLabel || "").trim() ||
+    "Alguém";
+  const text = [
+    `[Discussão site] #${post.shortId}`,
+    `${author} comentou:`,
+    `"${comment.body}"`
+  ].join("\n");
+
+  const resultWaId = await getResultWaMessageIdForQuestion(post.questionId, post.groupJid);
+  if (resultWaId) {
+    await sock.sendMessage(
+      post.groupJid,
+      { text },
+      {
+        quoted: {
+          key: {
+            remoteJid: post.groupJid,
+            id: resultWaId,
+            fromMe: true
+          },
+          message: { conversation: `Resultado da Questao #${post.shortId}` }
+        }
+      }
+    );
+  } else {
+    await sock.sendMessage(post.groupJid, { text });
+  }
+
+  await markDiscussionCommentSharedToWa(comment.id);
+}
 
 function looksLikeRawId(s: string | null | undefined): boolean {
   const t = String(s || "").trim();
@@ -472,6 +522,8 @@ export async function flushEconomyOutbox(sock: WASocket): Promise<void> {
               console.warn("[economy] web_answer extra:", (extraErr as Error).message);
             }
           }
+        } else if (ev.kind === "discussion_share") {
+          await handleDiscussionSharePending(sock, ev.payload);
         }
         await markBotPendingEventProcessed(ev.id);
       } catch (evErr) {

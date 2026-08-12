@@ -12,6 +12,8 @@ import {
   buildDistributionKeys,
   buildOptionsLabel,
   extractText,
+  extractContextInfo,
+  extractDiscussionBody,
   hasSupportedMedia,
   isSlashSessionCommand,
   isSkipCommand,
@@ -73,7 +75,13 @@ import {
   createUserCategory,
   listUserCategories,
   resolveCategoryNames,
-  setAnswerCategories
+  setAnswerCategories,
+  insertQuestionWaMessage,
+  upsertDiscussionPost,
+  findQuestionByWaMessageId,
+  findDiscussionCommentByWaMessageId,
+  getDiscussionPostByQuestionId,
+  insertDiscussionComment
 } from "./supabase";
 import {
   computeNextRunAt,
@@ -417,12 +425,10 @@ async function maybePostAutoGabaritoToGroup(sock: WASocket, rawShortId: string):
 
       autoGabaritoPostedQuestionIds.add(shortUp);
       const result = await getQuestionResult(shortUp);
-      await publishQuestionResult(
-        sock,
-        groupJid,
-        result,
-        "[Resposta registrada]\nResultado enviado automaticamente (caderno privado)."
-      );
+      await publishQuestionResult(sock, groupJid, result, {
+        headerPrefix:
+          "[Resposta registrada]\nResultado enviado automaticamente (caderno privado)."
+      });
       return;
     }
 
@@ -474,12 +480,10 @@ async function maybePostAutoGabaritoToGroup(sock: WASocket, rawShortId: string):
     autoGabaritoPostedQuestionIds.add(shortUp);
 
     const result = await getQuestionResult(shortUp);
-    await publishQuestionResult(
-      sock,
-      groupJid,
-      result,
-      "[Engajados responderam]\nResultado enviado automaticamente."
-    );
+    await publishQuestionResult(sock, groupJid, result, {
+      headerPrefix: `[Engajados responderam] #${shortUp}`,
+      discussionSource: "auto_gabarito"
+    });
   } catch (e) {
     console.warn("[auto-gabarito]", (e as Error).message);
   }
@@ -723,24 +727,28 @@ async function sendFullStatementBeforeResult(
   jid: string,
   shortId: string,
   statementText: string
-): Promise<void> {
+): Promise<string[]> {
   const chunks = splitWhatsAppText(statementText);
   const total = chunks.length;
+  const ids: string[] = [];
   for (let i = 0; i < total; i++) {
     const label =
       total === 1
         ? `Enunciado — Questao #${shortId}`
         : `Enunciado — Questao #${shortId} (${i + 1}/${total})`;
-    await sock.sendMessage(jid, { text: `${label}\n\n${chunks[i]}` });
+    const sent = await sock.sendMessage(jid, { text: `${label}\n\n${chunks[i]}` });
+    const id = sent?.key?.id;
+    if (id) ids.push(String(id));
   }
+  return ids;
 }
 
 async function sendStatementMedia(
   sock: WASocket,
   jid: string,
   result: Awaited<ReturnType<typeof getQuestionResult>>
-): Promise<void> {
-  if (!result.statementMediaUrl || !result.statementMediaMimeType) return;
+): Promise<string | null> {
+  if (!result.statementMediaUrl || !result.statementMediaMimeType) return null;
 
   const captionParts = [`Enunciado — Questao #${result.shortId}`];
   const statementText = result.statementText?.trim() ?? "";
@@ -749,67 +757,125 @@ async function sendStatementMedia(
   }
   const caption = captionParts.join("\n");
 
+  let sent;
   if (result.statementMediaMimeType.startsWith("image/")) {
-    await sock.sendMessage(jid, {
+    sent = await sock.sendMessage(jid, {
       image: { url: result.statementMediaUrl },
       caption
     });
-    return;
+  } else {
+    sent = await sock.sendMessage(jid, {
+      document: { url: result.statementMediaUrl },
+      mimetype: result.statementMediaMimeType,
+      fileName: `enunciado-${result.shortId}.${mimeToStatementFileExt(result.statementMediaMimeType)}`,
+      caption
+    });
   }
-
-  await sock.sendMessage(jid, {
-    document: { url: result.statementMediaUrl },
-    mimetype: result.statementMediaMimeType,
-    fileName: `enunciado-${result.shortId}.${mimeToStatementFileExt(result.statementMediaMimeType)}`,
-    caption
-  });
+  return sent?.key?.id ? String(sent.key.id) : null;
 }
 
 async function sendExplanationMedia(
   sock: WASocket,
   jid: string,
   result: Awaited<ReturnType<typeof getQuestionResult>>
-): Promise<void> {
-  if (!result.explanationMediaUrl || !result.explanationMediaMimeType) return;
+): Promise<string | null> {
+  if (!result.explanationMediaUrl || !result.explanationMediaMimeType) return null;
 
+  let sent;
   if (result.explanationMediaMimeType.startsWith("image/")) {
-    await sock.sendMessage(jid, { image: { url: result.explanationMediaUrl } });
-    return;
+    sent = await sock.sendMessage(jid, { image: { url: result.explanationMediaUrl } });
+  } else {
+    sent = await sock.sendMessage(jid, {
+      document: { url: result.explanationMediaUrl },
+      mimetype: result.explanationMediaMimeType,
+      fileName: "comentario-questao"
+    });
   }
-
-  await sock.sendMessage(jid, {
-    document: { url: result.explanationMediaUrl },
-    mimetype: result.explanationMediaMimeType,
-    fileName: "comentario-questao"
-  });
+  return sent?.key?.id ? String(sent.key.id) : null;
 }
+
+type PublishQuestionResultOpts = {
+  headerPrefix?: string;
+  /** Cria/atualiza card no feed quando o destino é o grupo. */
+  discussionSource?: "auto_gabarito" | "gabarito";
+};
 
 async function publishQuestionResult(
   sock: WASocket,
   jid: string,
   result: Awaited<ReturnType<typeof getQuestionResult>>,
-  headerPrefix?: string
+  opts?: PublishQuestionResultOpts | string
 ): Promise<void> {
+  const options: PublishQuestionResultOpts =
+    typeof opts === "string" ? { headerPrefix: opts } : opts || {};
   const hasStatementMedia = Boolean(result.statementMediaUrl && result.statementMediaMimeType);
   const statementText = result.statementText?.trim() ?? "";
   let statementSentSeparately = false;
+  const statementIds: string[] = [];
 
   if (hasStatementMedia) {
-    await sendStatementMedia(sock, jid, result);
+    const mediaId = await sendStatementMedia(sock, jid, result);
+    if (mediaId) statementIds.push(mediaId);
     if (statementText.length > 900) {
-      await sendFullStatementBeforeResult(sock, jid, result.shortId, statementText);
+      const textIds = await sendFullStatementBeforeResult(sock, jid, result.shortId, statementText);
+      statementIds.push(...textIds);
       statementSentSeparately = true;
     }
   } else if (statementText) {
-    await sendFullStatementBeforeResult(sock, jid, result.shortId, statementText);
+    const textIds = await sendFullStatementBeforeResult(sock, jid, result.shortId, statementText);
+    statementIds.push(...textIds);
     statementSentSeparately = true;
   }
 
-  const header = headerPrefix ? `${headerPrefix}\n` : "";
-  await sock.sendMessage(jid, {
+  const header = options.headerPrefix ? `${options.headerPrefix}\n` : "";
+  const resultSent = await sock.sendMessage(jid, {
     text: `${header}${buildResultMessage(result, { statementSentSeparately })}`
   });
-  await sendExplanationMedia(sock, jid, result);
+  const resultId = resultSent?.key?.id ? String(resultSent.key.id) : null;
+  const explanationId = await sendExplanationMedia(sock, jid, result);
+
+  const isGroup = jid.endsWith("@g.us");
+  if (isGroup && result.questionId) {
+    for (const waId of statementIds) {
+      await insertQuestionWaMessage({
+        questionId: result.questionId,
+        shortId: result.shortId,
+        groupJid: jid,
+        waMessageId: waId,
+        role: "statement"
+      });
+    }
+    if (resultId) {
+      await insertQuestionWaMessage({
+        questionId: result.questionId,
+        shortId: result.shortId,
+        groupJid: jid,
+        waMessageId: resultId,
+        role: "result"
+      });
+    }
+    if (explanationId) {
+      await insertQuestionWaMessage({
+        questionId: result.questionId,
+        shortId: result.shortId,
+        groupJid: jid,
+        waMessageId: explanationId,
+        role: "explanation_media"
+      });
+    }
+    if (options.discussionSource) {
+      try {
+        await upsertDiscussionPost({
+          questionId: result.questionId,
+          shortId: result.shortId,
+          groupJid: jid,
+          source: options.discussionSource
+        });
+      } catch (e) {
+        console.warn("[discussions] upsert post:", (e as Error).message);
+      }
+    }
+  }
 }
 
 function mimeToStatementFileExt(mimeType: string): string {
@@ -818,6 +884,60 @@ function mimeToStatementFileExt(mimeType: string): string {
   if (mimeType.includes("jpeg")) return "jpg";
   if (mimeType.includes("webp")) return "webp";
   return "bin";
+}
+
+/** Captura reply no grupo à mensagem do bot (ou a um comentário já na thread). */
+async function maybeIngestDiscussionReply(
+  msg: WAMessage,
+  remoteJid: string,
+  sender: string
+): Promise<boolean> {
+  if (!remoteJid.endsWith("@g.us") || msg.key.fromMe) return false;
+  const ctx = extractContextInfo(msg);
+  if (!ctx?.stanzaId) return false;
+  const body = extractDiscussionBody(msg);
+  if (!body) return false;
+
+  try {
+    let postId: number | null = null;
+    let parentId: number | null = null;
+
+    const anchor = await findQuestionByWaMessageId(remoteJid, ctx.stanzaId);
+    if (anchor) {
+      let post = await getDiscussionPostByQuestionId(anchor.questionId);
+      if (!post) {
+        post = await upsertDiscussionPost({
+          questionId: anchor.questionId,
+          shortId: anchor.shortId,
+          groupJid: remoteJid,
+          source: "gabarito"
+        });
+      }
+      if (!post) return false;
+      postId = post.id;
+      parentId = null;
+    } else {
+      const parentComment = await findDiscussionCommentByWaMessageId(ctx.stanzaId);
+      if (!parentComment) return false;
+      postId = parentComment.postId;
+      parentId = parentComment.id;
+    }
+
+    const waId = msg.key.id ? String(msg.key.id) : null;
+    await insertDiscussionComment({
+      postId,
+      parentId,
+      authorJid: sender,
+      authorName: getDisplayName(msg, sender),
+      body,
+      source: "whatsapp",
+      waMessageId: waId
+    });
+    return true;
+  } catch (e) {
+    console.warn("[discussions] ingest reply:", (e as Error).message);
+    return false;
+  }
 }
 
 async function repeatQuestionStatement(sock: WASocket, jid: string, shortId: string): Promise<void> {
@@ -1146,6 +1266,10 @@ async function startBot(): Promise<void> {
         console.log(
           `[msg] tipo=${messageKind} remote=${remoteJid} sender=${sender} id=${messageId} texto="${text || "(sem texto)"}"`
         );
+
+        if (fromGroup) {
+          await maybeIngestDiscussionReply(msg, remoteJid, sender);
+        }
 
         if (repeatQuestionCmd && (fromGroup || fromPrivate)) {
           await repeatQuestionStatement(sock, remoteJid, repeatQuestionCmd.shortId);
@@ -1528,7 +1652,9 @@ async function startBot(): Promise<void> {
           }
           if (groupCommand.kind === "answer_key") {
             const result = await getQuestionResult(groupCommand.questionId);
-            await publishQuestionResult(sock, remoteJid, result);
+            await publishQuestionResult(sock, remoteJid, result, {
+              discussionSource: fromGroup ? "gabarito" : undefined
+            });
             continue;
           }
 

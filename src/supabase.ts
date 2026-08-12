@@ -517,6 +517,7 @@ export type QuestionRespondent = {
 };
 
 export type QuestionResult = {
+  questionId: number;
   shortId: string;
   answerKey: string;
   questionType: QuestionType;
@@ -622,6 +623,7 @@ export async function getQuestionResult(shortId: string): Promise<QuestionResult
   const statementText = statementRaw.length > 0 ? statementRaw : null;
 
   return {
+    questionId: Number(question.id),
     shortId: normalizedId,
     answerKey: String(question.answer_key).toUpperCase(),
     questionType: question.question_type as QuestionType,
@@ -4116,4 +4118,413 @@ export async function setAnswerCategories(
 
 export async function clearAnswerCategories(answerId: number): Promise<void> {
   await setAnswerCategories(answerId, []);
+}
+
+/* ——— Discussões (WA anchors + feed) ——— */
+
+export type DiscussionPostSource = "auto_gabarito" | "gabarito";
+export type DiscussionCommentSource = "whatsapp" | "web";
+export type QuestionWaMessageRole = "statement" | "result" | "explanation_media";
+
+export type DiscussionPost = {
+  id: number;
+  questionId: number;
+  shortId: string;
+  groupJid: string;
+  source: DiscussionPostSource;
+  createdAt: string;
+  statementPreview?: string | null;
+  commentCount?: number;
+};
+
+export type DiscussionComment = {
+  id: number;
+  postId: number;
+  parentId: number | null;
+  authorJid: string;
+  authorName: string | null;
+  body: string;
+  source: DiscussionCommentSource;
+  waMessageId: string | null;
+  sharedToWaAt: string | null;
+  createdAt: string;
+};
+
+function mapDiscussionPost(row: Record<string, unknown>): DiscussionPost {
+  return {
+    id: Number(row.id),
+    questionId: Number(row.question_id),
+    shortId: String(row.short_id || "").toUpperCase(),
+    groupJid: String(row.group_jid || ""),
+    source: String(row.source) as DiscussionPostSource,
+    createdAt: String(row.created_at)
+  };
+}
+
+function mapDiscussionComment(row: Record<string, unknown>): DiscussionComment {
+  return {
+    id: Number(row.id),
+    postId: Number(row.post_id),
+    parentId: row.parent_id != null ? Number(row.parent_id) : null,
+    authorJid: String(row.author_jid || ""),
+    authorName: row.author_name != null ? String(row.author_name) : null,
+    body: String(row.body || ""),
+    source: String(row.source) as DiscussionCommentSource,
+    waMessageId: row.wa_message_id != null ? String(row.wa_message_id) : null,
+    sharedToWaAt: row.shared_to_wa_at != null ? String(row.shared_to_wa_at) : null,
+    createdAt: String(row.created_at)
+  };
+}
+
+function discussionsMissingTable(error: { message?: string } | null): boolean {
+  const msg = String(error?.message || "").toLowerCase();
+  return msg.includes("relation") && msg.includes("does not exist");
+}
+
+export async function insertQuestionWaMessage(input: {
+  questionId: number;
+  shortId: string;
+  groupJid: string;
+  waMessageId: string;
+  role: QuestionWaMessageRole;
+}): Promise<void> {
+  const waId = String(input.waMessageId || "").trim();
+  if (!waId) return;
+  const { error } = await supabase.from("question_wa_messages").upsert(
+    {
+      question_id: input.questionId,
+      short_id: input.shortId.toUpperCase(),
+      group_jid: input.groupJid,
+      wa_message_id: waId,
+      role: input.role
+    },
+    { onConflict: "group_jid,wa_message_id", ignoreDuplicates: true }
+  );
+  if (error) {
+    if (discussionsMissingTable(error)) {
+      console.warn(
+        "[discussions] Tabela question_wa_messages inexistente. Rode supabase-migration-discussions.sql"
+      );
+      return;
+    }
+    console.warn("[discussions] insertQuestionWaMessage:", error.message);
+  }
+}
+
+export async function upsertDiscussionPost(input: {
+  questionId: number;
+  shortId: string;
+  groupJid: string;
+  source: DiscussionPostSource;
+}): Promise<DiscussionPost | null> {
+  const { data: existing, error: findErr } = await supabase
+    .from("discussion_posts")
+    .select("id, question_id, short_id, group_jid, source, created_at")
+    .eq("question_id", input.questionId)
+    .maybeSingle();
+
+  if (findErr) {
+    if (discussionsMissingTable(findErr)) {
+      console.warn(
+        "[discussions] Tabela discussion_posts inexistente. Rode supabase-migration-discussions.sql"
+      );
+      return null;
+    }
+    throw new Error(`Erro ao buscar discussion_post: ${findErr.message}`);
+  }
+
+  if (existing) {
+    return mapDiscussionPost(existing as Record<string, unknown>);
+  }
+
+  const { data, error } = await supabase
+    .from("discussion_posts")
+    .insert({
+      question_id: input.questionId,
+      short_id: input.shortId.toUpperCase(),
+      group_jid: input.groupJid,
+      source: input.source
+    })
+    .select("id, question_id, short_id, group_jid, source, created_at")
+    .single();
+
+  if (error) {
+    if (String(error.message || "").toLowerCase().includes("duplicate")) {
+      const { data: again } = await supabase
+        .from("discussion_posts")
+        .select("id, question_id, short_id, group_jid, source, created_at")
+        .eq("question_id", input.questionId)
+        .maybeSingle();
+      return again ? mapDiscussionPost(again as Record<string, unknown>) : null;
+    }
+    throw new Error(`Erro ao criar discussion_post: ${error.message}`);
+  }
+  return mapDiscussionPost(data as Record<string, unknown>);
+}
+
+export async function findQuestionByWaMessageId(
+  groupJid: string,
+  waMessageId: string
+): Promise<{ questionId: number; shortId: string; role: QuestionWaMessageRole } | null> {
+  const { data, error } = await supabase
+    .from("question_wa_messages")
+    .select("question_id, short_id, role")
+    .eq("group_jid", groupJid)
+    .eq("wa_message_id", waMessageId)
+    .maybeSingle();
+  if (error) {
+    if (discussionsMissingTable(error)) return null;
+    throw new Error(`Erro ao buscar âncora WA: ${error.message}`);
+  }
+  if (!data) return null;
+  return {
+    questionId: Number(data.question_id),
+    shortId: String(data.short_id || "").toUpperCase(),
+    role: String(data.role) as QuestionWaMessageRole
+  };
+}
+
+export async function findDiscussionCommentByWaMessageId(
+  waMessageId: string
+): Promise<DiscussionComment | null> {
+  const { data, error } = await supabase
+    .from("discussion_comments")
+    .select(
+      "id, post_id, parent_id, author_jid, author_name, body, source, wa_message_id, shared_to_wa_at, created_at"
+    )
+    .eq("wa_message_id", waMessageId)
+    .maybeSingle();
+  if (error) {
+    if (discussionsMissingTable(error)) return null;
+    throw new Error(`Erro ao buscar comentário WA: ${error.message}`);
+  }
+  return data ? mapDiscussionComment(data as Record<string, unknown>) : null;
+}
+
+export async function getDiscussionPostByQuestionId(
+  questionId: number
+): Promise<DiscussionPost | null> {
+  const { data, error } = await supabase
+    .from("discussion_posts")
+    .select("id, question_id, short_id, group_jid, source, created_at")
+    .eq("question_id", questionId)
+    .maybeSingle();
+  if (error) {
+    if (discussionsMissingTable(error)) return null;
+    throw new Error(`Erro ao buscar discussion_post: ${error.message}`);
+  }
+  return data ? mapDiscussionPost(data as Record<string, unknown>) : null;
+}
+
+export async function getDiscussionPostById(postId: number): Promise<DiscussionPost | null> {
+  const { data, error } = await supabase
+    .from("discussion_posts")
+    .select("id, question_id, short_id, group_jid, source, created_at")
+    .eq("id", postId)
+    .maybeSingle();
+  if (error) {
+    if (discussionsMissingTable(error)) return null;
+    throw new Error(`Erro ao buscar discussion_post: ${error.message}`);
+  }
+  return data ? mapDiscussionPost(data as Record<string, unknown>) : null;
+}
+
+export async function getResultWaMessageIdForQuestion(
+  questionId: number,
+  groupJid: string
+): Promise<string | null> {
+  const { data, error } = await supabase
+    .from("question_wa_messages")
+    .select("wa_message_id")
+    .eq("question_id", questionId)
+    .eq("group_jid", groupJid)
+    .eq("role", "result")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) {
+    if (discussionsMissingTable(error)) return null;
+    console.warn("[discussions] getResultWaMessageId:", error.message);
+    return null;
+  }
+  return data?.wa_message_id ? String(data.wa_message_id) : null;
+}
+
+export async function insertDiscussionComment(input: {
+  postId: number;
+  parentId?: number | null;
+  authorJid: string;
+  authorName?: string | null;
+  body: string;
+  source: DiscussionCommentSource;
+  waMessageId?: string | null;
+}): Promise<DiscussionComment | null> {
+  const body = String(input.body || "").trim();
+  if (!body) return null;
+
+  if (input.waMessageId) {
+    const existing = await findDiscussionCommentByWaMessageId(input.waMessageId);
+    if (existing) return existing;
+  }
+
+  const { data, error } = await supabase
+    .from("discussion_comments")
+    .insert({
+      post_id: input.postId,
+      parent_id: input.parentId ?? null,
+      author_jid: input.authorJid,
+      author_name: input.authorName?.trim() || null,
+      body,
+      source: input.source,
+      wa_message_id: input.waMessageId || null
+    })
+    .select(
+      "id, post_id, parent_id, author_jid, author_name, body, source, wa_message_id, shared_to_wa_at, created_at"
+    )
+    .single();
+
+  if (error) {
+    if (discussionsMissingTable(error)) {
+      console.warn(
+        "[discussions] Tabela discussion_comments inexistente. Rode supabase-migration-discussions.sql"
+      );
+      return null;
+    }
+    if (input.waMessageId && String(error.message || "").toLowerCase().includes("duplicate")) {
+      return findDiscussionCommentByWaMessageId(input.waMessageId);
+    }
+    throw new Error(`Erro ao inserir comentário: ${error.message}`);
+  }
+  return mapDiscussionComment(data as Record<string, unknown>);
+}
+
+export async function markDiscussionCommentSharedToWa(commentId: number): Promise<void> {
+  const { error } = await supabase
+    .from("discussion_comments")
+    .update({ shared_to_wa_at: new Date().toISOString() })
+    .eq("id", commentId)
+    .is("shared_to_wa_at", null);
+  if (error) {
+    console.warn("[discussions] mark shared:", error.message);
+  }
+}
+
+export async function getDiscussionCommentById(
+  commentId: number
+): Promise<DiscussionComment | null> {
+  const { data, error } = await supabase
+    .from("discussion_comments")
+    .select(
+      "id, post_id, parent_id, author_jid, author_name, body, source, wa_message_id, shared_to_wa_at, created_at"
+    )
+    .eq("id", commentId)
+    .maybeSingle();
+  if (error) {
+    if (discussionsMissingTable(error)) return null;
+    throw new Error(`Erro ao buscar comentário: ${error.message}`);
+  }
+  return data ? mapDiscussionComment(data as Record<string, unknown>) : null;
+}
+
+export async function listDiscussionCommentsForPost(
+  postId: number
+): Promise<DiscussionComment[]> {
+  const { data, error } = await supabase
+    .from("discussion_comments")
+    .select(
+      "id, post_id, parent_id, author_jid, author_name, body, source, wa_message_id, shared_to_wa_at, created_at"
+    )
+    .eq("post_id", postId)
+    .order("created_at", { ascending: true });
+  if (error) {
+    if (discussionsMissingTable(error)) return [];
+    throw new Error(`Erro ao listar comentários: ${error.message}`);
+  }
+  return (data || []).map((row) => mapDiscussionComment(row as Record<string, unknown>));
+}
+
+export async function listRecentDiscussionPosts(limit = 40): Promise<DiscussionPost[]> {
+  const { data, error } = await supabase
+    .from("discussion_posts")
+    .select("id, question_id, short_id, group_jid, source, created_at")
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (error) {
+    if (discussionsMissingTable(error)) return [];
+    throw new Error(`Erro ao listar discussion_posts: ${error.message}`);
+  }
+  const posts = (data || []).map((row) => mapDiscussionPost(row as Record<string, unknown>));
+  if (!posts.length) return posts;
+
+  const questionIds = posts.map((p) => p.questionId);
+  const { data: qRows } = await supabase
+    .from("questions")
+    .select("id, statement_text")
+    .in("id", questionIds);
+  const previewById = new Map<number, string | null>();
+  for (const row of qRows || []) {
+    const raw = row.statement_text != null ? String(row.statement_text).trim() : "";
+    previewById.set(Number(row.id), raw ? raw.slice(0, 220) : null);
+  }
+
+  const postIds = posts.map((p) => p.id);
+  const { data: cRows } = await supabase
+    .from("discussion_comments")
+    .select("post_id")
+    .in("post_id", postIds);
+  const countByPost = new Map<number, number>();
+  for (const row of cRows || []) {
+    const pid = Number(row.post_id);
+    countByPost.set(pid, (countByPost.get(pid) || 0) + 1);
+  }
+
+  return posts.map((p) => ({
+    ...p,
+    statementPreview: previewById.get(p.questionId) ?? null,
+    commentCount: countByPost.get(p.id) || 0
+  }));
+}
+
+/** Threads de discussão por short_id (para relatório). */
+export async function listDiscussionThreadsByShortIds(
+  shortIds: string[]
+): Promise<Record<string, DiscussionComment[]>> {
+  const ids = [...new Set(shortIds.map((s) => String(s).trim().toUpperCase()).filter(Boolean))];
+  const out: Record<string, DiscussionComment[]> = {};
+  if (!ids.length) return out;
+
+  const { data: posts, error: pErr } = await supabase
+    .from("discussion_posts")
+    .select("id, short_id")
+    .in("short_id", ids);
+  if (pErr) {
+    if (discussionsMissingTable(pErr)) return out;
+    throw new Error(`Erro ao listar posts para relatório: ${pErr.message}`);
+  }
+  if (!posts?.length) return out;
+
+  const postIdToShort = new Map<number, string>();
+  for (const p of posts) {
+    postIdToShort.set(Number(p.id), String(p.short_id).toUpperCase());
+  }
+  const postIds = [...postIdToShort.keys()];
+  const { data: comments, error: cErr } = await supabase
+    .from("discussion_comments")
+    .select(
+      "id, post_id, parent_id, author_jid, author_name, body, source, wa_message_id, shared_to_wa_at, created_at"
+    )
+    .in("post_id", postIds)
+    .order("created_at", { ascending: true });
+  if (cErr) {
+    if (discussionsMissingTable(cErr)) return out;
+    throw new Error(`Erro ao listar comentários para relatório: ${cErr.message}`);
+  }
+
+  for (const row of comments || []) {
+    const shortId = postIdToShort.get(Number(row.post_id));
+    if (!shortId) continue;
+    if (!out[shortId]) out[shortId] = [];
+    out[shortId].push(mapDiscussionComment(row as Record<string, unknown>));
+  }
+  return out;
 }

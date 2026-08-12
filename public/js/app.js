@@ -66,6 +66,7 @@
     reportGenerate: document.getElementById("report-generate"),
     reportCatAdd: document.getElementById("report-cat-add"),
     reportCatRulesList: document.getElementById("report-cat-rules-list"),
+    reportIncludeDiscussions: document.getElementById("report-include-discussions"),
     practiceUserSelect: document.getElementById("practice-user-select"),
     modalPrev: document.getElementById("modal-prev"),
     modalNext: document.getElementById("modal-next"),
@@ -1284,6 +1285,41 @@
           lines.push(`- **Resultado:** ${row.correct ? "Certo" : "Errado"}`);
         }
         lines.push("");
+      }
+
+      if (els.reportIncludeDiscussions && els.reportIncludeDiscussions.checked) {
+        const thread = (reportData.discussions && reportData.discussions[shortId]) || [];
+        lines.push("### Discussões");
+        lines.push("");
+        if (!thread.length) {
+          lines.push("*Sem discussões registradas para esta questão.*");
+          lines.push("");
+        } else {
+          const byId = new Map(thread.map((c) => [c.id, c]));
+          const byParent = new Map();
+          for (const c of thread) {
+            const key = c.parentId == null ? "root" : String(c.parentId);
+            if (!byParent.has(key)) byParent.set(key, []);
+            byParent.get(key).push(c);
+          }
+          function walk(parentKey, depth) {
+            const list = byParent.get(parentKey) || [];
+            for (const c of list) {
+              const indent = "  ".repeat(depth);
+              const author = c.authorName || "Participante";
+              const parent = c.parentId != null ? byId.get(c.parentId) : null;
+              const replyTo = parent
+                ? ` _(em resposta a ${mdCell(parent.authorName || "Participante")})_`
+                : "";
+              lines.push(
+                `${indent}- **${mdCell(author)}**${replyTo} [${c.source || "?"}]: ${mdCell(c.body)}`
+              );
+              walk(String(c.id), depth + 1);
+            }
+          }
+          walk("root", 0);
+          lines.push("");
+        }
       }
     }
 

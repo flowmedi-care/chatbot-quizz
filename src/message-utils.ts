@@ -12,6 +12,53 @@ function getTextFromMessage(msg: WAMessage): string {
   );
 }
 
+/** contextInfo de reply/citação (texto ou mídia com caption). */
+export function extractContextInfo(msg: WAMessage): {
+  stanzaId: string | null;
+  participant: string | null;
+  quotedText: string | null;
+} | null {
+  const m = msg.message;
+  if (!m) return null;
+  const ctx =
+    m.extendedTextMessage?.contextInfo ??
+    m.imageMessage?.contextInfo ??
+    m.videoMessage?.contextInfo ??
+    m.documentMessage?.contextInfo ??
+    m.audioMessage?.contextInfo ??
+    null;
+  if (!ctx) return null;
+  const stanzaId = ctx.stanzaId ? String(ctx.stanzaId) : null;
+  const participant = ctx.participant ? String(ctx.participant) : null;
+  const qm = ctx.quotedMessage;
+  let quotedText: string | null = null;
+  if (qm) {
+    const raw =
+      qm.conversation ??
+      qm.extendedTextMessage?.text ??
+      qm.imageMessage?.caption ??
+      qm.videoMessage?.caption ??
+      qm.documentMessage?.caption ??
+      "";
+    quotedText = String(raw || "").trim() || null;
+  }
+  return { stanzaId, participant, quotedText };
+}
+
+/** Texto útil para discussão: caption/texto; mídia sem caption vira placeholder. */
+export function extractDiscussionBody(msg: WAMessage): string {
+  const text = getTextFromMessage(msg).trim();
+  if (text) return text;
+  const m = msg.message;
+  if (!m) return "";
+  if (m.imageMessage) return "[imagem]";
+  if (m.videoMessage) return "[vídeo]";
+  if (m.audioMessage) return "[áudio]";
+  if (m.documentMessage) return "[documento]";
+  if (m.stickerMessage) return "[sticker]";
+  return "";
+}
+
 export function extractMessageType(msg: WAMessage): string {
   const message = msg.message;
   if (!message) {

@@ -20,6 +20,8 @@
     { "source": "/api/omissas-results", "destination": "/api/omissas-web?om=results" },
     { "source": "/api/omissas-assist", "destination": "/api/omissas-web?om=assist" },
     { "source": "/api/atividades", "destination": "/api/omissas-web?om=atividades" },
+    { "source": "/api/discussions/share-whatsapp", "destination": "/api/questions?view=discussions-share" },
+    { "source": "/api/discussions", "destination": "/api/questions?view=discussions" },
     { "source": "/tutorial", "destination": "/tutorial/index.html" },
     { "source": "/hub", "destination": "/hub/index.html" },
     { "source": "/hub/", "destination": "/hub/index.html" },
@@ -30,6 +32,8 @@
     { "source": "/omissas", "destination": "/omissas/index.html" },
     { "source": "/omissas/", "destination": "/omissas/index.html" },
     { "source": "/atividades", "destination": "/atividades/index.html" },
-    { "source": "/atividades/", "destination": "/atividades/index.html" }
+    { "source": "/atividades/", "destination": "/atividades/index.html" },
+    { "source": "/discussoes", "destination": "/discussoes/index.html" },
+    { "source": "/discussoes/", "destination": "/discussoes/index.html" }
   ]
 }

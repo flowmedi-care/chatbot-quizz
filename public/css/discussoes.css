@@ -1,0 +1,262 @@
+:root {
+  --disc-navy: #101d33;
+  --disc-accent: #e85d04;
+  --disc-border: rgba(61, 48, 36, 0.12);
+}
+
+.disc-page .disc-wrap {
+  max-width: 1100px;
+}
+
+.disc-hero {
+  margin: 1.5rem 0 1rem;
+}
+
+.disc-hero h1 {
+  font-family: var(--display, "Fraunces", Georgia, serif);
+  font-size: clamp(1.75rem, 3vw, 2.25rem);
+  margin: 0 0 0.4rem;
+  color: var(--disc-navy);
+}
+
+.disc-hero p {
+  margin: 0 0 1rem;
+  color: var(--muted);
+  max-width: 56ch;
+}
+
+.disc-who {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  max-width: 320px;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.disc-who select {
+  font: inherit;
+  font-weight: 500;
+  padding: 0.55rem 0.75rem;
+  border-radius: 10px;
+  border: 1px solid var(--disc-border);
+  background: #fff;
+}
+
+.disc-status {
+  min-height: 1.25rem;
+  font-size: 0.9rem;
+  color: var(--muted);
+  margin: 0 0 0.75rem;
+}
+
+.disc-layout {
+  display: grid;
+  grid-template-columns: minmax(240px, 340px) 1fr;
+  gap: 1.25rem;
+  align-items: start;
+}
+
+.disc-list-panel,
+.disc-thread-panel {
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid var(--disc-border);
+  border-radius: 16px;
+  padding: 0.85rem;
+  min-height: 420px;
+}
+
+.disc-feed {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.disc-card {
+  text-align: left;
+  width: 100%;
+  border: 1px solid transparent;
+  background: #fff;
+  border-radius: 12px;
+  padding: 0.75rem 0.85rem;
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.disc-card:hover,
+.disc-card.is-active {
+  border-color: rgba(232, 93, 4, 0.45);
+  box-shadow: 0 8px 24px rgba(16, 29, 51, 0.06);
+}
+
+.disc-card-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-size: 0.78rem;
+  color: var(--muted);
+  margin-bottom: 0.35rem;
+}
+
+.disc-card-title {
+  font-weight: 700;
+  color: var(--disc-navy);
+  margin: 0 0 0.25rem;
+}
+
+.disc-card-preview {
+  margin: 0;
+  font-size: 0.88rem;
+  color: var(--text);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.disc-empty {
+  color: var(--muted);
+  padding: 1.5rem 0.5rem;
+  text-align: center;
+}
+
+.disc-thread-head {
+  margin-bottom: 1rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid var(--disc-border);
+}
+
+.disc-thread-head h2 {
+  margin: 0 0 0.35rem;
+  font-family: var(--display, "Fraunces", Georgia, serif);
+  font-size: 1.35rem;
+  color: var(--disc-navy);
+}
+
+.disc-thread-head p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.92rem;
+  white-space: pre-wrap;
+}
+
+.disc-comments {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.disc-comment {
+  background: #fff;
+  border: 1px solid var(--disc-border);
+  border-radius: 12px;
+  padding: 0.7rem 0.8rem;
+}
+
+.disc-comment-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.75rem;
+  align-items: center;
+  font-size: 0.78rem;
+  color: var(--muted);
+  margin-bottom: 0.35rem;
+}
+
+.disc-comment-author {
+  font-weight: 700;
+  color: var(--disc-navy);
+}
+
+.disc-comment-body {
+  margin: 0;
+  white-space: pre-wrap;
+  font-size: 0.95rem;
+}
+
+.disc-comment-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.55rem;
+}
+
+.disc-btn {
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 600;
+  border-radius: 8px;
+  border: 1px solid var(--disc-border);
+  background: #fff;
+  padding: 0.35rem 0.65rem;
+  cursor: pointer;
+}
+
+.disc-btn:hover:not(:disabled) {
+  border-color: rgba(232, 93, 4, 0.5);
+}
+
+.disc-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.disc-btn-wpp {
+  background: #25d366;
+  border-color: #1ebe57;
+  color: #053b1c;
+}
+
+.disc-compose {
+  margin-top: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.disc-compose textarea {
+  font: inherit;
+  min-height: 88px;
+  border-radius: 12px;
+  border: 1px solid var(--disc-border);
+  padding: 0.65rem 0.75rem;
+  resize: vertical;
+}
+
+.disc-compose-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.disc-compose-hint {
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.disc-btn-primary {
+  background: var(--disc-navy);
+  color: #fff;
+  border-color: var(--disc-navy);
+}
+
+.disc-children {
+  margin-top: 0.55rem;
+  margin-left: 0.85rem;
+  padding-left: 0.75rem;
+  border-left: 2px solid rgba(232, 93, 4, 0.25);
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+@media (max-width: 820px) {
+  .disc-layout {
+    grid-template-columns: 1fr;
+  }
+  .disc-list-panel,
+  .disc-thread-panel {
+    min-height: 0;
+  }
+}
