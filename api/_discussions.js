@@ -98,6 +98,8 @@ async function listPosts(supabase, limit = 120) {
         posts: [],
         availableDays: [],
         today: todayInTz(),
+        cadernos: [],
+        engagementByCaderno: {},
         warning: "Rode supabase-migration-discussions.sql no Supabase."
       };
     }
@@ -121,47 +123,130 @@ async function listPosts(supabase, limit = 120) {
 async function enrichPostsList(supabase, rows) {
   const posts = rows.map(mapPost);
   const today = todayInTz();
-  if (!posts.length) return { posts: [], availableDays: [], today };
+  if (!posts.length) {
+    return { posts: [], availableDays: [], today, cadernos: [] };
+  }
 
   const questionIds = posts.map((p) => p.questionId);
   const { data: qRows } = await supabase
     .from("questions")
-    .select("id, statement_text")
+    .select("id, statement_text, creator_jid")
     .in("id", questionIds);
   const previewById = new Map();
+  const creatorByQ = new Map();
   for (const row of qRows || []) {
     const raw = row.statement_text != null ? String(row.statement_text).trim() : "";
     previewById.set(Number(row.id), raw ? raw.slice(0, 220) : null);
+    creatorByQ.set(Number(row.id), String(row.creator_jid || ""));
+  }
+
+  const cadernoByQuestionId = new Map();
+  const { data: cqRows } = await supabase
+    .from("caderno_questions")
+    .select("published_question_id, caderno_id")
+    .in("published_question_id", questionIds);
+  for (const row of cqRows || []) {
+    const qid = Number(row.published_question_id);
+    const cid = Number(row.caderno_id);
+    if (Number.isFinite(qid) && Number.isFinite(cid)) cadernoByQuestionId.set(qid, cid);
+  }
+  for (const [qid, creator] of creatorByQ) {
+    if (cadernoByQuestionId.has(qid)) continue;
+    const m = String(creator || "").match(/^caderno:(\d+)@bot$/i);
+    if (m) cadernoByQuestionId.set(qid, Number(m[1]));
+  }
+
+  const cadernoIds = [...new Set([...cadernoByQuestionId.values()])];
+  const cadernoNames = new Map();
+  if (cadernoIds.length) {
+    const { data: cRows } = await supabase.from("cadernos").select("id, name").in("id", cadernoIds);
+    for (const c of cRows || []) {
+      cadernoNames.set(Number(c.id), String(c.name || `Caderno #${c.id}`));
+    }
   }
 
   const postIds = posts.map((p) => p.id);
   const { data: cRows } = await supabase
     .from("discussion_comments")
-    .select("post_id, author_jid")
+    .select("post_id, author_jid, author_name")
     .in("post_id", postIds);
 
   const countByPost = new Map();
   const authorsByPost = new Map();
+  const namesByPost = new Map();
   for (const row of cRows || []) {
     const pid = Number(row.post_id);
     countByPost.set(pid, (countByPost.get(pid) || 0) + 1);
     if (!authorsByPost.has(pid)) authorsByPost.set(pid, new Set());
+    if (!namesByPost.has(pid)) namesByPost.set(pid, new Set());
     authorsByPost.get(pid).add(jidKey(row.author_jid));
+    // também a parte local (antes do @) — ajuda pouco lid↔phone, mas não atrapalha
+    const local = String(row.author_jid || "")
+      .split("@")[0]
+      .split(":")[0]
+      .toLowerCase();
+    if (local) authorsByPost.get(pid).add(local);
+    const nm = String(row.author_name || "")
+      .trim()
+      .toLowerCase();
+    if (nm && nm !== "participante") namesByPost.get(pid).add(nm);
+  }
+
+  // Mapa de engajamento por caderno (todos os membros) — o front filtra pelo user selecionado
+  let engagementByCaderno = {};
+  if (cadernoIds.length) {
+    const { data: engRows, error: engErr } = await supabase
+      .from("caderno_engagement")
+      .select("caderno_id, user_jid, engaged, passive")
+      .in("caderno_id", cadernoIds);
+    if (!engErr) {
+      for (const row of engRows || []) {
+        const cid = Number(row.caderno_id);
+        if (!Number.isFinite(cid)) continue;
+        if (!engagementByCaderno[cid]) engagementByCaderno[cid] = [];
+        engagementByCaderno[cid].push({
+          userJid: String(row.user_jid || ""),
+          userJidKey: jidKey(row.user_jid),
+          engaged: Boolean(row.engaged),
+          passive: Boolean(row.passive)
+        });
+      }
+    }
   }
 
   const daySet = new Set();
+  const cadernoSet = new Map();
   const enriched = posts.map((p) => {
     if (p.feedDay) daySet.add(p.feedDay);
+    const cadernoId = cadernoByQuestionId.get(p.questionId) ?? null;
+    const cadernoName =
+      cadernoId != null ? cadernoNames.get(cadernoId) || `Caderno #${cadernoId}` : null;
+    if (cadernoId != null) {
+      cadernoSet.set(cadernoId, cadernoName);
+    }
     return {
       ...p,
+      cadernoId,
+      cadernoName,
       statementPreview: previewById.get(p.questionId) ?? null,
       commentCount: countByPost.get(p.id) || 0,
-      authorJidKeys: [...(authorsByPost.get(p.id) || [])]
+      authorJidKeys: [...(authorsByPost.get(p.id) || [])],
+      authorNames: [...(namesByPost.get(p.id) || [])]
     };
   });
 
   const availableDays = [...daySet].sort((a, b) => b.localeCompare(a));
-  return { posts: enriched, availableDays, today };
+  const cadernos = [...cadernoSet.entries()]
+    .map(([id, name]) => ({ id, name }))
+    .sort((a, b) => String(a.name).localeCompare(String(b.name), "pt-BR"));
+
+  return {
+    posts: enriched,
+    availableDays,
+    today,
+    cadernos,
+    engagementByCaderno
+  };
 }
 
 async function loadAnswersContext(supabase, questionId, answerKey) {

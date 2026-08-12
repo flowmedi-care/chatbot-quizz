@@ -8,6 +8,8 @@
     thread: document.getElementById("disc-thread"),
     threadEmpty: document.getElementById("disc-thread-empty"),
     filterDay: document.getElementById("filter-day"),
+    filterRole: document.getElementById("filter-role"),
+    filterCaderno: document.getElementById("filter-caderno"),
     filterComments: document.getElementById("filter-comments"),
     filterMine: document.getElementById("filter-mine")
   };
@@ -16,6 +18,10 @@
   let posts = [];
   /** @type {string[]} */
   let availableDays = [];
+  /** @type {{ id: number, name: string }[]} */
+  let cadernos = [];
+  /** @type {Record<string, { userJid: string, userJidKey: string, engaged: boolean, passive: boolean }[]>} */
+  let engagementByCaderno = {};
   /** @type {string} */
   let today = "";
   /** @type {number | null} */
@@ -44,6 +50,14 @@
     return `${user}@${domain}`;
   }
 
+  function normalizeName(s) {
+    return String(s || "")
+      .trim()
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "");
+  }
+
   function setStatus(msg) {
     if (els.status) els.status.textContent = msg || "";
   }
@@ -57,6 +71,40 @@
     return opt ? String(opt.textContent || "").trim() : "";
   }
 
+  function userMatchesEngagement(row) {
+    const me = jidKey(getUserJid());
+    if (!me || !row) return false;
+    if (row.userJidKey === me) return true;
+    const localMe = me.split("@")[0];
+    const localRow = String(row.userJidKey || "").split("@")[0];
+    return Boolean(localMe && localMe === localRow && localMe.length >= 8);
+  }
+
+  function myRoleOnCaderno(cadernoId) {
+    if (cadernoId == null) return { engaged: false, passive: false, linked: false };
+    const rows = engagementByCaderno[String(cadernoId)] || engagementByCaderno[cadernoId] || [];
+    const hit = rows.find((r) => userMatchesEngagement(r));
+    if (!hit) return { engaged: false, passive: false, linked: false };
+    return { engaged: Boolean(hit.engaged), passive: Boolean(hit.passive), linked: true };
+  }
+
+  function iCommentedOnPost(p) {
+    const me = jidKey(getUserJid());
+    const myName = normalizeName(getUserName());
+    const authors = Array.isArray(p.authorJidKeys) ? p.authorJidKeys : [];
+    const names = Array.isArray(p.authorNames) ? p.authorNames : [];
+    if (me) {
+      if (authors.includes(me)) return true;
+      const local = me.split("@")[0];
+      if (local && authors.includes(local)) return true;
+    }
+    // WhatsApp costuma gravar @lid; o seletor usa telefone — casa pelo nome exibido
+    if (myName && myName !== "participante" && myName !== "selecione…") {
+      if (names.some((n) => normalizeName(n) === myName)) return true;
+    }
+    return false;
+  }
+
   async function fetchJson(url, opts) {
     const res = await fetch(url, opts);
     const data = await res.json().catch(() => ({}));
@@ -64,10 +112,39 @@
     return data;
   }
 
+  function fillCadernoFilter() {
+    if (!els.filterCaderno) return;
+    const prev = els.filterCaderno.value || "__all__";
+    const role = els.filterRole?.value || "engaged_passive";
+
+    const options = cadernos.filter((c) => {
+      if (role === "all") return true;
+      const r = myRoleOnCaderno(c.id);
+      if (role === "engaged") return r.engaged;
+      if (role === "passive") return r.passive;
+      // engaged_passive
+      return r.engaged || r.passive;
+    });
+
+    els.filterCaderno.innerHTML =
+      `<option value="__all__">Todos (do vínculo)</option>` +
+      options
+        .map((c) => `<option value="${c.id}">${esc(c.name)}</option>`)
+        .join("");
+
+    if ([...els.filterCaderno.options].some((o) => o.value === prev)) {
+      els.filterCaderno.value = prev;
+    } else {
+      els.filterCaderno.value = "__all__";
+    }
+  }
+
   function filteredPosts() {
     const day = els.filterDay?.value || "today";
     const comments = els.filterComments?.value || "all";
     const mine = els.filterMine?.value || "all";
+    const role = els.filterRole?.value || "engaged_passive";
+    const cadernoSel = els.filterCaderno?.value || "__all__";
     const me = jidKey(getUserJid());
 
     return posts.filter((p) => {
@@ -77,14 +154,26 @@
         if (p.feedDay !== day) return false;
       }
 
+      if (role !== "all") {
+        // questões sem caderno só aparecem em "todos"
+        if (p.cadernoId == null) return false;
+        const r = myRoleOnCaderno(p.cadernoId);
+        if (role === "engaged" && !r.engaged) return false;
+        if (role === "passive" && !r.passive) return false;
+        if (role === "engaged_passive" && !(r.engaged || r.passive)) return false;
+      }
+
+      if (cadernoSel !== "__all__") {
+        if (String(p.cadernoId) !== String(cadernoSel)) return false;
+      }
+
       const count = Number(p.commentCount || 0);
       if (comments === "with" && count <= 0) return false;
       if (comments === "without" && count > 0) return false;
 
       if (mine !== "all") {
-        if (!me) return false;
-        const authors = Array.isArray(p.authorJidKeys) ? p.authorJidKeys : [];
-        const iCommented = authors.includes(me);
+        if (!me && !getUserName()) return false;
+        const iCommented = iCommentedOnPost(p);
         if (mine === "mine" && !iCommented) return false;
         if (mine === "not_mine" && iCommented) return false;
       }
@@ -135,6 +224,7 @@
     }
     els.user.addEventListener("change", () => {
       if (els.user.value) localStorage.setItem(STORAGE_USER, els.user.value);
+      fillCadernoFilter();
       renderFeed();
     });
   }
@@ -146,7 +236,10 @@
       posts = data.posts || [];
       availableDays = data.availableDays || [];
       today = data.today || "";
+      cadernos = data.cadernos || [];
+      engagementByCaderno = data.engagementByCaderno || {};
       fillDayFilter();
+      fillCadernoFilter();
       if (data.warning) setStatus(data.warning);
       else setStatus("");
       renderFeed();
@@ -165,7 +258,9 @@
       return;
     }
     if (!list.length) {
-      els.feed.innerHTML = `<p class="disc-empty">Nenhuma questão com esses filtros.</p>`;
+      els.feed.innerHTML = `<p class="disc-empty">Nenhuma questão com esses filtros.${
+        !getUserJid() ? " Selecione “Quem sou eu”." : ""
+      }</p>`;
       return;
     }
     els.feed.innerHTML = list
@@ -177,6 +272,7 @@
           : p.createdAt
             ? new Date(p.createdAt).toLocaleString("pt-BR")
             : "";
+        const cadernoBit = p.cadernoName ? esc(p.cadernoName) : "Sem caderno";
         return `<button type="button" class="disc-card${active}" data-post-id="${p.id}">
           <div class="disc-card-meta">
             <span>#${esc(p.shortId)}</span>
@@ -184,7 +280,7 @@
           </div>
           <p class="disc-card-title">Questão #${esc(p.shortId)}</p>
           <p class="disc-card-preview">${esc(preview)}</p>
-          <div class="disc-card-meta"><span>${esc(when)}</span><span>${esc(p.source)}</span></div>
+          <div class="disc-card-meta"><span>${esc(when)}</span><span>${cadernoBit}</span></div>
         </button>`;
       })
       .join("");
@@ -402,8 +498,17 @@
   }
 
   function bindFilters() {
-    for (const el of [els.filterDay, els.filterComments, els.filterMine]) {
-      el?.addEventListener("change", () => renderFeed());
+    for (const el of [
+      els.filterDay,
+      els.filterRole,
+      els.filterCaderno,
+      els.filterComments,
+      els.filterMine
+    ]) {
+      el?.addEventListener("change", () => {
+        if (el === els.filterRole) fillCadernoFilter();
+        renderFeed();
+      });
     }
   }
 
