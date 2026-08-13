@@ -66,7 +66,9 @@ function normalizeIncomingQuestions(rawList) {
   const warnings = [];
   const questions = [];
   (Array.isArray(rawList) ? rawList : []).forEach((item, idx) => {
-    const position = Number(item.position) || idx + 1;
+    const parsedPos = Number(item.position);
+    const position =
+      Number.isFinite(parsedPos) && parsedPos >= 0 ? parsedPos : idx + 1;
     const questionType = mapQuestionType(item.questionType || item.type);
     const options = normalizeOptions(item.options || item.alternatives);
     const statement = String(item.statement || item.statementText || "").trim();
@@ -87,6 +89,9 @@ function normalizeIncomingQuestions(rawList) {
       options,
       answerKey
     });
+  });
+  questions.forEach((q, i) => {
+    q.position = i + 1;
   });
   return { questions, warnings };
 }
