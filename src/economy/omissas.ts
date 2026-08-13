@@ -10,7 +10,7 @@ import {
   type UnansweredOmissasBuckets
 } from "../supabase";
 import { ECONOMY_TZ, OMISSAS_SCHEDULE } from "./constants";
-import { todayIso } from "./db";
+import { todayIso, userHasDayOffOn } from "./db";
 
 export type LockingStatus = {
   cadernoId: number;
@@ -43,6 +43,7 @@ export async function listLockingCadernosForUser(
     );
     const isMissing = missing.some((jid) => isSameQuizParticipant(jid, userJid));
     if (!isMissing) continue;
+    if (await userHasDayOffOn(userJid, c.currentDayDate)) continue;
     out.push({
       cadernoId: c.id,
       cadernoName: c.name,

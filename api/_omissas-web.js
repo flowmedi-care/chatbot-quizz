@@ -107,7 +107,7 @@ async function fetchUserAnswersForShortIds(supabase, userJid, shortIds) {
   if (!shortIds.length) return new Map();
   const { data, error } = await supabase
     .from("answers")
-    .select("question_short_id, answer_letter, answer_comment, user_jid")
+    .select("id, question_short_id, answer_letter, answer_comment, user_jid")
     .in("question_short_id", shortIds);
   if (error) throw error;
 
@@ -116,6 +116,7 @@ async function fetchUserAnswersForShortIds(supabase, userJid, shortIds) {
   for (const row of data || []) {
     if (jidComparableKey(row.user_jid) !== userKey) continue;
     out.set(String(row.question_short_id).toUpperCase(), {
+      id: Number(row.id),
       letter: String(row.answer_letter || "").toLowerCase(),
       comment: row.answer_comment != null ? String(row.answer_comment) : null
     });
@@ -317,17 +318,34 @@ async function handleOmissasSession(req, res) {
     const userName = await resolveSessionUserName(supabase, session);
     const assistQty = await getAssistEliminateQty(supabase, session.userJid);
     const assistUsed = await fetchAssistUsedMap(supabase, session.userJid, session.shortIds);
+    const { mapCategoriesByAnswerIds } = require("./_categories.js");
+    const catsByAnswer = await mapCategoriesByAnswerIds(
+      supabase,
+      [...answers.values()].map((a) => a.id).filter((id) => Number.isFinite(id) && id > 0)
+    );
 
     const list = session.shortIds.map((sid) => {
       const q = questions.find((x) => String(x.short_id).toUpperCase() === sid);
       const ans = answers.get(sid) || null;
       const assist = assistUsed.get(sid) || null;
+      const cats = ans && ans.id ? catsByAnswer.get(ans.id) || [] : [];
+      const categoryIds = cats.map((c) => c.id);
+      const yourLetter = ans ? String(ans.letter || "").toUpperCase() : null;
+      const answerKey =
+        ans && q
+          ? String(q.answer_key || "")
+              .toUpperCase()
+              .slice(0, 1) || null
+          : null;
+      const correct =
+        yourLetter && answerKey ? yourLetter.slice(0, 1) === answerKey : null;
       if (!q) {
         return {
           shortId: sid,
           missing: true,
           alreadyAnswered: Boolean(ans),
-          yourLetter: ans ? ans.letter : null,
+          yourLetter,
+          categoryIds,
           assistUsed: Boolean(assist),
           assistReveal: assist
         };
@@ -340,8 +358,11 @@ async function handleOmissasSession(req, res) {
         statementMediaUrl: q.statement_media_url || null,
         statementMediaMimeType: q.statement_media_mime_type || null,
         alreadyAnswered: Boolean(ans),
-        yourLetter: ans ? ans.letter : null,
+        yourLetter,
         yourComment: ans ? ans.comment : null,
+        categoryIds,
+        answerKey,
+        correct,
         missing: false,
         assistUsed: Boolean(assist),
         assistReveal: assist

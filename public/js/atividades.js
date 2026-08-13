@@ -10,7 +10,8 @@
     answer: "/api/omissas-answer",
     assist: "/api/omissas-assist",
     results: (t) => `/api/omissas-results?t=${encodeURIComponent(t)}`,
-    userCategories: "/api/user-categories"
+    userCategories: "/api/user-categories",
+    answerCategories: "/api/answer-categories"
   };
 
   const $ = (id) => document.getElementById(id);
@@ -28,8 +29,6 @@
   let token = "";
   let pending = [];
   let index = 0;
-  let totalInSession = 0;
-  let answeredAtStart = 0;
   let submitting = false;
   let assistQty = 0;
   let quizUserName = "";
@@ -190,18 +189,69 @@
     }
   }
 
+  function catKey(q) {
+    return String(q && q.shortId ? q.shortId : "").toUpperCase();
+  }
+
   function saveDraftCatsForCurrent() {
     const q = pending[index];
     if (!q) return;
-    draftCatsByShortId.set(String(q.shortId).toUpperCase(), Array.from(selectedCategoryIds));
+    const ids = Array.from(selectedCategoryIds);
+    draftCatsByShortId.set(catKey(q), ids);
+    q.categoryIds = ids;
   }
 
   function loadDraftCatsForCurrent() {
     const q = pending[index];
     selectedCategoryIds = new Set();
     if (!q) return;
-    const draft = draftCatsByShortId.get(String(q.shortId).toUpperCase());
-    if (draft) selectedCategoryIds = new Set(draft);
+    const draft = draftCatsByShortId.get(catKey(q));
+    if (draft) {
+      selectedCategoryIds = new Set(draft.map(Number));
+      return;
+    }
+    if (Array.isArray(q.categoryIds) && q.categoryIds.length) {
+      selectedCategoryIds = new Set(q.categoryIds.map(Number));
+    }
+  }
+
+  function gabaritoExtra(q) {
+    if (!q || !q.alreadyAnswered || q.correct == null || !q.answerKey) return null;
+    return {
+      correct: q.correct,
+      answerKey: q.answerKey,
+      yourAnswer: q.yourLetter || q.yourAnswer || ""
+    };
+  }
+
+  function nextUnansweredIndex(fromIndex) {
+    for (let i = fromIndex + 1; i < pending.length; i++) {
+      if (!pending[i].alreadyAnswered) return i;
+    }
+    for (let i = 0; i <= fromIndex; i++) {
+      if (!pending[i].alreadyAnswered) return i;
+    }
+    return -1;
+  }
+
+  async function persistCatsIfAnswered() {
+    const q = pending[index];
+    if (!q || !q.alreadyAnswered || !userJid) return;
+    const ids = Array.from(selectedCategoryIds);
+    q.categoryIds = ids;
+    draftCatsByShortId.set(catKey(q), ids);
+    try {
+      await fetchJson(API.answerCategories, {
+        method: "POST",
+        body: JSON.stringify({ userJid, shortId: q.shortId, categoryIds: ids })
+      });
+    } catch (e) {
+      const st = $("q-status");
+      if (st) {
+        st.classList.remove("hidden");
+        st.textContent = e.message || "Erro ao salvar categorias.";
+      }
+    }
   }
 
   function formatAssistDetail(q) {
@@ -225,10 +275,11 @@
     const q = pending[index];
     const assistLine = formatAssistDetail(q);
     if (assistLine) parts.push(esc(assistLine));
-    if (extra && extra.correct != null && extra.answerKey) {
-      const key = String(extra.answerKey).toUpperCase();
-      const yours = String(extra.yourAnswer || "").toUpperCase();
-      if (extra.correct) {
+    const gabarito = extra && extra.correct != null && extra.answerKey ? extra : gabaritoExtra(q);
+    if (gabarito && gabarito.correct != null && gabarito.answerKey) {
+      const key = String(gabarito.answerKey).toUpperCase();
+      const yours = String(gabarito.yourAnswer || "").toUpperCase();
+      if (gabarito.correct) {
         parts.push(`<span class="ok">A letra ${esc(key)} está correta</span>`);
       } else {
         parts.push(
@@ -562,22 +613,26 @@
     try {
       await loadUserCategories();
       const data = await fetchJson(API.session(token));
-      totalInSession = data.total || 0;
-      answeredAtStart = data.answeredCount || 0;
       assistQty = data.assistEliminateQty || 0;
       if (data.userName) quizUserName = data.userName;
-      pending = (data.questions || []).filter((q) => !q.missing && !q.alreadyAnswered);
-      if (!pending.length) {
-        if ((data.questions || []).some((q) => q.alreadyAnswered) || data.completedAt) {
-          await showResults();
-          return;
+      pending = (data.questions || []).filter((q) => !q.missing);
+      for (const q of pending) {
+        if (Array.isArray(q.categoryIds) && q.categoryIds.length) {
+          draftCatsByShortId.set(catKey(q), q.categoryIds.map(Number));
         }
+      }
+      if (!pending.length) {
         $("omissas-loading").classList.add("hidden");
         $("omissas-error").classList.remove("hidden");
         $("omissas-error").textContent = "Nenhuma questão pendente nesta sessão.";
         return;
       }
-      index = 0;
+      if (pending.every((q) => q.alreadyAnswered) || data.completedAt) {
+        await showResults();
+        return;
+      }
+      const firstOpen = pending.findIndex((q) => !q.alreadyAnswered);
+      index = firstOpen >= 0 ? firstOpen : 0;
       renderQuestion();
     } catch (e) {
       $("omissas-loading").classList.add("hidden");
@@ -616,10 +671,10 @@
     const btn = $("btn-assist");
     if (!wrap || !btn) return;
     wrap.classList.remove("hidden");
-    if (!q || q.assistUsed) {
+    if (!q || q.assistUsed || q.alreadyAnswered) {
       btn.disabled = true;
       btn.classList.remove("active");
-      btn.textContent = "Item usado";
+      btn.textContent = q && q.alreadyAnswered ? "Respondida" : "Item usado";
       updateQuestionDetails();
       return;
     }
@@ -667,6 +722,9 @@
           if (input.checked) selectedCategoryIds.add(id);
           else selectedCategoryIds.delete(id);
           saveDraftCatsForCurrent();
+          if (pending[index] && pending[index].alreadyAnswered) {
+            void persistCatsIfAnswered();
+          }
           syncCatsToggleLabel();
           updateQuestionDetails();
         });
@@ -686,19 +744,22 @@
     $("omissas-results").classList.add("hidden");
     $("omissas-quiz").classList.remove("hidden");
     $("q-status").classList.add("hidden");
-    $("q-comment").value = "";
+    const commentEl = $("q-comment");
+    commentEl.value = q.alreadyAnswered ? q.yourComment || "" : "";
+    commentEl.readOnly = Boolean(q.alreadyAnswered);
     assistMode = false;
     setCatsPanelOpen(false);
     loadDraftCatsForCurrent();
 
-    const doneSoFar = answeredAtStart + index;
     const hello = firstName(quizUserName || userName);
     $("q-title").textContent = `Questão #${q.shortId}`;
     const metaParts = [];
     if (hello) metaParts.push(`Olá, ${hello}`);
     if (q.creatorName) metaParts.push(`Por ${q.creatorName}`);
     $("q-meta").textContent = metaParts.join(" · ");
-    $("q-progress").textContent = `${doneSoFar + 1} / ${totalInSession} · pendente ${index + 1}/${pending.length}`;
+    $("q-progress").textContent = q.alreadyAnswered
+      ? `${index + 1} / ${pending.length} · respondida`
+      : `${index + 1} / ${pending.length}`;
 
     let html = "";
     if (q.statementText) html += `<div class="statement-text">${esc(q.statementText)}</div>`;
@@ -733,9 +794,16 @@
     choices.querySelectorAll(".btn-choice").forEach((btn) => {
       btn.addEventListener("click", () => onChoiceClick(btn.dataset.letter));
     });
+    if (q.alreadyAnswered) {
+      const yours = String(q.yourLetter || q.yourAnswer || "").toLowerCase();
+      choices.querySelectorAll(".btn-choice").forEach((btn) => {
+        btn.disabled = true;
+        if (yours && btn.dataset.letter === yours) btn.classList.add("selected");
+      });
+    }
     if (q.assistReveal) applyAssistReveal(q, q.assistReveal);
     syncAssistUi(q);
-    updateQuestionDetails();
+    updateQuestionDetails(gabaritoExtra(q));
   }
 
   async function onChoiceClick(letter) {
@@ -749,7 +817,7 @@
   async function useAssistOnLetter(letter) {
     if (assistBusy || submitting) return;
     const q = pending[index];
-    if (!q || !letter || q.assistUsed) return;
+    if (!q || !letter || q.assistUsed || q.alreadyAnswered) return;
     assistBusy = true;
     $("q-status").classList.remove("hidden");
     $("q-status").textContent = "Verificando alternativa…";
@@ -776,7 +844,7 @@
   async function onChoose(letter) {
     if (submitting) return;
     const q = pending[index];
-    if (!q || !letter) return;
+    if (!q || !letter || q.alreadyAnswered) return;
     submitting = true;
     assistMode = false;
     syncQuizNavButtons();
@@ -799,7 +867,14 @@
           categoryIds: Array.from(selectedCategoryIds)
         })
       });
-      draftCatsByShortId.delete(String(q.shortId).toUpperCase());
+      q.alreadyAnswered = true;
+      q.yourLetter = data.yourAnswer || letter;
+      q.yourAnswer = data.yourAnswer || letter;
+      q.yourComment = $("q-comment").value || "";
+      q.answerKey = data.answerKey;
+      q.correct = data.correct;
+      q.categoryIds = Array.from(selectedCategoryIds);
+      draftCatsByShortId.set(catKey(q), q.categoryIds);
       $("q-status").classList.add("hidden");
       updateQuestionDetails({
         correct: data.correct,
@@ -809,18 +884,13 @@
 
       await new Promise((r) => setTimeout(r, 1100));
 
-      if (data.sessionComplete) {
-        await showResults();
-        return;
-      }
-      pending.splice(index, 1);
-      if (index >= pending.length) index = Math.max(0, pending.length - 1);
-      selectedCategoryIds = new Set();
       submitting = false;
-      if (!pending.length) {
+      const nextOpen = nextUnansweredIndex(index);
+      if (nextOpen < 0) {
         await showResults();
         return;
       }
+      index = nextOpen;
       renderQuestion();
     } catch (e) {
       submitting = false;
@@ -1012,6 +1082,9 @@
         if (cat) {
           selectedCategoryIds.add(Number(cat.id));
           saveDraftCatsForCurrent();
+          if (pending[index] && pending[index].alreadyAnswered) {
+            void persistCatsIfAnswered();
+          }
           renderQuizCategoryToggles();
           setCatsPanelOpen(true);
         }
@@ -1027,7 +1100,7 @@
     if (btnAssist) {
       btnAssist.addEventListener("click", () => {
         const q = pending[index];
-        if (!q || q.assistUsed || assistQty < 1 || submitting || assistBusy) return;
+        if (!q || q.alreadyAnswered || q.assistUsed || assistQty < 1 || submitting || assistBusy) return;
         assistMode = !assistMode;
         btnAssist.classList.toggle("active", assistMode);
         $("q-choices").classList.toggle("assist-picking", assistMode);

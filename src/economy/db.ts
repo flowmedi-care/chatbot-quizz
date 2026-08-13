@@ -217,6 +217,24 @@ export async function applyLedger(input: LedgerInput): Promise<LedgerResult> {
   };
 }
 
+/** Folga gravada no ledger (sobrevive à remoção de prepaid_days no miss-eval). */
+export async function userHasDayOffOn(userJid: string, dayIso: string): Promise<boolean> {
+  const day = String(dayIso || "").trim();
+  if (!userJid || !/^\d{4}-\d{2}-\d{2}$/.test(day)) return false;
+  const { data, error } = await economyDb()
+    .from("economy_ledger")
+    .select("id")
+    .eq("user_jid", userJid)
+    .eq("reason", "day_off_use")
+    .eq("ref_id", `folga:${day}`)
+    .maybeSingle();
+  if (error) {
+    console.warn("[economy] day-off lookup:", error.message);
+    return false;
+  }
+  return Boolean(data);
+}
+
 export async function availableCredits(userJid: string): Promise<number> {
   const eco = await ensureEconomy(userJid);
   return Math.max(0, eco.credits - (eco.credits_escrowed || 0));

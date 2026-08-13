@@ -17,7 +17,7 @@ import {
 import { ECONOMY_TZ, OMISSAS_SCHEDULE } from "./constants";
 import { evaluateMissesForUsers } from "./streak";
 import { applyPenaltyLocking, onCadernoCompleted } from "./rewards";
-import { economyDb, todayIso, getDayFlag, setDayFlag } from "./db";
+import { economyDb, todayIso, getDayFlag, setDayFlag, userHasDayOffOn } from "./db";
 import {
   buildOmissasWarnMessage,
   listLockingCadernosForUser
@@ -207,6 +207,7 @@ async function runLockPenalties(sock: WASocket, groupJid: string): Promise<void>
       );
       for (const jid of missing) {
         try {
+          if (await userHasDayOffOn(jid, c.currentDayDate)) continue;
           const { applied } = await applyPenaltyLocking(jid, c.id, c.currentDayDate);
           if (!applied) continue;
           await sendQuiet(
