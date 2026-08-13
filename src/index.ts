@@ -554,6 +554,23 @@ function buildOmissasWebLink(token: string): string {
   return `${config.publicSiteUrl}/omissas?t=${encodeURIComponent(token)}`;
 }
 
+async function buildStudyAppOmissasLink(
+  webLink: string | null,
+  userJid: string
+): Promise<string | null> {
+  if (!webLink || !config.studyAppUrl) return null;
+  try {
+    const { getFlashcardsLinkByUserJid } = await import("./flashcards/links");
+    const link = await getFlashcardsLinkByUserJid(userJid);
+    if (!link || link.status !== "active") return null;
+    const t = new URL(webLink).searchParams.get("t");
+    if (!t) return null;
+    return `${config.studyAppUrl.replace(/\/+$/, "")}/questoes/omissas?t=${encodeURIComponent(t)}`;
+  } catch {
+    return null;
+  }
+}
+
 async function tryCreateOmissasWebLink(input: {
   userJid: string;
   userName?: string | null;
@@ -1575,7 +1592,13 @@ async function startBot(): Promise<void> {
                     })
                   : null;
               await sock.sendMessage(remoteJid, {
-                text: buildOmissasPrivateMessage({ buckets, locking, mode, webLink })
+                text: buildOmissasPrivateMessage({
+                  buckets,
+                  locking,
+                  mode,
+                  webLink,
+                  studyAppLink: await buildStudyAppOmissasLink(webLink, sender)
+                })
               });
             } catch (omErr) {
               await sock.sendMessage(remoteJid, {
@@ -2096,8 +2119,24 @@ async function startBot(): Promise<void> {
                 answerLetter: command.answer,
                 answerComment: command.comment ?? null,
                 sentAt,
-                sourceMessageId: messageId
+                sourceMessageId: messageId,
+                confidenceLevel: command.confidence ?? "seguro",
+                syncSource: "whatsapp"
               });
+              try {
+                const { notifyStudyAppAnswer } = await import("./study-sync");
+                await notifyStudyAppAnswer({
+                  shortId: command.questionId,
+                  userJid: sender,
+                  answerLetter: command.answer,
+                  comment: command.comment ?? null,
+                  confidenceLevel: command.confidence ?? "seguro",
+                  tags: command.categories ?? [],
+                  syncSource: "whatsapp"
+                });
+              } catch (syncErr) {
+                console.warn("[study-sync]", (syncErr as Error).message);
+              }
               await sock.sendMessage(remoteJid, {
                 text: "Resposta salva."
               });

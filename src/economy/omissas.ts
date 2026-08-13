@@ -66,6 +66,8 @@ export function buildOmissasPrivateMessage(input: {
   mode: "hoje" | "atrasadas";
   /** Link pessoal /omissas?t=… (só deste usuário). */
   webLink?: string | null;
+  /** Link no app de estudo para a mesma sessão. */
+  studyAppLink?: string | null;
 }): string {
   const lines: string[] = [];
   if (input.mode === "hoje") {
@@ -122,6 +124,13 @@ export function buildOmissasPrivateMessage(input: {
         "",
         "🌐 Resolver no site (seu link pessoal — só as suas omissas):",
         input.webLink
+      );
+    }
+    if (input.studyAppLink) {
+      lines.push(
+        "",
+        "📚 Resolver no app de estudo (alternativas, confiança, anotações):",
+        input.studyAppLink
       );
     }
     lines.push("", "Deseja receber os enunciados aqui? Responda *sim* ou *nao*.");

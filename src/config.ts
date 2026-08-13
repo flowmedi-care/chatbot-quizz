@@ -31,6 +31,9 @@ export const config = {
   publicSiteUrl: String(process.env.PUBLIC_SITE_URL ?? "https://papa-vagas.vercel.app")
     .trim()
     .replace(/\/+$/, "") || "https://papa-vagas.vercel.app",
+  studyAppUrl: String(process.env.STUDY_APP_URL || process.env.FLASHCARDS_API_URL || "")
+    .trim()
+    .replace(/\/+$/, ""),
   /**
    * Quando todos os **engajados** (exceto o criador da questao e o bot) tiverem respondido, posta gabarito no grupo.
    * Requer tabela `group_member_engagement` e pelo menos um `engaged=true` apos /sync-membros.

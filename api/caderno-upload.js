@@ -1,8 +1,14 @@
 const pdfParse = require("pdf-parse/lib/pdf-parse.js");
 const { getClient, applyCors, pickTargetGroupJid } = require("./_lib.js");
 const { parseTecConcursosPdf } = require("./_pdf-parser.js");
-const { firstSlotFromSchedule } = require("./_schedule.js");
-const { sanitizePostgresText } = require("./_text-sanitize.js");
+const { checkFlashcardsInboundAuth } = require("./_flashcards-inbound-auth.js");
+const {
+  parseSchedule,
+  normalizeIncomingQuestions,
+  insertCadernoBundle,
+  buildSummary
+} = require("./_caderno-create.js");
+const { normalizeOptions } = require("./_statement-options.js");
 
 const MAX_PDF_BYTES = 8 * 1024 * 1024;
 
@@ -16,6 +22,22 @@ module.exports = async (req, res) => {
     body = typeof req.body === "string" ? JSON.parse(req.body || "{}") : req.body || {};
   } catch {
     return res.status(400).json({ error: "JSON invalido" });
+  }
+
+  const fromJson = Array.isArray(body.questions) && body.questions.length > 0;
+  const path = String(
+    req.headers["x-vercel-original-path"] ||
+      req.headers["x-invoke-path"] ||
+      (req.url ? new URL(req.url, "http://localhost").pathname : "") ||
+      ""
+  ).toLowerCase();
+  const forceJson = fromJson || path.includes("caderno-from-json") || String(req.query?.mode || "") === "json";
+
+  if (forceJson) {
+    const auth = checkFlashcardsInboundAuth(req);
+    if (!auth.ok) {
+      return res.status(auth.status).json({ error: auth.error });
+    }
   }
 
   const name = String(body.name || "").trim();
@@ -37,48 +59,9 @@ module.exports = async (req, res) => {
 
   const previewOnly = Boolean(body.previewOnly);
   const activate = Boolean(body.activate);
-
   const deliveryMode = body.deliveryMode === "private" ? "private" : "group";
-
-  const sched = body.schedule || {};
-  // Modelo novo: questionsPerDay + startHour/startMinute + waitForAnswers.
-  // Mantemos compat com chamadas antigas (questionsPerRun, sendHour, sendMinute).
-  const MAX_RELEASE_HOUR = 15;
-  const questionsPerDay = clampInt(
-    sched.questionsPerDay != null ? sched.questionsPerDay : sched.questionsPerRun,
-    1,
-    24,
-    3
-  );
-  let startHour = clampInt(
-    sched.startHour != null ? sched.startHour : sched.sendHour,
-    0,
-    MAX_RELEASE_HOUR,
-    7
-  );
-  let startMinute = clampInt(
-    sched.startMinute != null ? sched.startMinute : sched.sendMinute,
-    0,
-    59,
-    0
-  );
-  if (startHour >= MAX_RELEASE_HOUR) startMinute = 0;
-  // Lote do dia: fim = liberação; send_times = N cópias do mesmo horário.
-  const endHour = startHour;
-  const endMinute = startMinute;
-  const waitForAnswers = Boolean(sched.waitForAnswers);
-  const timezone = String(sched.timezone || "America/Sao_Paulo");
-  const randomOrder = Boolean(sched.randomOrder);
-  const sendTimes = Array.from({ length: questionsPerDay }, () => ({
-    hour: startHour,
-    minute: startMinute
-  }));
-
-  // Legados: persistimos espelhando os campos novos para não violar NOT NULL.
-  const questionsPerRun = Math.min(20, questionsPerDay);
-  const sendHour = startHour;
-  const sendMinute = startMinute;
-  const intervalDays = 1;
+  const originNotebookId = body.originNotebookId ? String(body.originNotebookId).trim() : null;
+  const schedule = parseSchedule(body.schedule || {});
 
   if (!previewOnly && !name) {
     return res.status(400).json({ error: "Informe um nome para o caderno." });
@@ -97,45 +80,58 @@ module.exports = async (req, res) => {
       return res.status(400).json({ error: "Marque ao menos um destinatário ativo no modo privado." });
     }
   }
-  if (!pdfBase64) {
-    return res.status(400).json({ error: "Envie pdfBase64 (PDF em base64)." });
-  }
-  if (sched.sendTimes != null && !sendTimes) {
-    return res.status(400).json({
-      error:
-        "sendTimes invalido: informe exatamente um horario por questao/dia, em ordem crescente (ex.: [{\"hour\":7,\"minute\":0},...])."
-    });
-  }
 
-  let pdfBuffer;
-  try {
-    const cleaned = pdfBase64.includes(",") ? pdfBase64.split(",", 2)[1] : pdfBase64;
-    pdfBuffer = Buffer.from(cleaned, "base64");
-  } catch {
-    return res.status(400).json({ error: "pdfBase64 invalido." });
-  }
+  let questions = [];
+  let warnings = [];
+  let totalGabaritoEntries = 0;
 
-  if (!pdfBuffer.length) {
-    return res.status(400).json({ error: "PDF vazio." });
+  if (forceJson) {
+    const parsed = normalizeIncomingQuestions(body.questions);
+    questions = parsed.questions;
+    warnings = parsed.warnings;
+    totalGabaritoEntries = questions.length;
+    if (questions.length === 0) {
+      return res.status(400).json({ error: "Nenhuma questao valida no JSON.", warnings });
+    }
+  } else {
+    if (!pdfBase64) {
+      return res.status(400).json({ error: "Envie pdfBase64 (PDF em base64) ou questions (JSON)." });
+    }
+    let pdfBuffer;
+    try {
+      const cleaned = pdfBase64.includes(",") ? pdfBase64.split(",", 2)[1] : pdfBase64;
+      pdfBuffer = Buffer.from(cleaned, "base64");
+    } catch {
+      return res.status(400).json({ error: "pdfBase64 invalido." });
+    }
+    if (!pdfBuffer.length) {
+      return res.status(400).json({ error: "PDF vazio." });
+    }
+    if (pdfBuffer.length > MAX_PDF_BYTES) {
+      return res.status(413).json({ error: "PDF acima do limite de 8MB." });
+    }
+    let pdfText;
+    try {
+      const parsed = await pdfParse(pdfBuffer);
+      pdfText = parsed.text || "";
+    } catch (e) {
+      console.error("[caderno-upload] pdf-parse:", e);
+      return res.status(400).json({ error: `Erro ao ler PDF: ${e.message || "falha"}` });
+    }
+    const parsed = parseTecConcursosPdf(pdfText);
+    questions = (parsed.questions || []).map((q) => ({
+      ...q,
+      options: normalizeOptions(
+        (q.alternatives || []).map((a) => ({ label: a.letter, text: a.text }))
+      )
+    }));
+    warnings = parsed.warnings || [];
+    totalGabaritoEntries = parsed.totalGabaritoEntries || 0;
   }
-  if (pdfBuffer.length > MAX_PDF_BYTES) {
-    return res.status(413).json({ error: "PDF acima do limite de 8MB." });
-  }
-
-  let pdfText;
-  try {
-    const parsed = await pdfParse(pdfBuffer);
-    pdfText = parsed.text || "";
-  } catch (e) {
-    console.error("[caderno-upload] pdf-parse:", e);
-    return res.status(400).json({ error: `Erro ao ler PDF: ${e.message || "falha"}` });
-  }
-
-  const { questions, warnings, totalGabaritoEntries } = parseTecConcursosPdf(pdfText);
 
   if (questions.length === 0) {
     return res.status(400).json({
-      error: "Nenhuma questao encontrada. Verifique se e um PDF do Tec Concursos.",
+      error: "Nenhuma questao encontrada.",
       warnings
     });
   }
@@ -168,7 +164,6 @@ module.exports = async (req, res) => {
       `${skipped} questao(oes) ignorada(s) por nao ter enunciado ou gabarito mapeado.`
     );
   }
-
   if (validForInsert.length === 0) {
     return res.status(400).json({
       error: "Nenhuma questao com gabarito mapeado para salvar.",
@@ -176,161 +171,37 @@ module.exports = async (req, res) => {
     });
   }
 
-  const nowDate = new Date();
-  const status = activate ? "active" : "inactive";
-  const groupSchedule = {
-    sendTimes,
-    startHour,
-    startMinute,
-    endHour,
-    endMinute,
-    questionsPerDay
-  };
-  const nextRunAt =
-    activate && deliveryMode === "group"
-      ? firstSlotFromSchedule(nowDate, timezone, groupSchedule).toISOString()
-      : null;
-
-  const { data: cadernoRow, error: cadernoErr } = await supabase
-    .from("cadernos")
-    .insert({
+  try {
+    const created = await insertCadernoBundle(supabase, {
       name,
-      target_group_jid: targetGroupJid,
-      created_by_jid: effectiveCreatedBy,
-      delivery_mode: deliveryMode,
-      // Novos campos:
-      questions_per_day: questionsPerDay,
-      start_hour: startHour,
-      start_minute: startMinute,
-      end_hour: endHour,
-      end_minute: endMinute,
-      send_times: sendTimes,
-      wait_for_answers: waitForAnswers,
-      current_day_date: null,
-      current_day_sent: 0,
-      // Legados (espelhados para compat):
-      questions_per_run: questionsPerRun,
-      interval_days: intervalDays,
-      send_hour: sendHour,
-      send_minute: sendMinute,
-      timezone,
-      status,
-      cursor: 0,
-      random_order: randomOrder,
-      next_run_at: nextRunAt
-    })
-    .select("id")
-    .single();
-
-  if (cadernoErr || !cadernoRow) {
-    console.error("[caderno-upload] insert caderno:", cadernoErr);
-    return res
-      .status(500)
-      .json({ error: `Erro ao criar caderno: ${cadernoErr?.message || "sem dados"}` });
+      targetGroupJid,
+      effectiveCreatedBy,
+      deliveryMode,
+      activate,
+      originNotebookId,
+      schedule,
+      questions: validForInsert,
+      privateRecipientsNorm
+    });
+    return res.status(200).json({
+      cadernoId: created.cadernoId,
+      name,
+      targetGroupJid,
+      deliveryMode,
+      originNotebookId,
+      totalQuestions: validForInsert.length,
+      totalGabaritoEntries,
+      status: created.status,
+      nextRunAt: created.nextRunAt,
+      summary,
+      warnings,
+      preview: previewSlice
+    });
+  } catch (e) {
+    console.error("[caderno-upload]", e);
+    return res.status(500).json({ error: e.message || "Erro ao criar caderno" });
   }
-
-  const cadernoId = cadernoRow.id;
-
-  const rows = validForInsert.map((q) => ({
-    caderno_id: cadernoId,
-    position: q.position,
-    tec_question_id: sanitizePostgresText(q.tecQuestionId),
-    tec_url: sanitizePostgresText(q.tecUrl),
-    banca: sanitizePostgresText(q.banca),
-    subject: sanitizePostgresText(q.subject),
-    question_type: q.questionType,
-    statement_text: sanitizePostgresText(q.statementText),
-    answer_key: q.answerKey
-  }));
-
-  const { error: bulkErr } = await supabase.from("caderno_questions").insert(rows);
-  if (bulkErr) {
-    await supabase.from("cadernos").delete().eq("id", cadernoId);
-    console.error("[caderno-upload] insert questoes:", bulkErr);
-    return res.status(500).json({ error: `Erro ao salvar questoes: ${bulkErr.message}` });
-  }
-
-  if (deliveryMode === "private") {
-    const insertItems =
-      privateRecipientsNorm.length > 0
-        ? privateRecipientsNorm
-        : [{ userJid: effectiveCreatedBy, active: true }];
-    let prRows;
-    try {
-      prRows = insertItems.map((item) => {
-      const userJid = String(item.userJid).trim();
-      const qpdUse =
-        item.questionsPerDay != null ? clampInt(item.questionsPerDay, 1, 24, questionsPerDay) : questionsPerDay;
-      let shUse = item.startHour != null ? clampInt(item.startHour, 0, MAX_RELEASE_HOUR, startHour) : startHour;
-      let smUse = item.startMinute != null ? clampInt(item.startMinute, 0, 59, startMinute) : startMinute;
-      if (shUse >= MAX_RELEASE_HOUR) smUse = 0;
-      const ehUse = shUse;
-      const emUse = smUse;
-      const recSendTimes = Array.from({ length: qpdUse }, () => ({ hour: shUse, minute: smUse }));
-      const recSchedule = {
-        sendTimes: recSendTimes,
-        startHour: shUse,
-        startMinute: smUse,
-        endHour: ehUse,
-        endMinute: emUse,
-        questionsPerDay: qpdUse
-      };
-      const recNext = activate ? firstSlotFromSchedule(nowDate, timezone, recSchedule).toISOString() : null;
-      return {
-        caderno_id: cadernoId,
-        user_jid: userJid,
-        active: item.active !== false,
-        questions_per_day: item.questionsPerDay != null ? qpdUse : null,
-        send_times: recSendTimes,
-        start_hour: item.startHour != null ? shUse : null,
-        start_minute: item.startMinute != null ? smUse : null,
-        end_hour: item.endHour != null ? ehUse : null,
-        end_minute: item.endMinute != null ? emUse : null,
-        wait_for_answers: null,
-        random_order: null,
-        timezone: null,
-        current_day_date: null,
-        current_day_sent: 0,
-        next_run_at: recNext
-      };
-      });
-    } catch (e) {
-      await supabase.from("cadernos").delete().eq("id", cadernoId);
-      await supabase.from("caderno_questions").delete().eq("caderno_id", cadernoId);
-      return res.status(400).json({ error: e.message || "Horarios invalidos no modo privado." });
-    }
-    const { error: prErr } = await supabase.from("caderno_private_recipients").insert(prRows);
-    if (prErr) {
-      await supabase.from("cadernos").delete().eq("id", cadernoId);
-      await supabase.from("caderno_questions").delete().eq("caderno_id", cadernoId);
-      console.error("[caderno-upload] insert destinatario privado:", prErr);
-      return res.status(500).json({ error: `Erro ao criar destinatario privado: ${prErr.message}` });
-    }
-  }
-
-  return res.status(200).json({
-    cadernoId,
-    name,
-    targetGroupJid,
-    deliveryMode,
-    totalQuestions: validForInsert.length,
-    totalGabaritoEntries,
-    status,
-    nextRunAt,
-    summary,
-    warnings,
-    preview: previewSlice
-  });
 };
-
-function clampInt(value, min, max, fallback) {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return fallback;
-  const i = Math.round(n);
-  if (i < min) return min;
-  if (i > max) return max;
-  return i;
-}
 
 function toPreviewQuestion(q) {
   return {
@@ -340,20 +211,9 @@ function toPreviewQuestion(q) {
     subject: q.subject,
     questionType: q.questionType,
     statementText: q.statementText,
-    answerKey: q.answerKey
+    answerKey: q.answerKey,
+    options: q.options || []
   };
-}
-
-function buildSummary(questions) {
-  let mc = 0;
-  let tf = 0;
-  let withoutKey = 0;
-  for (const q of questions) {
-    if (q.questionType === "true_false") tf += 1;
-    else mc += 1;
-    if (!q.answerKey) withoutKey += 1;
-  }
-  return { multipleChoice: mc, trueFalse: tf, withoutAnswerKey: withoutKey };
 }
 
 module.exports.config = {

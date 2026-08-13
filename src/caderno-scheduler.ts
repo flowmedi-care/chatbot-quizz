@@ -105,7 +105,7 @@ async function publishCadernoQuestionToChat(
   const options =
     question.questionType === "true_false"
       ? `Responda no privado do bot:\nc ${shortId}\ne ${shortId}`
-      : `Responda no privado do bot:\na ${shortId}\nb ${shortId}\nc ${shortId}\nd ${shortId}\ne ${shortId}`;
+      : `Responda no privado do bot:\na ${shortId}\nb ${shortId}\nc ${shortId}\nd ${shortId}\ne ${shortId}\n\nConfiança (opcional): inseguro ou chute — ex.: a ${shortId} inseguro`;
   const parts = [intro];
   if (engagedLine && engagedLine.trim()) {
     parts.push(engagedLine.trim());
@@ -161,6 +161,18 @@ async function publishGroupCadernoQuestion(
     // Engajados/passivos usam /omissas; digest diário avisa o grupo.
     void sock;
     await markCadernoQuestionPublished(question.id, dbId);
+    try {
+      const tec = question.tecQuestionId != null ? Number(question.tecQuestionId) : null;
+      const { notifyStudyAppPublished } = await import("./study-sync");
+      await notifyStudyAppPublished({
+        tecId: Number.isFinite(tec as number) ? (tec as number) : null,
+        cadernoId: caderno.id,
+        shortId,
+        publishedQuestionId: dbId
+      });
+    } catch (syncErr) {
+      console.warn("[study-sync] flush", (syncErr as Error).message);
+    }
     console.log(
       `[caderno-scheduler] publicada (silencioso) #${shortId} (caderno ${caderno.id}, pos ${question.position})`
     );

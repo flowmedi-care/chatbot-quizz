@@ -107,7 +107,7 @@ async function fetchUserAnswersForShortIds(supabase, userJid, shortIds) {
   if (!shortIds.length) return new Map();
   const { data, error } = await supabase
     .from("answers")
-    .select("id, question_short_id, answer_letter, answer_comment, user_jid")
+    .select("id, question_short_id, answer_letter, answer_comment, user_jid, confidence_level, duration_ms")
     .in("question_short_id", shortIds);
   if (error) throw error;
 
@@ -118,7 +118,8 @@ async function fetchUserAnswersForShortIds(supabase, userJid, shortIds) {
     out.set(String(row.question_short_id).toUpperCase(), {
       id: Number(row.id),
       letter: String(row.answer_letter || "").toLowerCase(),
-      comment: row.answer_comment != null ? String(row.answer_comment) : null
+      comment: row.answer_comment != null ? String(row.answer_comment) : null,
+      confidence: row.confidence_level != null ? String(row.confidence_level) : null
     });
   }
   return out;
@@ -179,11 +180,26 @@ async function upsertAnswer(supabase, input) {
     answer_letter: letter,
     answer_comment: comment && String(comment).trim() ? String(comment).trim() : null,
     source_message_id: `web:${crypto.randomBytes(8).toString("hex")}`,
-    sent_at: new Date().toISOString()
+    sent_at: new Date().toISOString(),
+    confidence_level: input.confidenceLevel || null,
+    duration_ms: input.durationMs != null ? input.durationMs : null,
+    sync_source: input.syncSource || "web"
   };
 
+  function slimRow() {
+    const s = { ...row };
+    delete s.confidence_level;
+    delete s.duration_ms;
+    delete s.sync_source;
+    return s;
+  }
+
   if (existing) {
-    const { error } = await supabase.from("answers").update(row).eq("id", existing.id);
+    let { error } = await supabase.from("answers").update(row).eq("id", existing.id);
+    if (error && /column/i.test(error.message || "")) {
+      const retry = await supabase.from("answers").update(slimRow()).eq("id", existing.id);
+      error = retry.error;
+    }
     if (error) throw error;
     return {
       answerId: Number(existing.id),
@@ -315,6 +331,19 @@ async function handleOmissasSession(req, res) {
     const { session } = loaded;
     const questions = await fetchQuestionsByShortIds(supabase, session.shortIds);
     const answers = await fetchUserAnswersForShortIds(supabase, session.userJid, session.shortIds);
+    const qids = questions.map((q) => q.id).filter(Boolean);
+    const optionsByQid = new Map();
+    if (qids.length) {
+      const { data: cqRows } = await supabase
+        .from("caderno_questions")
+        .select("published_question_id, options")
+        .in("published_question_id", qids);
+      for (const row of cqRows || []) {
+        if (Array.isArray(row.options) && row.options.length) {
+          optionsByQid.set(Number(row.published_question_id), row.options);
+        }
+      }
+    }
     const userName = await resolveSessionUserName(supabase, session);
     const assistQty = await getAssistEliminateQty(supabase, session.userJid);
     const assistUsed = await fetchAssistUsedMap(supabase, session.userJid, session.shortIds);
@@ -357,7 +386,9 @@ async function handleOmissasSession(req, res) {
         statementText: q.statement_text || "",
         statementMediaUrl: q.statement_media_url || null,
         statementMediaMimeType: q.statement_media_mime_type || null,
+        options: optionsByQid.get(Number(q.id)) || [],
         alreadyAnswered: Boolean(ans),
+        yourConfidence: ans && ans.confidence ? ans.confidence : null,
         yourLetter,
         yourComment: ans ? ans.comment : null,
         categoryIds,
@@ -406,6 +437,13 @@ async function handleOmissasAnswer(req, res) {
     .toUpperCase();
   const comment = body.comment != null ? String(body.comment) : "";
   const categoryIds = Array.isArray(body.categoryIds) ? body.categoryIds : null;
+  const confidenceLevel = ["seguro", "inseguro", "chute"].includes(String(body.confidenceLevel || "").toLowerCase())
+    ? String(body.confidenceLevel).toLowerCase()
+    : "seguro";
+  const durationMs =
+    body.durationMs != null && Number.isFinite(Number(body.durationMs))
+      ? Math.round(Number(body.durationMs))
+      : null;
 
   try {
     const supabase = getClient();
@@ -440,7 +478,10 @@ async function handleOmissasAnswer(req, res) {
         userName: session.userName,
         letter,
         comment,
-        creatorJid: q.creator_jid
+        creatorJid: q.creator_jid,
+        confidenceLevel,
+        durationMs,
+        syncSource: "web"
       });
     } catch (e) {
       if (e.code === "SELF_ANSWER") {
@@ -471,6 +512,22 @@ async function handleOmissasAnswer(req, res) {
       previousLetter: saveResult.previousLetter,
       sessionToken: session.token
     });
+
+    try {
+      const { notifyStudyAppAnswer } = require("./_study-sync.js");
+      await notifyStudyAppAnswer(supabase, {
+        userJid: session.userJid,
+        shortId,
+        answerLetter: letter,
+        comment,
+        confidenceLevel,
+        durationMs,
+        tags: (categories || []).map((c) => c.name).filter(Boolean),
+        syncSource: "web"
+      });
+    } catch (syncErr) {
+      console.warn("[omissas-answer] study-sync:", syncErr.message || syncErr);
+    }
 
     const answers = await fetchUserAnswersForShortIds(supabase, session.userJid, session.shortIds);
     const pendingIds = session.shortIds.filter((sid) => !answers.has(sid));
@@ -717,5 +774,7 @@ module.exports = {
   handleOmissasSession,
   handleOmissasAnswer,
   handleOmissasResults,
-  handleOmissasAssist
+  handleOmissasAssist,
+  consumeAssistEliminate,
+  fetchAssistUsedMap
 };

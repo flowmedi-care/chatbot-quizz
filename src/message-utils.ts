@@ -418,6 +418,24 @@ function parseAnswerWithOptionalComment(text: string):
   return null;
 }
 
+/** Remove inseguro/chute da linha de resposta (igual aos toggles do app de estudo). */
+export function extractConfidenceToken(text: string): {
+  rest: string;
+  confidence: "seguro" | "inseguro" | "chute";
+} {
+  const raw = String(text || "");
+  const m = raw.match(/\b(inseguro|chute)\b/i);
+  if (!m || m.index == null) return { rest: raw.trim(), confidence: "seguro" };
+  const rest = `${raw.slice(0, m.index)} ${raw.slice(m.index + m[0].length)}`
+    .replace(/\s+/g, " ")
+    .trim();
+  const token = m[1].toLowerCase();
+  return {
+    rest,
+    confidence: token === "inseguro" || token === "chute" ? token : "seguro"
+  };
+}
+
 /** Separa "resposta //cat1, cat2" — categories null = sem bloco //; [] = limpar. */
 export function splitCategoriesSuffix(text: string): {
   left: string;
@@ -453,6 +471,7 @@ export type PrivateCommand =
       questionId: string;
       comment?: string;
       categories?: string[] | null;
+      confidence?: "seguro" | "inseguro" | "chute";
     }
   | { kind: "set_categories"; questionId: string; categories: string[] }
   | { kind: "new_category"; name: string }
@@ -467,7 +486,8 @@ export function parsePrivateCommand(text: string): PrivateCommand {
     return { kind: "new_category", name: newCat };
   }
 
-  const { left, categories } = splitCategoriesSuffix(text);
+  const { left: leftRaw, categories } = splitCategoriesSuffix(text);
+  const { rest: left, confidence } = extractConfidenceToken(leftRaw);
   const normalized = normalizeInput(left);
 
   if (normalized === "nova questao") {
@@ -501,7 +521,8 @@ export function parsePrivateCommand(text: string): PrivateCommand {
       answer: withComment.answer,
       questionId: withComment.questionId,
       comment: withComment.comment,
-      categories: categories ?? undefined
+      categories: categories ?? undefined,
+      confidence
     };
   }
 
@@ -514,7 +535,8 @@ export function parsePrivateCommand(text: string): PrivateCommand {
         kind: "answer",
         answer: answerMatch[2].toLowerCase(),
         questionId: answerMatch[1].toUpperCase().trim(),
-        categories: categories ?? undefined
+        categories: categories ?? undefined,
+        confidence
       };
     }
   } else {
@@ -522,7 +544,8 @@ export function parsePrivateCommand(text: string): PrivateCommand {
       kind: "answer",
       answer: answerMatch[1].toLowerCase(),
       questionId: answerMatch[2].toUpperCase().trim(),
-      categories: categories ?? undefined
+      categories: categories ?? undefined,
+      confidence
     };
   }
 

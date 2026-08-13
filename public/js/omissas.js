@@ -38,6 +38,8 @@
   let submitting = false;
   let assistQty = 0;
   let userName = "";
+  let currentConfidence = "seguro";
+  let questionOpenedAt = 0;
   let userJid = "";
   let assistMode = false;
   let assistBusy = false;
@@ -49,6 +51,20 @@
       .replace(/>/g, "&gt;")
       .replace(/"/g, "&quot;");
   }
+
+  document.addEventListener("click", (ev) => {
+    const btn = ev.target && ev.target.closest && ev.target.closest(".btn-conf");
+    if (!btn) return;
+    const key = btn.dataset.conf;
+    currentConfidence = currentConfidence === key ? "seguro" : key;
+    document.querySelectorAll(".btn-conf").forEach((b) => {
+      const on = b.dataset.conf === currentConfidence;
+      b.style.background = on ? "#1e293b" : "#fff";
+      b.style.color = on ? "#fff" : "#334155";
+    });
+    const hint = document.getElementById("q-conf-hint");
+    if (hint) hint.textContent = currentConfidence === "seguro" ? "(Seguro — padrão)" : "";
+  });
 
   function showError(msg) {
     els.loading.classList.add("hidden");
@@ -154,6 +170,19 @@
     els.status.classList.add("hidden");
     els.comment.value = "";
     assistMode = false;
+    currentConfidence = q.yourConfidence || "seguro";
+    questionOpenedAt = Date.now();
+    document.querySelectorAll(".btn-conf").forEach((btn) => {
+      const on = btn.dataset.conf === currentConfidence;
+      btn.style.background = on ? "#1e293b" : "#fff";
+      btn.style.color = on ? "#fff" : "#334155";
+      btn.style.border = "1px solid #cbd5e1";
+      btn.style.borderRadius = "6px";
+      btn.style.padding = "4px 10px";
+      btn.style.fontSize = "12px";
+    });
+    const hint = document.getElementById("q-conf-hint");
+    if (hint) hint.textContent = currentConfidence === "seguro" ? "(Seguro — padrão)" : "";
 
     const doneSoFar = answeredAtStart + index;
     const total = totalInSession;
@@ -185,11 +214,16 @@
         <button type="button" class="btn-choice" data-letter="c">C — Certo</button>
         <button type="button" class="btn-choice" data-letter="e">E — Errado</button>`;
     } else {
-      els.choices.innerHTML = ["A", "B", "C", "D", "E"]
-        .map(
-          (L) =>
-            `<button type="button" class="btn-choice" data-letter="${L.toLowerCase()}">${L}</button>`
-        )
+      const opts = Array.isArray(q.options) && q.options.length
+        ? q.options
+        : ["A", "B", "C", "D", "E"].map((L) => ({ label: L, text: "" }));
+      els.choices.innerHTML = opts
+        .map((o) => {
+          const L = String(o.label || o.letter || "").toUpperCase();
+          const txt = String(o.text || "").trim();
+          const label = txt ? `${L}) ${esc(txt)}` : L;
+          return `<button type="button" class="btn-choice" data-letter="${L.toLowerCase()}">${label}</button>`;
+        })
         .join("");
     }
 
@@ -258,7 +292,9 @@
           t: token,
           shortId: q.shortId,
           letter,
-          comment: els.comment.value || ""
+          comment: els.comment.value || "",
+          confidenceLevel: currentConfidence,
+          durationMs: questionOpenedAt ? Date.now() - questionOpenedAt : null
         })
       });
 

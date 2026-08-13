@@ -355,7 +355,7 @@ export async function persistEngagementQuizDisplayName(
 export async function insertAnswer(input: AnswerInput): Promise<{ answerId: number }> {
   const { data: question, error: findError } = await supabase
     .from("questions")
-    .select("id, question_type, creator_jid, target_group_jid, group_jid")
+    .select("id, question_type, creator_jid, target_group_jid, group_jid, sent_at")
     .eq("short_id", input.questionShortId.toUpperCase())
     .maybeSingle();
 
@@ -372,9 +372,7 @@ export async function insertAnswer(input: AnswerInput): Promise<{ answerId: numb
     input.userJid
   );
 
-  const { data: inserted, error } = await supabase
-    .from("answers")
-    .insert({
+  const insertRow: Record<string, unknown> = {
       question_id: question.id,
       question_short_id: input.questionShortId.toUpperCase(),
       user_jid: input.userJid,
@@ -383,13 +381,52 @@ export async function insertAnswer(input: AnswerInput): Promise<{ answerId: numb
       answer_comment: input.answerComment?.trim() || null,
       source_message_id: input.sourceMessageId,
       sent_at: input.sentAt
-    })
+    };
+  if (input.confidenceLevel) insertRow.confidence_level = input.confidenceLevel;
+  if (input.durationMs != null) insertRow.duration_ms = input.durationMs;
+  else if (question.sent_at && input.sentAt) {
+    const ms = new Date(input.sentAt).getTime() - new Date(String(question.sent_at)).getTime();
+    if (Number.isFinite(ms) && ms >= 0 && ms <= 30 * 60 * 1000) {
+      insertRow.duration_ms = Math.round(ms);
+    }
+  }
+  if (input.syncSource) insertRow.sync_source = input.syncSource;
+
+  const { data: inserted, error } = await supabase
+    .from("answers")
+    .insert(insertRow)
     .select("id")
     .maybeSingle();
 
   if (error) {
     if (error.code === "23505") {
       return updateUserAnswer(input);
+    }
+    if (/column/i.test(error.message || "")) {
+      const slim = {
+        question_id: question.id,
+        question_short_id: input.questionShortId.toUpperCase(),
+        user_jid: input.userJid,
+        user_name: input.userName,
+        answer_letter: input.answerLetter.toLowerCase(),
+        answer_comment: input.answerComment?.trim() || null,
+        source_message_id: input.sourceMessageId,
+        sent_at: input.sentAt
+      };
+      const retry = await supabase.from("answers").insert(slim).select("id").maybeSingle();
+      if (retry.error) {
+        if (retry.error.code === "23505") return updateUserAnswer(input);
+        throw new Error(`Erro ao salvar resposta: ${retry.error.message}`);
+      }
+      const gjRetry = question.target_group_jid || question.group_jid;
+      if (gjRetry) {
+        try {
+          await persistEngagementQuizDisplayName(String(gjRetry), input.userJid, input.userName);
+        } catch (e) {
+          console.warn("[engagement] quiz_display_name:", (e as Error).message);
+        }
+      }
+      return { answerId: Number(retry.data?.id) };
     }
     throw new Error(`Erro ao salvar resposta: ${error.message}`);
   }
@@ -1560,6 +1597,7 @@ export type CadernoQuestionRow = {
   questionType: QuestionType;
   statementText: string;
   answerKey: string;
+  options?: { label: string; text: string }[];
 };
 
 function mapCadernoRow(row: Record<string, unknown>): CadernoRow {
@@ -1615,7 +1653,13 @@ function mapCadernoQuestionRow(row: Record<string, unknown>): CadernoQuestionRow
     subject: row.subject ? String(row.subject) : null,
     questionType: String(row.question_type) as QuestionType,
     statementText: String(row.statement_text),
-    answerKey: String(row.answer_key).toUpperCase()
+    answerKey: String(row.answer_key).toUpperCase(),
+    options: Array.isArray(row.options)
+      ? (row.options as { label?: string; text?: string; letter?: string }[]).map((o) => ({
+          label: String(o.label || o.letter || "").toUpperCase(),
+          text: String(o.text || "")
+        }))
+      : []
   };
 }
 
@@ -1889,7 +1933,7 @@ export async function listNextPrivateCadernoQuestionsToSend(
   randomOrder: boolean
 ): Promise<CadernoQuestionRow[]> {
   const selectCols =
-    "id, caderno_id, position, tec_question_id, tec_url, banca, subject, question_type, statement_text, answer_key";
+    "id, caderno_id, position, tec_question_id, tec_url, banca, subject, question_type, statement_text, answer_key, options";
 
   const sentIds = await listSentQuestionIdsForPrivateRecipient(cadernoId, recipientJid);
   const sentSet = new Set(sentIds);
@@ -2103,7 +2147,7 @@ export async function listNextCadernoQuestionsToSend(
   randomOrder: boolean
 ): Promise<CadernoQuestionRow[]> {
   const selectCols =
-    "id, caderno_id, position, tec_question_id, tec_url, banca, subject, question_type, statement_text, answer_key";
+    "id, caderno_id, position, tec_question_id, tec_url, banca, subject, question_type, statement_text, answer_key, options";
 
   const queuedIds = await listQueuedCadernoQuestionIds(cadernoId);
   const excludeSet = new Set(queuedIds);
@@ -2578,7 +2622,7 @@ export async function getCadernoQuestionById(
   const { data, error } = await supabase
     .from("caderno_questions")
     .select(
-      "id, caderno_id, position, tec_question_id, tec_url, banca, subject, question_type, statement_text, answer_key"
+      "id, caderno_id, position, tec_question_id, tec_url, banca, subject, question_type, statement_text, answer_key, options"
     )
     .eq("id", cadernoQuestionId)
     .maybeSingle();
@@ -3173,9 +3217,7 @@ export async function createQuestionFromCaderno(
 
   const suffix = recipientJid ? `-${jidComparableKeyShared(recipientJid)}` : "";
 
-  const { data, error } = await supabase
-    .from("questions")
-    .insert({
+  const insertRow: Record<string, unknown> = {
       creator_jid: creatorJid,
       creator_name: creatorName,
       target_group_jid: targetJid,
@@ -3184,6 +3226,7 @@ export async function createQuestionFromCaderno(
       statement_media_url: null,
       statement_media_mime_type: null,
       answer_key: question.answerKey.toUpperCase(),
+      options: question.options ?? [],
       explanation_text: explanationText,
       explanation_media_url: null,
       explanation_media_mime_type: null,
@@ -3194,9 +3237,16 @@ export async function createQuestionFromCaderno(
       media_mime_type: null,
       wa_message_id: `caderno-${caderno.id}-${question.id}${suffix}-${Date.now()}`,
       sent_at: new Date().toISOString()
-    })
-    .select("id")
-    .single();
+    };
+
+  let { data, error } = await supabase.from("questions").insert(insertRow).select("id").single();
+
+  if (error && /options/i.test(error.message || "")) {
+    delete insertRow.options;
+    const retry = await supabase.from("questions").insert(insertRow).select("id").single();
+    data = retry.data;
+    error = retry.error;
+  }
 
   if (error || !data) {
     throw new Error(`Erro ao criar questao a partir de caderno: ${error?.message ?? "sem dados"}`);

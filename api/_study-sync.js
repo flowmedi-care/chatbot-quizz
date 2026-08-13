@@ -1,0 +1,124 @@
+/**
+ * Avisa o app de estudo (app-vercel-next) após resposta no WhatsApp/omissas.
+ * STUDY_APP_URL ou FLASHCARDS_API_URL + FLASHCARDS_BOT_INBOUND_SECRET.
+ */
+
+function getStudyAppBaseUrl() {
+  const raw = String(process.env.STUDY_APP_URL || process.env.FLASHCARDS_API_URL || "")
+    .trim()
+    .replace(/\/+$/, "");
+  return raw || null;
+}
+
+function getStudyAppSecret() {
+  return String(process.env.FLASHCARDS_BOT_INBOUND_SECRET || "").trim() || null;
+}
+
+async function notifyStudyApp(path, body) {
+  const base = getStudyAppBaseUrl();
+  const secret = getStudyAppSecret();
+  if (!base || !secret) return { skipped: true };
+  const url = `${base}${path.startsWith("/") ? path : `/${path}`}`;
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${secret}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(body)
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      console.warn("[study-sync]", res.status, text.slice(0, 300));
+      return { ok: false, status: res.status };
+    }
+    return { ok: true };
+  } catch (e) {
+    console.warn("[study-sync]", e.message || e);
+    return { ok: false };
+  }
+}
+
+async function lookupTecIdForPublishedQuestion(supabase, publishedQuestionId) {
+  if (!publishedQuestionId) return null;
+  const { data, error } = await supabase
+    .from("caderno_questions")
+    .select("tec_question_id")
+    .eq("published_question_id", publishedQuestionId)
+    .maybeSingle();
+  if (error || !data) return null;
+  const raw = data.tec_question_id;
+  if (raw == null || raw === "") return null;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : null;
+}
+
+async function lookupTecIdForShortId(supabase, shortId) {
+  const sid = String(shortId || "").trim().toUpperCase();
+  if (!sid) return null;
+  const { data: q, error } = await supabase
+    .from("questions")
+    .select("id")
+    .eq("short_id", sid)
+    .maybeSingle();
+  if (error || !q) return null;
+  return lookupTecIdForPublishedQuestion(supabase, q.id);
+}
+
+function normalizeConfidence(raw) {
+  const v = String(raw || "").trim().toLowerCase();
+  if (v === "inseguro" || v === "chute") return v;
+  return "seguro";
+}
+
+function capDurationMs(ms) {
+  if (ms == null || !Number.isFinite(Number(ms))) return null;
+  const n = Math.round(Number(ms));
+  if (n < 0) return null;
+  const CAP = 30 * 60 * 1000;
+  if (n > CAP) return null;
+  return n;
+}
+
+async function notifyStudyAppAnswer(supabase, input) {
+  if (input.syncSource === "app") return;
+  let tecId = input.tecId != null ? Number(input.tecId) : null;
+  if (!Number.isFinite(tecId) || tecId <= 0) {
+    tecId = await lookupTecIdForShortId(supabase, input.shortId);
+  }
+  if (!tecId) return;
+  await notifyStudyApp("/api/quiz-sync/answer", {
+    tecId,
+    userJid: input.userJid,
+    answerLetter: String(input.answerLetter || "").toLowerCase().slice(0, 1),
+    comment: input.comment || null,
+    confidenceLevel: normalizeConfidence(input.confidenceLevel),
+    durationMs: capDurationMs(input.durationMs),
+    tags: Array.isArray(input.tags) ? input.tags : [],
+    shortId: input.shortId || null,
+    source: "whatsapp"
+  });
+}
+
+async function notifyStudyAppPublished(input) {
+  await notifyStudyApp("/api/quiz-sync/flush", {
+    tecId: input.tecId,
+    cadernoId: input.cadernoId,
+    shortId: input.shortId,
+    publishedQuestionId: input.publishedQuestionId,
+    source: "whatsapp"
+  });
+}
+
+module.exports = {
+  getStudyAppBaseUrl,
+  getStudyAppSecret,
+  notifyStudyApp,
+  notifyStudyAppAnswer,
+  notifyStudyAppPublished,
+  lookupTecIdForShortId,
+  lookupTecIdForPublishedQuestion,
+  normalizeConfidence,
+  capDurationMs
+};

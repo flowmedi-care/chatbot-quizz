@@ -39,4 +39,7 @@ export type AnswerInput = {
   answerComment?: string | null;
   sentAt: string;
   sourceMessageId: string;
+  confidenceLevel?: "seguro" | "inseguro" | "chute" | null;
+  durationMs?: number | null;
+  syncSource?: "whatsapp" | "app" | "web" | null;
 };
