@@ -119,7 +119,9 @@ async function fetchUserAnswersForShortIds(supabase, userJid, shortIds) {
       id: Number(row.id),
       letter: String(row.answer_letter || "").toLowerCase(),
       comment: row.answer_comment != null ? String(row.answer_comment) : null,
-      confidence: row.confidence_level != null ? String(row.confidence_level) : null
+      confidence: row.confidence_level != null ? String(row.confidence_level) : null,
+      durationMs:
+        row.duration_ms != null && Number(row.duration_ms) > 0 ? Number(row.duration_ms) : null
     });
   }
   return out;
@@ -183,11 +185,11 @@ async function upsertAnswer(supabase, input) {
     sent_at: new Date().toISOString(),
     confidence_level: input.confidenceLevel || null,
     duration_ms:
-      input.syncSource === "app"
-        ? input.durationMs != null
-          ? input.durationMs
-          : existing?.duration_ms ?? null
-        : existing?.duration_ms ?? null,
+      existing?.duration_ms != null && Number(existing.duration_ms) > 0
+        ? Number(existing.duration_ms)
+        : input.durationMs != null && Number.isFinite(Number(input.durationMs))
+          ? Math.round(Number(input.durationMs))
+          : null,
     sync_source: input.syncSource || "web"
   };
 
@@ -396,6 +398,7 @@ async function handleOmissasSession(req, res) {
         yourConfidence: ans && ans.confidence ? ans.confidence : null,
         yourLetter,
         yourComment: ans ? ans.comment : null,
+        durationMs: ans && ans.durationMs ? ans.durationMs : null,
         categoryIds,
         answerKey,
         correct,
@@ -445,6 +448,8 @@ async function handleOmissasAnswer(req, res) {
   const confidenceLevel = ["seguro", "inseguro", "chute"].includes(String(body.confidenceLevel || "").toLowerCase())
     ? String(body.confidenceLevel).toLowerCase()
     : "seguro";
+  const { capDurationMs } = require("./_study-sync.js");
+  const durationMs = capDurationMs(body.durationMs);
 
   try {
     const supabase = getClient();
@@ -481,7 +486,7 @@ async function handleOmissasAnswer(req, res) {
         comment,
         creatorJid: q.creator_jid,
         confidenceLevel,
-        durationMs: null,
+        durationMs,
         syncSource: "web"
       });
     } catch (e) {
@@ -523,7 +528,7 @@ async function handleOmissasAnswer(req, res) {
         answerLetter: letter,
         comment,
         confidenceLevel,
-        durationMs: null,
+        durationMs,
         tags: (categories || []).map((c) => c.name).filter(Boolean),
         syncSource: "web"
       });
@@ -548,6 +553,7 @@ async function handleOmissasAnswer(req, res) {
       answerId: saveResult.answerId || null,
       yourAnswer: letter.toUpperCase(),
       answerKey: String(q.answer_key || "").toUpperCase().slice(0, 1),
+      durationMs,
       correct:
         String(letter || "").toUpperCase().slice(0, 1) ===
         String(q.answer_key || "")

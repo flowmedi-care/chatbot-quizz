@@ -874,7 +874,7 @@
       ? String(q.yourLetter || q.yourAnswer || "").toLowerCase()
       : null;
     eliminated = new Set();
-    timer.start(null);
+    timer.start(q.alreadyAnswered && q.durationMs ? q.durationMs : null);
     const sid = q.shortId;
     void via.load(sid).then((data) => {
       if (!pending[index] || pending[index].shortId !== sid) return;
@@ -940,7 +940,7 @@
           comment: $("q-comment").value || "",
           categoryIds: Array.from(selectedCategoryIds),
           confidenceLevel: currentConfidence,
-          durationMs: null
+          durationMs: timer.elapsed()
         })
       });
       q.alreadyAnswered = true;
@@ -952,6 +952,8 @@
       q.categoryIds = Array.from(selectedCategoryIds);
       draftCatsByShortId.set(catKey(q), q.categoryIds);
       selectedLetter = String(q.yourLetter || letter).toLowerCase();
+      q.durationMs = data.durationMs != null ? data.durationMs : timer.elapsed();
+      timer.start(q.durationMs);
       $("q-status").classList.add("hidden");
       $("q-comment").readOnly = true;
       updateQuestionDetails({

@@ -267,7 +267,7 @@
     currentConfidence = q.yourConfidence || "seguro";
     selectedLetter = null;
     eliminated = new Set();
-    timer.start(null);
+    timer.start(q.alreadyAnswered && q.durationMs ? q.durationMs : null);
     const sid = q.shortId;
     void via.load(sid).then((data) => {
       if (!pending[index] || pending[index].shortId !== sid) return;
@@ -353,7 +353,7 @@
           letter,
           comment: els.comment.value || "",
           confidenceLevel: currentConfidence,
-          durationMs: null
+          durationMs: timer.elapsed()
         })
       });
 
@@ -364,6 +364,8 @@
       q.correct = data.correct;
       selectedLetter = String(q.yourLetter || letter).toLowerCase();
       lastSessionComplete = Boolean(data.sessionComplete);
+      q.durationMs = data.durationMs != null ? data.durationMs : timer.elapsed();
+      timer.start(q.durationMs);
       els.comment.readOnly = true;
       els.status.classList.add("hidden");
       submitting = false;

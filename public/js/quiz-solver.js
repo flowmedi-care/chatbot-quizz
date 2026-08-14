@@ -321,14 +321,19 @@
       openedAt = Date.now();
       frozenMs = frozen != null && Number(frozen) > 0 ? Number(frozen) : null;
       if (els.hint) {
-        els.hint.textContent = frozenMs ? "Tempo do app" : "Visual — não entra nas estatísticas";
+        els.hint.textContent = frozenMs ? "Tempo nesta questão" : "";
       }
       paint();
       if (frozenMs != null) return;
       tick = setInterval(paint, 1000);
     }
 
-    return { start, stop, paint };
+    function elapsed() {
+      if (frozenMs != null) return frozenMs;
+      return openedAt ? Date.now() - openedAt : 0;
+    }
+
+    return { start, stop, paint, elapsed };
   }
 
   function createViaPanel(els, deps) {

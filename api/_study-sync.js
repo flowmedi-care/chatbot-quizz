@@ -116,7 +116,7 @@ function capDurationMs(ms) {
   const n = Math.round(Number(ms));
   if (n < 0) return null;
   const CAP = 30 * 60 * 1000;
-  if (n > CAP) return null;
+  if (n > CAP) return CAP;
   return n;
 }
 
@@ -148,7 +148,7 @@ async function notifyStudyAppAnswer(supabase, input) {
     answerLetter: String(input.answerLetter || "").toLowerCase().slice(0, 1),
     comment: input.comment || null,
     confidenceLevel: normalizeConfidence(input.confidenceLevel),
-    durationMs: null,
+    durationMs: capDurationMs(input.durationMs),
     tags: Array.isArray(input.tags) ? input.tags : [],
     shortId: shortId || null,
     publishedQuestionId: input.publishedQuestionId ?? null,
