@@ -5,6 +5,8 @@
     session: (t) => `/api/omissas-session?t=${encodeURIComponent(t)}`,
     answer: "/api/omissas-answer",
     assist: "/api/omissas-assist",
+    via: (t, shortId) =>
+      `/api/omissas-via?t=${encodeURIComponent(t)}&shortId=${encodeURIComponent(shortId)}`,
     results: (t) => `/api/omissas-results?t=${encodeURIComponent(t)}`
   };
 
@@ -24,6 +26,14 @@
     assistHint: document.getElementById("assist-hint"),
     choices: document.getElementById("q-choices"),
     status: document.getElementById("q-status"),
+    timer: document.getElementById("q-timer"),
+    timerHint: document.getElementById("q-timer-hint"),
+    viaPanel: document.getElementById("via-panel"),
+    viaNotes: document.getElementById("via-notes"),
+    viaEmpty: document.getElementById("via-empty"),
+    viaDraft: document.getElementById("via-draft"),
+    viaSend: document.getElementById("via-send"),
+    viaStatus: document.getElementById("via-status"),
     summary: document.getElementById("results-summary"),
     list: document.getElementById("results-list")
   };
@@ -40,6 +50,8 @@
   let userName = "";
   let currentConfidence = "seguro";
   let questionOpenedAt = 0;
+  let timerFrozenMs = null;
+  let timerTick = null;
   let userJid = "";
   let assistMode = false;
   let assistBusy = false;
@@ -50,6 +62,111 @@
       .replace(/</g, "&lt;")
       .replace(/>/g, "&gt;")
       .replace(/"/g, "&quot;");
+  }
+
+  function formatQuestionMs(ms) {
+    const s = Math.floor(Math.max(0, ms) / 1000);
+    const m = Math.floor(s / 60);
+    const rem = s % 60;
+    if (m > 0) return `${m}:${String(rem).padStart(2, "0")}`;
+    return `${s}s`;
+  }
+
+  function stopTimer() {
+    if (timerTick) {
+      clearInterval(timerTick);
+      timerTick = null;
+    }
+  }
+
+  function paintTimer() {
+    if (!els.timer) return;
+    if (timerFrozenMs != null) {
+      els.timer.textContent = formatQuestionMs(timerFrozenMs);
+      return;
+    }
+    els.timer.textContent = formatQuestionMs(questionOpenedAt ? Date.now() - questionOpenedAt : 0);
+  }
+
+  function startTimer(frozenMs) {
+    stopTimer();
+    timerFrozenMs = frozenMs != null && Number(frozenMs) > 0 ? Number(frozenMs) : null;
+    if (els.timerHint) {
+      els.timerHint.textContent = timerFrozenMs
+        ? "Tempo do app"
+        : "Visual — não entra nas estatísticas";
+    }
+    paintTimer();
+    if (timerFrozenMs != null) return;
+    timerTick = setInterval(paintTimer, 1000);
+  }
+
+  function renderViaNotes(notes) {
+    const list = Array.isArray(notes) ? notes : [];
+    if (!els.viaNotes) return;
+    els.viaNotes.innerHTML = list
+      .map((n) => {
+        const when = n.created_at
+          ? new Date(n.created_at).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" })
+          : "";
+        return `<li><p class="via-note-meta">${esc(when)}</p><p class="via-note-body">${esc(n.body)}</p></li>`;
+      })
+      .join("");
+    if (els.viaEmpty) els.viaEmpty.classList.toggle("hidden", list.length > 0);
+  }
+
+  async function loadViaContext(shortId) {
+    if (!els.viaPanel) return;
+    els.viaPanel.classList.remove("hidden");
+    if (els.viaDraft) els.viaDraft.value = "";
+    if (els.viaStatus) els.viaStatus.textContent = "";
+    try {
+      const data = await fetchJson(API.via(token, shortId));
+      if (data.linked) {
+        renderViaNotes(data.notes);
+        if (data.durationMs) startTimer(data.durationMs);
+      } else {
+        renderViaNotes([]);
+        if (els.viaEmpty) {
+          els.viaEmpty.classList.remove("hidden");
+          els.viaEmpty.textContent =
+            data.reason === "jid_not_linked"
+              ? "WhatsApp ainda não vinculado na Via Aprovação."
+              : "Caderno não sincronizado com a Via Aprovação.";
+        }
+      }
+    } catch {
+      renderViaNotes([]);
+      if (els.viaEmpty) {
+        els.viaEmpty.classList.remove("hidden");
+        els.viaEmpty.textContent = "Não foi possível carregar as anotações do app.";
+      }
+    }
+  }
+
+  async function sendViaNote() {
+    const q = pending[index];
+    const body = els.viaDraft ? els.viaDraft.value.trim() : "";
+    if (!q || !body) return;
+    if (els.viaSend) els.viaSend.disabled = true;
+    if (els.viaStatus) els.viaStatus.textContent = "Salvando…";
+    try {
+      await fetchJson("/api/omissas-via", {
+        method: "POST",
+        body: JSON.stringify({ t: token, shortId: q.shortId, body })
+      });
+      if (els.viaDraft) els.viaDraft.value = "";
+      await loadViaContext(q.shortId);
+      if (els.viaStatus) els.viaStatus.textContent = "Salvo no app.";
+    } catch (e) {
+      if (els.viaStatus) els.viaStatus.textContent = e.message || "Erro ao salvar.";
+    } finally {
+      if (els.viaSend) els.viaSend.disabled = false;
+    }
+  }
+
+  if (els.viaSend) {
+    els.viaSend.addEventListener("click", () => void sendViaNote());
   }
 
   document.addEventListener("click", (ev) => {
@@ -172,6 +289,8 @@
     assistMode = false;
     currentConfidence = q.yourConfidence || "seguro";
     questionOpenedAt = Date.now();
+    startTimer(null);
+    void loadViaContext(q.shortId);
     document.querySelectorAll(".btn-conf").forEach((btn) => {
       const on = btn.dataset.conf === currentConfidence;
       btn.style.background = on ? "#1e293b" : "#fff";
@@ -294,7 +413,7 @@
           letter,
           comment: els.comment.value || "",
           confidenceLevel: currentConfidence,
-          durationMs: questionOpenedAt ? Date.now() - questionOpenedAt : null
+          durationMs: null
         })
       });
 
@@ -318,6 +437,7 @@
   }
 
   async function showResults() {
+    stopTimer();
     els.quiz.classList.add("hidden");
     els.loading.classList.remove("hidden");
     els.loading.textContent = "Montando resultado…";

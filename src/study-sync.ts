@@ -100,7 +100,7 @@ export async function notifyStudyAppAnswer(input: {
         answerLetter: input.answerLetter,
         comment: input.comment ?? null,
         confidenceLevel: input.confidenceLevel ?? "seguro",
-        durationMs: input.durationMs ?? null,
+        durationMs: null,
         tags: input.tags ?? [],
         source: "whatsapp"
       })

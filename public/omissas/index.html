@@ -36,7 +36,11 @@
             <h1 id="q-title" class="omissas-q-title">Questão</h1>
             <p id="q-meta" class="omissas-q-meta"></p>
           </div>
-          <p id="q-progress" class="omissas-progress" aria-label="Progresso"></p>
+          <div class="omissas-head-right">
+            <p id="q-timer" class="omissas-timer" title="Tempo nesta questão">0:00</p>
+            <p id="q-timer-hint" class="omissas-timer-hint"></p>
+            <p id="q-progress" class="omissas-progress" aria-label="Progresso"></p>
+          </div>
         </div>
         <div id="q-statement" class="statement-box"></div>
         <div id="q-confidence" class="omissas-confidence" style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:8px 0;">
@@ -61,6 +65,19 @@
           <p id="assist-hint" class="omissas-assist-hint"></p>
         </div>
         <div id="q-choices" class="choice-grid"></div>
+        <section id="via-panel" class="via-panel hidden">
+          <div class="via-panel-head">
+            <p class="via-panel-kicker">Via Aprovação</p>
+            <p class="via-panel-sub">Anotações sincronizadas com o app de estudo</p>
+          </div>
+          <ul id="via-notes" class="via-notes"></ul>
+          <p id="via-empty" class="via-empty hidden">Nenhuma anotação ainda.</p>
+          <textarea id="via-draft" rows="3" maxlength="4000" placeholder="Dúvida, conceito a revisar…"></textarea>
+          <div class="via-panel-actions">
+            <button type="button" id="via-send" class="via-send">Salvar no app</button>
+            <span id="via-status" class="via-status"></span>
+          </div>
+        </section>
         <p id="q-status" class="omissas-status hidden"></p>
       </section>
 

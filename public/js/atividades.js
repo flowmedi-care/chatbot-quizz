@@ -898,7 +898,7 @@
           comment: $("q-comment").value || "",
           categoryIds: Array.from(selectedCategoryIds),
           confidenceLevel: currentConfidence,
-          durationMs: questionOpenedAt ? Date.now() - questionOpenedAt : null
+          durationMs: null
         })
       });
       q.alreadyAnswered = true;

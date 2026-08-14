@@ -164,7 +164,7 @@ async function upsertAnswer(supabase, input) {
 
   const { data: existingRows, error: findErr } = await supabase
     .from("answers")
-    .select("id, answer_letter, user_jid")
+    .select("id, answer_letter, user_jid, duration_ms")
     .eq("question_id", questionId);
 
   if (findErr) throw findErr;
@@ -182,7 +182,12 @@ async function upsertAnswer(supabase, input) {
     source_message_id: `web:${crypto.randomBytes(8).toString("hex")}`,
     sent_at: new Date().toISOString(),
     confidence_level: input.confidenceLevel || null,
-    duration_ms: input.durationMs != null ? input.durationMs : null,
+    duration_ms:
+      input.syncSource === "app"
+        ? input.durationMs != null
+          ? input.durationMs
+          : existing?.duration_ms ?? null
+        : existing?.duration_ms ?? null,
     sync_source: input.syncSource || "web"
   };
 
@@ -440,10 +445,6 @@ async function handleOmissasAnswer(req, res) {
   const confidenceLevel = ["seguro", "inseguro", "chute"].includes(String(body.confidenceLevel || "").toLowerCase())
     ? String(body.confidenceLevel).toLowerCase()
     : "seguro";
-  const durationMs =
-    body.durationMs != null && Number.isFinite(Number(body.durationMs))
-      ? Math.round(Number(body.durationMs))
-      : null;
 
   try {
     const supabase = getClient();
@@ -480,7 +481,7 @@ async function handleOmissasAnswer(req, res) {
         comment,
         creatorJid: q.creator_jid,
         confidenceLevel,
-        durationMs,
+        durationMs: null,
         syncSource: "web"
       });
     } catch (e) {
@@ -522,7 +523,7 @@ async function handleOmissasAnswer(req, res) {
         answerLetter: letter,
         comment,
         confidenceLevel,
-        durationMs,
+        durationMs: null,
         tags: (categories || []).map((c) => c.name).filter(Boolean),
         syncSource: "web"
       });
@@ -759,6 +760,63 @@ async function handleOmissasAssist(req, res) {
   }
 }
 
+async function handleOmissasVia(req, res) {
+  const { getStudyApp, notifyStudyApp } = require("./_study-sync.js");
+  const url = new URL(req.url || "/", "http://localhost");
+  let body = {};
+  if (req.method === "POST") {
+    try {
+      body = typeof req.body === "string" ? JSON.parse(req.body || "{}") : req.body || {};
+    } catch {
+      return res.status(400).json({ error: "JSON inválido" });
+    }
+  }
+  const token = String(body.t || url.searchParams.get("t") || "").trim();
+  const shortId = String(body.shortId || url.searchParams.get("shortId") || "")
+    .trim()
+    .toUpperCase();
+  if (!token || !shortId) return res.status(400).json({ error: "t e shortId obrigatórios" });
+
+  const supabase = getClient();
+  const loaded = await loadSession(supabase, token);
+  if (loaded.error) return res.status(loaded.status).json({ error: loaded.error });
+  const { session } = loaded;
+  if (!session.shortIds.includes(shortId)) {
+    return res.status(403).json({ error: "Questão fora da sessão." });
+  }
+
+  if (req.method === "GET") {
+    const r = await getStudyApp(
+      `/api/quiz-sync/context?userJid=${encodeURIComponent(session.userJid)}&shortId=${encodeURIComponent(shortId)}`
+    );
+    if (!r.ok || r.skipped) {
+      return res.status(200).json({
+        linked: false,
+        reason: r.reason || "unreachable",
+        notes: [],
+        durationMs: null
+      });
+    }
+    return res.status(200).json(r.data || { linked: false, notes: [], durationMs: null });
+  }
+
+  if (req.method === "POST") {
+    const noteBody = String(body.body || "").trim();
+    if (!noteBody) return res.status(400).json({ error: "Escreva a anotação." });
+    const r = await notifyStudyApp("/api/quiz-sync/context", {
+      userJid: session.userJid,
+      shortId,
+      body: noteBody
+    });
+    if (r.skipped || !r.ok) {
+      return res.status(502).json({ error: "Não foi possível salvar na Via Aprovação." });
+    }
+    return res.status(200).json(r.data || { ok: true });
+  }
+
+  return res.status(405).json({ error: "Method not allowed" });
+}
+
 module.exports = {
   getClient,
   pickTargetGroupJid,
@@ -776,6 +834,7 @@ module.exports = {
   handleOmissasAnswer,
   handleOmissasResults,
   handleOmissasAssist,
+  handleOmissasVia,
   consumeAssistEliminate,
   fetchAssistUsedMap
 };

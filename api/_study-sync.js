@@ -29,12 +29,12 @@ async function notifyStudyApp(path, body) {
       },
       body: JSON.stringify(body)
     });
+    const data = await res.json().catch(() => ({}));
     if (!res.ok) {
-      const text = await res.text().catch(() => "");
-      console.warn("[study-sync]", res.status, text.slice(0, 300));
-      return { ok: false, status: res.status };
+      console.warn("[study-sync]", res.status, JSON.stringify(data).slice(0, 300));
+      return { ok: false, status: res.status, data };
     }
-    return { ok: true };
+    return { ok: true, data };
   } catch (e) {
     console.warn("[study-sync]", e.message || e);
     return { ok: false, reason: "unreachable" };
@@ -148,7 +148,7 @@ async function notifyStudyAppAnswer(supabase, input) {
     answerLetter: String(input.answerLetter || "").toLowerCase().slice(0, 1),
     comment: input.comment || null,
     confidenceLevel: normalizeConfidence(input.confidenceLevel),
-    durationMs: capDurationMs(input.durationMs),
+    durationMs: null,
     tags: Array.isArray(input.tags) ? input.tags : [],
     shortId: shortId || null,
     publishedQuestionId: input.publishedQuestionId ?? null,

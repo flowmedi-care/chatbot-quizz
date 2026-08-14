@@ -2519,11 +2519,138 @@ table.tutorial-table code {
   color: var(--muted);
 }
 
+.omissas-head-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.15rem;
+}
+
 .omissas-progress {
   margin: 0;
   font-weight: 700;
   color: var(--navy);
   white-space: nowrap;
+}
+
+.omissas-timer {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  font-size: 0.95rem;
+  color: var(--navy);
+}
+
+.omissas-timer-hint {
+  margin: 0;
+  font-size: 0.7rem;
+  color: var(--muted);
+  max-width: 11rem;
+  text-align: right;
+}
+
+.via-panel {
+  margin-top: 1.1rem;
+  padding: 0.95rem 1rem;
+  border-radius: 12px;
+  border: 1px solid #c7d2fe;
+  background: linear-gradient(180deg, #eef2ff 0%, #f8fafc 100%);
+}
+
+.via-panel-head {
+  margin-bottom: 0.65rem;
+}
+
+.via-panel-kicker {
+  margin: 0;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #3730a3;
+}
+
+.via-panel-sub {
+  margin: 0.15rem 0 0;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.via-notes {
+  list-style: none;
+  margin: 0 0 0.65rem;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  max-height: 10rem;
+  overflow: auto;
+}
+
+.via-notes li {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 0.45rem 0.6rem;
+}
+
+.via-note-meta {
+  margin: 0 0 0.2rem;
+  font-size: 0.7rem;
+  color: #64748b;
+}
+
+.via-note-body {
+  margin: 0;
+  font-size: 0.85rem;
+  white-space: pre-wrap;
+  color: var(--text);
+}
+
+.via-empty {
+  margin: 0 0 0.5rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.via-panel textarea {
+  width: 100%;
+  resize: vertical;
+  min-height: 4rem;
+  border-radius: 10px;
+  border: 1px solid #c7d2fe;
+  padding: 0.55rem 0.7rem;
+  font: inherit;
+  background: #fff;
+}
+
+.via-panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  margin-top: 0.5rem;
+}
+
+.via-send {
+  border: 0;
+  border-radius: 8px;
+  background: #312e81;
+  color: #fff;
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 700;
+  padding: 0.4rem 0.8rem;
+  cursor: pointer;
+}
+
+.via-send:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.via-status {
+  font-size: 0.75rem;
+  color: var(--muted);
 }
 
 .omissas-comment-field {
