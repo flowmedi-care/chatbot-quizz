@@ -2208,6 +2208,22 @@
       <div class="cb-stat-pill"><span>Aguardando</span><strong>${waiting}</strong></div>`;
   }
 
+  function integrationWarnText(reason) {
+    if (reason === "missing_url" || reason === "missing_env") {
+      return "Falta STUDY_APP_URL no Vercel do Papa Vagas (URL do app de estudo, sem barra no final). Sem isso as respostas nas omissas não voltam para o caderno.";
+    }
+    if (reason === "missing_secret") {
+      return "Falta FLASHCARDS_BOT_INBOUND_SECRET no Vercel do Papa Vagas (mesmo valor de QUIZ_BOT_USERS_SECRET no app).";
+    }
+    if (reason === "http_401") {
+      return "App recusou a chamada (secret diferente: FLASHCARDS_BOT_INBOUND_SECRET ≠ QUIZ_BOT_USERS_SECRET).";
+    }
+    if (reason && String(reason).startsWith("http_")) {
+      return `App respondeu ${reason.replace("http_", "HTTP ")} ao buscar o roster.`;
+    }
+    return "App não alcançado. No Vercel do Papa Vagas, defina STUDY_APP_URL com a URL do app de estudo.";
+  }
+
   function renderIntegrationBlock(c) {
     const integ = c.integration || {};
     const linked = Boolean(integ.linkedToApp || c.originNotebookId);
@@ -2215,7 +2231,7 @@
     const people = Array.isArray(integ.people) ? integ.people : [];
     const appNote =
       integ.appReachable === false
-        ? `<p class="cb-integration-warn">App não alcançado (STUDY_APP_URL).</p>`
+        ? `<p class="cb-integration-warn">${esc(integrationWarnText(integ.appUnreachableReason))}</p>`
         : "";
     const peopleHtml = people.length
       ? `<ul class="cb-integration-people">${people

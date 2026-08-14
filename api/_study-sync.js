@@ -17,7 +17,8 @@ function getStudyAppSecret() {
 async function notifyStudyApp(path, body) {
   const base = getStudyAppBaseUrl();
   const secret = getStudyAppSecret();
-  if (!base || !secret) return { skipped: true };
+  if (!base) return { skipped: true, reason: "missing_url" };
+  if (!secret) return { skipped: true, reason: "missing_secret" };
   const url = `${base}${path.startsWith("/") ? path : `/${path}`}`;
   try {
     const res = await fetch(url, {
@@ -36,14 +37,15 @@ async function notifyStudyApp(path, body) {
     return { ok: true };
   } catch (e) {
     console.warn("[study-sync]", e.message || e);
-    return { ok: false };
+    return { ok: false, reason: "unreachable" };
   }
 }
 
 async function getStudyApp(path) {
   const base = getStudyAppBaseUrl();
   const secret = getStudyAppSecret();
-  if (!base || !secret) return { skipped: true };
+  if (!base) return { skipped: true, reason: "missing_url" };
+  if (!secret) return { skipped: true, reason: "missing_secret" };
   const url = `${base}${path.startsWith("/") ? path : `/${path}`}`;
   try {
     const res = await fetch(url, {
@@ -54,12 +56,12 @@ async function getStudyApp(path) {
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
       console.warn("[study-sync] GET", res.status, JSON.stringify(data).slice(0, 200));
-      return { ok: false, status: res.status, data };
+      return { ok: false, status: res.status, data, reason: `http_${res.status}` };
     }
     return { ok: true, data };
   } catch (e) {
     console.warn("[study-sync] GET", e.message || e);
-    return { ok: false };
+    return { ok: false, reason: "unreachable" };
   }
 }
 
@@ -69,6 +71,7 @@ async function lookupCadernoContextForPublishedQuestion(supabase, publishedQuest
     .from("caderno_questions")
     .select("tec_question_id, caderno_id")
     .eq("published_question_id", publishedQuestionId)
+    .limit(1)
     .maybeSingle();
   if (error || !data) return { tecId: null, cadernoId: null };
   const raw = data.tec_question_id;
@@ -91,6 +94,7 @@ async function lookupCadernoContextForShortId(supabase, shortId) {
     .from("questions")
     .select("id")
     .eq("short_id", sid)
+    .limit(1)
     .maybeSingle();
   if (error || !q) return { tecId: null, cadernoId: null };
   return lookupCadernoContextForPublishedQuestion(supabase, q.id);
@@ -117,17 +121,28 @@ function capDurationMs(ms) {
 }
 
 async function notifyStudyAppAnswer(supabase, input) {
-  if (input.syncSource === "app") return;
-  let tecId = input.tecId != null ? Number(input.tecId) : null;
-  let cadernoId = input.cadernoId != null ? Number(input.cadernoId) : null;
-  if (!Number.isFinite(tecId) || tecId <= 0 || !Number.isFinite(cadernoId) || cadernoId <= 0) {
-    const ctx = await lookupCadernoContextForShortId(supabase, input.shortId);
-    if (!Number.isFinite(tecId) || tecId <= 0) tecId = ctx.tecId;
-    if (!Number.isFinite(cadernoId) || cadernoId <= 0) cadernoId = ctx.cadernoId;
+  if (input.syncSource === "app") return { skipped: true, reason: "sync_source_app" };
+  const shortId = input.shortId ? String(input.shortId).trim() : "";
+  if (!shortId && input.tecId == null && input.publishedQuestionId == null) {
+    console.warn("[study-sync] answer skip: sem shortId/tecId");
+    return { skipped: true, reason: "no_ids" };
   }
-  if (!tecId) return;
-  await notifyStudyApp("/api/quiz-sync/answer", {
-    tecId,
+  let tecId = input.tecId != null ? Number(input.tecId) : NaN;
+  let cadernoId = input.cadernoId != null ? Number(input.cadernoId) : NaN;
+  if (!Number.isFinite(tecId) || tecId <= 0 || !Number.isFinite(cadernoId) || cadernoId <= 0) {
+    if (input.publishedQuestionId) {
+      const ctx = await lookupCadernoContextForPublishedQuestion(supabase, input.publishedQuestionId);
+      if (!Number.isFinite(tecId) || tecId <= 0) tecId = ctx.tecId;
+      if (!Number.isFinite(cadernoId) || cadernoId <= 0) cadernoId = ctx.cadernoId;
+    }
+    if ((!Number.isFinite(tecId) || tecId <= 0 || !Number.isFinite(cadernoId) || cadernoId <= 0) && shortId) {
+      const ctx = await lookupCadernoContextForShortId(supabase, shortId);
+      if (!Number.isFinite(tecId) || tecId <= 0) tecId = ctx.tecId;
+      if (!Number.isFinite(cadernoId) || cadernoId <= 0) cadernoId = ctx.cadernoId;
+    }
+  }
+  const body = {
+    tecId: Number.isFinite(tecId) && tecId > 0 ? tecId : null,
     cadernoId: Number.isFinite(cadernoId) && cadernoId > 0 ? cadernoId : null,
     userJid: input.userJid,
     answerLetter: String(input.answerLetter || "").toLowerCase().slice(0, 1),
@@ -135,9 +150,15 @@ async function notifyStudyAppAnswer(supabase, input) {
     confidenceLevel: normalizeConfidence(input.confidenceLevel),
     durationMs: capDurationMs(input.durationMs),
     tags: Array.isArray(input.tags) ? input.tags : [],
-    shortId: input.shortId || null,
+    shortId: shortId || null,
+    publishedQuestionId: input.publishedQuestionId ?? null,
     source: "whatsapp"
-  });
+  };
+  if (!body.userJid || !body.answerLetter) {
+    console.warn("[study-sync] answer skip: userJid/letter");
+    return { skipped: true, reason: "no_user_or_letter" };
+  }
+  return notifyStudyApp("/api/quiz-sync/answer", body);
 }
 
 async function notifyStudyAppPublished(input) {

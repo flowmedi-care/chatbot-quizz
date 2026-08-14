@@ -223,6 +223,7 @@ async function handleGet(req, res, supabase) {
     }
 
     const appPeopleByCaderno = new Map();
+    const appFailByCaderno = new Map();
     const originCadernos = cadernos.filter((c) => c.origin_notebook_id);
     if (originCadernos.length > 0) {
       const { getStudyApp } = require("./_study-sync.js");
@@ -231,11 +232,18 @@ async function handleGet(req, res, supabase) {
           try {
             const r = await getStudyApp(`/api/quiz-sync/roster?cadernoId=${c.id}`);
             if (r.ok && r.data) appPeopleByCaderno.set(c.id, r.data);
+            else appFailByCaderno.set(c.id, r.reason || (r.status ? `http_${r.status}` : "unreachable"));
           } catch {
-            /* app unreachable */
+            appFailByCaderno.set(c.id, "unreachable");
           }
         })
       );
+    }
+
+    function jidLocal(jid) {
+      const t = String(jid || "").trim().toLowerCase();
+      const at = t.indexOf("@");
+      return at >= 0 ? t.slice(0, at) : t;
     }
 
     function integrationFor(c) {
@@ -245,9 +253,16 @@ async function handleGet(req, res, supabase) {
       const appPeople = Array.isArray(appData?.people) ? appData.people : [];
       const engagedJids = engagedJidsByCaderno.get(c.id) || [];
       const chatbotByJid = new Map();
+      const chatbotByLocal = new Map();
+      function rememberBot(jid, entry) {
+        if (!jid) return;
+        chatbotByJid.set(jid, entry);
+        const local = jidLocal(jid);
+        if (local && !chatbotByLocal.has(local)) chatbotByLocal.set(local, { jid, ...entry });
+      }
       for (const jid of engagedJids) {
         const link = linksByJid.get(jid);
-        chatbotByJid.set(jid, {
+        rememberBot(jid, {
           label: (link && link.display_label) || jid,
           synced: true
         });
@@ -255,14 +270,22 @@ async function handleGet(req, res, supabase) {
       for (const [jid, link] of linksByJid) {
         if (link.status !== "active") continue;
         if (chatbotByJid.has(jid)) continue;
-        chatbotByJid.set(jid, { label: link.display_label || jid, synced: true });
+        rememberBot(jid, { label: link.display_label || jid, synced: true });
       }
       const seen = new Set();
+      const seenLocal = new Set();
       const people = [];
       for (const p of appPeople) {
         const jid = p.userJid || null;
-        if (jid) seen.add(jid);
-        const bot = jid ? chatbotByJid.get(jid) : null;
+        if (jid) {
+          seen.add(jid);
+          const local = jidLocal(jid);
+          if (local) seenLocal.add(local);
+        }
+        const bot =
+          (jid && chatbotByJid.get(jid)) ||
+          (jid && chatbotByLocal.get(jidLocal(jid))) ||
+          null;
         const appSynced = Boolean(p.appSynced);
         const chatbotSynced = Boolean(bot && bot.synced);
         const label = p.label || jid || "usuário";
@@ -276,7 +299,7 @@ async function handleGet(req, res, supabase) {
         });
       }
       for (const [jid, bot] of chatbotByJid) {
-        if (seen.has(jid)) continue;
+        if (seen.has(jid) || seenLocal.has(jidLocal(jid))) continue;
         people.push({
           label: bot.label,
           appSynced: false,
@@ -290,6 +313,7 @@ async function handleGet(req, res, supabase) {
         linkedToApp,
         originNotebookId,
         appReachable: linkedToApp ? Boolean(appData) : null,
+        appUnreachableReason: linkedToApp && !appData ? appFailByCaderno.get(c.id) || "unreachable" : null,
         people
       };
     }

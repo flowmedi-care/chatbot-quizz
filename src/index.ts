@@ -1765,6 +1765,20 @@ async function startBot(): Promise<void> {
                   sourceMessageId: messageId
                 });
                 pendingAnswerChanges.delete(sender);
+                try {
+                  const { notifyStudyAppAnswer } = await import("./study-sync");
+                  await notifyStudyAppAnswer({
+                    shortId: pending.questionId,
+                    userJid: sender,
+                    answerLetter: pending.newAnswerLetter,
+                    comment: pending.newAnswerComment ?? null,
+                    confidenceLevel: "seguro",
+                    tags: pending.categories ?? [],
+                    syncSource: "whatsapp"
+                  });
+                } catch (syncErr) {
+                  console.warn("[study-sync]", (syncErr as Error).message);
+                }
                 await sock.sendMessage(remoteJid, { text: "Resposta atualizada ✅" });
                 if (pending.categories !== undefined) {
                   await beginCategoryResolve(

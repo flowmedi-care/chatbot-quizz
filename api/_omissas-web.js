@@ -518,6 +518,7 @@ async function handleOmissasAnswer(req, res) {
       await notifyStudyAppAnswer(supabase, {
         userJid: session.userJid,
         shortId,
+        publishedQuestionId: q.id,
         answerLetter: letter,
         comment,
         confidenceLevel,
