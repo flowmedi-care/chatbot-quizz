@@ -244,22 +244,34 @@ async function handleCadernoEngagementPatch(req, res, supabase, groupJid, cadern
   const memberLabel = r.user_label ? String(r.user_label) : null;
   const memberQuizName = r.quiz_display_name != null ? String(r.quiz_display_name) : null;
 
-  return res.status(200).json({
-    member: {
+  const member = {
+    userJid: memberJid,
+    userLabel: memberLabel,
+    quizDisplayName: memberQuizName,
+    displayLabel: pickDisplayLabel({
       userJid: memberJid,
       userLabel: memberLabel,
       quizDisplayName: memberQuizName,
-      displayLabel: pickDisplayLabel({
-        userJid: memberJid,
-        userLabel: memberLabel,
-        quizDisplayName: memberQuizName,
-        nameFromQuiz: hints.get(memberJid) || null
-      }),
-      engaged: Boolean(r.engaged),
-      passive: Boolean(r.passive),
-      updatedAt: r.updated_at ? String(r.updated_at) : null
+      nameFromQuiz: hints.get(memberJid) || null
+    }),
+    engaged: Boolean(r.engaged),
+    passive: Boolean(r.passive),
+    updatedAt: r.updated_at ? String(r.updated_at) : null
+  };
+
+  if (member.engaged || member.passive) {
+    try {
+      const { notifyStudyApp } = require("./_study-sync.js");
+      void notifyStudyApp("/api/quiz-sync/grant", {
+        cadernoId,
+        userJid: memberJid
+      });
+    } catch (e) {
+      console.warn("[caderno-engagement] grant:", e.message || e);
     }
-  });
+  }
+
+  return res.status(200).json({ member });
 }
 
 module.exports = {
