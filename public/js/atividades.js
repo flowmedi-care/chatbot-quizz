@@ -9,12 +9,15 @@
     session: (t) => `/api/omissas-session?t=${encodeURIComponent(t)}`,
     answer: "/api/omissas-answer",
     assist: "/api/omissas-assist",
+    via: (t, shortId) =>
+      `/api/omissas-via?t=${encodeURIComponent(t)}&shortId=${encodeURIComponent(shortId)}`,
     results: (t) => `/api/omissas-results?t=${encodeURIComponent(t)}`,
     userCategories: "/api/user-categories",
     answerCategories: "/api/answer-categories"
   };
 
   const $ = (id) => document.getElementById(id);
+  const quizUi = window.PapaQuizUi;
 
   let userJid = "";
   let userName = "";
@@ -43,6 +46,29 @@
   /** @type {Map<string, number[]>} draft category picks per shortId while navigating */
   let draftCatsByShortId = new Map();
   let catsPanelOpen = false;
+  let selectedLetter = null;
+  let eliminated = new Set();
+
+  const timer = quizUi.createTimer({
+    timer: $("q-timer"),
+    hint: $("q-timer-hint")
+  });
+  const via = quizUi.createViaPanel(
+    {
+      panel: $("via-panel"),
+      notes: $("via-notes"),
+      empty: $("via-empty"),
+      draft: $("via-draft"),
+      send: $("via-send"),
+      status: $("via-status")
+    },
+    {
+      fetchJson,
+      token: () => token,
+      currentShortId: () => (pending[index] && pending[index].shortId) || "",
+      viaGetUrl: (shortId) => API.via(token, shortId)
+    }
+  );
 
   function esc(s) {
     return String(s ?? "")
@@ -69,6 +95,8 @@
   document.addEventListener("click", (ev) => {
     const btn = ev.target && ev.target.closest && ev.target.closest(".btn-conf");
     if (!btn) return;
+    const q = pending[index];
+    if (q && q.alreadyAnswered) return;
     const key = btn.dataset.conf;
     currentConfidence = currentConfidence === key ? "seguro" : key;
     syncConfidenceUi();
@@ -671,6 +699,55 @@
     return t.split(/\s+/)[0];
   }
 
+  function paintCurrentChoices() {
+    const q = pending[index];
+    const hint = $("q-choices-hint");
+    const btn = $("btn-resolve");
+    if (hint) hint.classList.toggle("hidden", Boolean(q && q.alreadyAnswered));
+    if (btn) {
+      btn.disabled = !selectedLetter || submitting || Boolean(q && q.alreadyAnswered);
+      btn.textContent = submitting ? "Resolvendo..." : "Resolver questão";
+    }
+    quizUi.paintChoices($("q-choices"), {
+      selected: selectedLetter,
+      eliminated,
+      locked: Boolean(q && q.alreadyAnswered) || submitting,
+      answerKey: q && q.answerKey,
+      yourLetter: (q && (q.yourLetter || q.yourAnswer)) || selectedLetter,
+      showResult: Boolean(q && q.alreadyAnswered && q.answerKey)
+    });
+    quizUi.fillResult($("q-result"), q);
+    const resultsBtn = $("btn-atv-results");
+    if (resultsBtn) {
+      const allDone = pending.length > 0 && pending.every((item) => item.alreadyAnswered);
+      resultsBtn.classList.toggle("hidden", !allDone);
+    }
+  }
+
+  function bindCurrentChoices(q) {
+    quizUi.bindChoices($("q-choices"), {
+      assistMode: () => assistMode,
+      isLocked: () => submitting || Boolean(pending[index] && pending[index].alreadyAnswered),
+      onAssist: (letter) => useAssistOnLetter(letter),
+      onSelect: (letter) => {
+        const cur = pending[index];
+        if (!cur || cur.alreadyAnswered || submitting) return;
+        selectedLetter = letter;
+        paintCurrentChoices();
+      },
+      onToggleEliminated: (letter) => {
+        const cur = pending[index];
+        if (!cur || cur.alreadyAnswered || submitting) return;
+        if (eliminated.has(letter)) eliminated.delete(letter);
+        else {
+          eliminated.add(letter);
+          if (selectedLetter === letter) selectedLetter = null;
+        }
+        paintCurrentChoices();
+      }
+    });
+  }
+
   function applyAssistReveal(q, reveal) {
     if (!reveal) return;
     q.assistUsed = true;
@@ -788,62 +865,30 @@
       ? `${index + 1} / ${pending.length} · respondida`
       : `${index + 1} / ${pending.length}`;
 
-    let html = "";
-    if (q.statementText) html += `<div class="statement-text">${esc(q.statementText)}</div>`;
-    if (q.statementMediaUrl && q.statementMediaMimeType) {
-      if (String(q.statementMediaMimeType).startsWith("image/")) {
-        html += `<img src="${esc(q.statementMediaUrl)}" alt="Enunciado" crossorigin="anonymous" />`;
-      } else {
-        html += `<p><a href="${esc(q.statementMediaUrl)}" target="_blank" rel="noopener">Abrir documento</a></p>`;
-      }
-    }
-    $("q-statement").innerHTML = html || "<p>(Sem enunciado)</p>";
+    $("q-statement").innerHTML = quizUi.statementHtml(q) || "<p>(Sem enunciado)</p>";
 
     renderQuizCategoryToggles();
     syncQuizNavButtons();
 
-    const isTf = q.questionType === "true_false";
-    const choices = $("q-choices");
-    choices.classList.toggle("tf", isTf);
-    choices.classList.remove("assist-picking");
-    if (isTf) {
-      choices.innerHTML = `
-        <button type="button" class="btn-choice" data-letter="c">C — Certo</button>
-        <button type="button" class="btn-choice" data-letter="e">E — Errado</button>`;
-    } else {
-      const opts = Array.isArray(q.options) && q.options.length
-        ? q.options
-        : ["A", "B", "C", "D", "E"].map((L) => ({ label: L, text: "" }));
-      choices.innerHTML = opts
-        .map((o) => {
-          const L = String(o.label || o.letter || "").toUpperCase();
-          const txt = String(o.text || "").trim();
-          const label = txt ? `${L}) ${esc(txt)}` : L;
-          return `<button type="button" class="btn-choice" data-letter="${L.toLowerCase()}">${label}</button>`;
-        })
-        .join("");
-    }
-    choices.querySelectorAll(".btn-choice").forEach((btn) => {
-      btn.addEventListener("click", () => onChoiceClick(btn.dataset.letter));
+    selectedLetter = q.alreadyAnswered
+      ? String(q.yourLetter || q.yourAnswer || "").toLowerCase()
+      : null;
+    eliminated = new Set();
+    timer.start(null);
+    const sid = q.shortId;
+    void via.load(sid).then((data) => {
+      if (!pending[index] || pending[index].shortId !== sid) return;
+      if (data && data.durationMs) timer.start(data.durationMs);
     });
-    if (q.alreadyAnswered) {
-      const yours = String(q.yourLetter || q.yourAnswer || "").toLowerCase();
-      choices.querySelectorAll(".btn-choice").forEach((btn) => {
-        btn.disabled = true;
-        if (yours && btn.dataset.letter === yours) btn.classList.add("selected");
-      });
-    }
+
+    const choices = $("q-choices");
+    choices.classList.remove("assist-picking");
+    quizUi.renderChoices(choices, q);
+    bindCurrentChoices(q);
     if (q.assistReveal) applyAssistReveal(q, q.assistReveal);
+    paintCurrentChoices();
     syncAssistUi(q);
     updateQuestionDetails(gabaritoExtra(q));
-  }
-
-  async function onChoiceClick(letter) {
-    if (assistMode) {
-      await useAssistOnLetter(letter);
-      return;
-    }
-    await onChoose(letter);
   }
 
   async function useAssistOnLetter(letter) {
@@ -880,10 +925,7 @@
     submitting = true;
     assistMode = false;
     syncQuizNavButtons();
-    $("q-choices").querySelectorAll(".btn-choice").forEach((b) => {
-      b.disabled = true;
-      if (b.dataset.letter === letter) b.classList.add("selected");
-    });
+    paintCurrentChoices();
     const btnAssist = $("btn-assist");
     if (btnAssist) btnAssist.disabled = true;
     $("q-status").classList.remove("hidden");
@@ -909,37 +951,30 @@
       q.correct = data.correct;
       q.categoryIds = Array.from(selectedCategoryIds);
       draftCatsByShortId.set(catKey(q), q.categoryIds);
+      selectedLetter = String(q.yourLetter || letter).toLowerCase();
       $("q-status").classList.add("hidden");
+      $("q-comment").readOnly = true;
       updateQuestionDetails({
         correct: data.correct,
         answerKey: data.answerKey,
         yourAnswer: data.yourAnswer || letter
       });
-
-      await new Promise((r) => setTimeout(r, 1100));
-
       submitting = false;
-      const nextOpen = nextUnansweredIndex(index);
-      if (nextOpen < 0) {
-        await showResults();
-        return;
-      }
-      index = nextOpen;
-      renderQuestion();
+      syncQuizNavButtons();
+      paintCurrentChoices();
+      syncAssistUi(q);
     } catch (e) {
       submitting = false;
       syncQuizNavButtons();
       $("q-status").classList.remove("hidden");
       $("q-status").textContent = e.message || "Erro ao salvar.";
-      $("q-choices").querySelectorAll(".btn-choice").forEach((b) => {
-        if (!b.classList.contains("assist-false")) b.disabled = false;
-        b.classList.remove("selected");
-      });
+      paintCurrentChoices();
       syncAssistUi(q);
     }
   }
 
   async function showResults() {
+    if (timer) timer.stop();
     $("omissas-quiz").classList.add("hidden");
     $("omissas-loading").classList.remove("hidden");
     $("omissas-loading").textContent = "Montando resultado…";
@@ -1138,6 +1173,20 @@
         assistMode = !assistMode;
         btnAssist.classList.toggle("active", assistMode);
         $("q-choices").classList.toggle("assist-picking", assistMode);
+      });
+    }
+    const btnResolve = $("btn-resolve");
+    if (btnResolve) {
+      btnResolve.addEventListener("click", () => {
+        if (!selectedLetter) return;
+        void onChoose(selectedLetter);
+      });
+    }
+    const btnResults = $("btn-atv-results");
+    if (btnResults) {
+      btnResults.addEventListener("click", () => {
+        if (submitting) return;
+        void showResults();
       });
     }
 

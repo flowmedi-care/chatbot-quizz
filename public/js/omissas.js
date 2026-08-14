@@ -25,6 +25,10 @@
     btnAssist: document.getElementById("btn-assist"),
     assistHint: document.getElementById("assist-hint"),
     choices: document.getElementById("q-choices"),
+    choicesHint: document.getElementById("q-choices-hint"),
+    btnResolve: document.getElementById("btn-resolve"),
+    result: document.getElementById("q-result"),
+    btnNextQ: document.getElementById("btn-next-q"),
     status: document.getElementById("q-status"),
     timer: document.getElementById("q-timer"),
     timerHint: document.getElementById("q-timer-hint"),
@@ -49,12 +53,86 @@
   let assistQty = 0;
   let userName = "";
   let currentConfidence = "seguro";
-  let questionOpenedAt = 0;
-  let timerFrozenMs = null;
-  let timerTick = null;
   let userJid = "";
   let assistMode = false;
   let assistBusy = false;
+  let selectedLetter = null;
+  let eliminated = new Set();
+  let lastSessionComplete = false;
+
+  const quizUi = window.PapaQuizUi;
+
+  const timer = quizUi.createTimer({
+    timer: els.timer,
+    hint: els.timerHint
+  });
+  const via = quizUi.createViaPanel(
+    {
+      panel: els.viaPanel,
+      notes: els.viaNotes,
+      empty: els.viaEmpty,
+      draft: els.viaDraft,
+      send: els.viaSend,
+      status: els.viaStatus
+    },
+    {
+      fetchJson,
+      token: () => token,
+      currentShortId: () => (pending[index] && pending[index].shortId) || "",
+      viaGetUrl: (shortId) => API.via(token, shortId)
+    }
+  );
+
+  function paintCurrentChoices() {
+    const q = pending[index];
+    if (els.choicesHint) {
+      els.choicesHint.classList.toggle("hidden", Boolean(q && q.alreadyAnswered));
+    }
+    if (els.btnResolve) {
+      els.btnResolve.disabled = !selectedLetter || submitting || Boolean(q && q.alreadyAnswered);
+      els.btnResolve.textContent = submitting ? "Resolvendo..." : "Resolver questão";
+    }
+    quizUi.paintChoices(els.choices, {
+      selected: selectedLetter,
+      eliminated,
+      locked: Boolean(q && q.alreadyAnswered) || submitting,
+      answerKey: q && q.answerKey,
+      yourLetter: (q && (q.yourLetter || q.yourAnswer)) || selectedLetter,
+      showResult: Boolean(q && q.alreadyAnswered && q.answerKey)
+    });
+    quizUi.fillResult(els.result, q);
+    if (els.btnNextQ) {
+      const show = Boolean(q && q.alreadyAnswered);
+      els.btnNextQ.classList.toggle("hidden", !show);
+      els.btnNextQ.textContent = lastSessionComplete
+        ? "Ver resultado da sessão"
+        : "Próxima questão";
+    }
+  }
+
+  function bindCurrentChoices() {
+    quizUi.bindChoices(els.choices, {
+      assistMode: () => assistMode,
+      isLocked: () => submitting || Boolean(pending[index] && pending[index].alreadyAnswered),
+      onAssist: (letter) => useAssistOnLetter(letter),
+      onSelect: (letter) => {
+        const cur = pending[index];
+        if (!cur || cur.alreadyAnswered || submitting) return;
+        selectedLetter = letter;
+        paintCurrentChoices();
+      },
+      onToggleEliminated: (letter) => {
+        const cur = pending[index];
+        if (!cur || cur.alreadyAnswered || submitting) return;
+        if (eliminated.has(letter)) eliminated.delete(letter);
+        else {
+          eliminated.add(letter);
+          if (selectedLetter === letter) selectedLetter = null;
+        }
+        paintCurrentChoices();
+      }
+    });
+  }
 
   function esc(s) {
     return String(s ?? "")
@@ -64,114 +142,11 @@
       .replace(/"/g, "&quot;");
   }
 
-  function formatQuestionMs(ms) {
-    const s = Math.floor(Math.max(0, ms) / 1000);
-    const m = Math.floor(s / 60);
-    const rem = s % 60;
-    if (m > 0) return `${m}:${String(rem).padStart(2, "0")}`;
-    return `${s}s`;
-  }
-
-  function stopTimer() {
-    if (timerTick) {
-      clearInterval(timerTick);
-      timerTick = null;
-    }
-  }
-
-  function paintTimer() {
-    if (!els.timer) return;
-    if (timerFrozenMs != null) {
-      els.timer.textContent = formatQuestionMs(timerFrozenMs);
-      return;
-    }
-    els.timer.textContent = formatQuestionMs(questionOpenedAt ? Date.now() - questionOpenedAt : 0);
-  }
-
-  function startTimer(frozenMs) {
-    stopTimer();
-    timerFrozenMs = frozenMs != null && Number(frozenMs) > 0 ? Number(frozenMs) : null;
-    if (els.timerHint) {
-      els.timerHint.textContent = timerFrozenMs
-        ? "Tempo do app"
-        : "Visual — não entra nas estatísticas";
-    }
-    paintTimer();
-    if (timerFrozenMs != null) return;
-    timerTick = setInterval(paintTimer, 1000);
-  }
-
-  function renderViaNotes(notes) {
-    const list = Array.isArray(notes) ? notes : [];
-    if (!els.viaNotes) return;
-    els.viaNotes.innerHTML = list
-      .map((n) => {
-        const when = n.created_at
-          ? new Date(n.created_at).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" })
-          : "";
-        return `<li><p class="via-note-meta">${esc(when)}</p><p class="via-note-body">${esc(n.body)}</p></li>`;
-      })
-      .join("");
-    if (els.viaEmpty) els.viaEmpty.classList.toggle("hidden", list.length > 0);
-  }
-
-  async function loadViaContext(shortId) {
-    if (!els.viaPanel) return;
-    els.viaPanel.classList.remove("hidden");
-    if (els.viaDraft) els.viaDraft.value = "";
-    if (els.viaStatus) els.viaStatus.textContent = "";
-    try {
-      const data = await fetchJson(API.via(token, shortId));
-      if (data.linked) {
-        renderViaNotes(data.notes);
-        if (data.durationMs) startTimer(data.durationMs);
-      } else {
-        renderViaNotes([]);
-        if (els.viaEmpty) {
-          els.viaEmpty.classList.remove("hidden");
-          els.viaEmpty.textContent =
-            data.reason === "jid_not_linked"
-              ? "WhatsApp ainda não vinculado na Via Aprovação."
-              : "Caderno não sincronizado com a Via Aprovação.";
-        }
-      }
-    } catch {
-      renderViaNotes([]);
-      if (els.viaEmpty) {
-        els.viaEmpty.classList.remove("hidden");
-        els.viaEmpty.textContent = "Não foi possível carregar as anotações do app.";
-      }
-    }
-  }
-
-  async function sendViaNote() {
-    const q = pending[index];
-    const body = els.viaDraft ? els.viaDraft.value.trim() : "";
-    if (!q || !body) return;
-    if (els.viaSend) els.viaSend.disabled = true;
-    if (els.viaStatus) els.viaStatus.textContent = "Salvando…";
-    try {
-      await fetchJson("/api/omissas-via", {
-        method: "POST",
-        body: JSON.stringify({ t: token, shortId: q.shortId, body })
-      });
-      if (els.viaDraft) els.viaDraft.value = "";
-      await loadViaContext(q.shortId);
-      if (els.viaStatus) els.viaStatus.textContent = "Salvo no app.";
-    } catch (e) {
-      if (els.viaStatus) els.viaStatus.textContent = e.message || "Erro ao salvar.";
-    } finally {
-      if (els.viaSend) els.viaSend.disabled = false;
-    }
-  }
-
-  if (els.viaSend) {
-    els.viaSend.addEventListener("click", () => void sendViaNote());
-  }
-
   document.addEventListener("click", (ev) => {
     const btn = ev.target && ev.target.closest && ev.target.closest(".btn-conf");
     if (!btn) return;
+    const q = pending[index];
+    if (q && q.alreadyAnswered) return;
     const key = btn.dataset.conf;
     currentConfidence = currentConfidence === key ? "seguro" : key;
     document.querySelectorAll(".btn-conf").forEach((b) => {
@@ -286,11 +261,18 @@
     els.quiz.classList.remove("hidden");
     els.status.classList.add("hidden");
     els.comment.value = "";
+    els.comment.readOnly = false;
     assistMode = false;
+    lastSessionComplete = false;
     currentConfidence = q.yourConfidence || "seguro";
-    questionOpenedAt = Date.now();
-    startTimer(null);
-    void loadViaContext(q.shortId);
+    selectedLetter = null;
+    eliminated = new Set();
+    timer.start(null);
+    const sid = q.shortId;
+    void via.load(sid).then((data) => {
+      if (!pending[index] || pending[index].shortId !== sid) return;
+      if (data && data.durationMs) timer.start(data.durationMs);
+    });
     document.querySelectorAll(".btn-conf").forEach((btn) => {
       const on = btn.dataset.conf === currentConfidence;
       btn.style.background = on ? "#1e293b" : "#fff";
@@ -313,53 +295,14 @@
     els.meta.textContent = metaParts.join(" · ");
     els.progress.textContent = `${doneSoFar + 1} / ${total}`;
 
-    let html = "";
-    if (q.statementText) {
-      html += `<div class="statement-text">${esc(q.statementText)}</div>`;
-    }
-    if (q.statementMediaUrl && q.statementMediaMimeType) {
-      if (String(q.statementMediaMimeType).startsWith("image/")) {
-        html += `<img src="${esc(q.statementMediaUrl)}" alt="Enunciado" crossorigin="anonymous" />`;
-      } else {
-        html += `<p><a href="${esc(q.statementMediaUrl)}" target="_blank" rel="noopener">Abrir documento</a></p>`;
-      }
-    }
-    els.statement.innerHTML = html || "<p>(Sem enunciado)</p>";
+    els.statement.innerHTML = quizUi.statementHtml(q) || "<p>(Sem enunciado)</p>";
 
-    const isTf = q.questionType === "true_false";
-    els.choices.classList.toggle("tf", isTf);
-    if (isTf) {
-      els.choices.innerHTML = `
-        <button type="button" class="btn-choice" data-letter="c">C — Certo</button>
-        <button type="button" class="btn-choice" data-letter="e">E — Errado</button>`;
-    } else {
-      const opts = Array.isArray(q.options) && q.options.length
-        ? q.options
-        : ["A", "B", "C", "D", "E"].map((L) => ({ label: L, text: "" }));
-      els.choices.innerHTML = opts
-        .map((o) => {
-          const L = String(o.label || o.letter || "").toUpperCase();
-          const txt = String(o.text || "").trim();
-          const label = txt ? `${L}) ${esc(txt)}` : L;
-          return `<button type="button" class="btn-choice" data-letter="${L.toLowerCase()}">${label}</button>`;
-        })
-        .join("");
-    }
-
-    els.choices.querySelectorAll(".btn-choice").forEach((btn) => {
-      btn.addEventListener("click", () => onChoiceClick(btn.dataset.letter));
-    });
-
+    els.choices.classList.remove("assist-picking");
+    quizUi.renderChoices(els.choices, q);
+    bindCurrentChoices();
     if (q.assistReveal) applyAssistReveal(q, q.assistReveal);
+    paintCurrentChoices();
     syncAssistUi(q);
-  }
-
-  async function onChoiceClick(letter) {
-    if (assistMode) {
-      await useAssistOnLetter(letter);
-      return;
-    }
-    await onChoose(letter);
   }
 
   async function useAssistOnLetter(letter) {
@@ -392,14 +335,11 @@
   async function onChoose(letter) {
     if (submitting) return;
     const q = pending[index];
-    if (!q || !letter) return;
+    if (!q || !letter || q.alreadyAnswered) return;
 
     submitting = true;
     assistMode = false;
-    els.choices.querySelectorAll(".btn-choice").forEach((b) => {
-      b.disabled = true;
-      if (b.dataset.letter === letter) b.classList.add("selected");
-    });
+    paintCurrentChoices();
     if (els.btnAssist) els.btnAssist.disabled = true;
     els.status.classList.remove("hidden");
     els.status.textContent = "Salvando…";
@@ -417,27 +357,28 @@
         })
       });
 
-      if (data.sessionComplete) {
-        await showResults();
-        return;
-      }
-
-      index += 1;
+      q.alreadyAnswered = true;
+      q.yourLetter = data.yourAnswer || letter;
+      q.yourAnswer = data.yourAnswer || letter;
+      q.answerKey = data.answerKey;
+      q.correct = data.correct;
+      selectedLetter = String(q.yourLetter || letter).toLowerCase();
+      lastSessionComplete = Boolean(data.sessionComplete);
+      els.comment.readOnly = true;
+      els.status.classList.add("hidden");
       submitting = false;
-      renderQuestion();
+      paintCurrentChoices();
+      syncAssistUi(q);
     } catch (e) {
       submitting = false;
       els.status.textContent = e.message || "Erro ao salvar.";
-      els.choices.querySelectorAll(".btn-choice").forEach((b) => {
-        if (!b.classList.contains("assist-false")) b.disabled = false;
-        b.classList.remove("selected");
-      });
+      paintCurrentChoices();
       syncAssistUi(q);
     }
   }
 
   async function showResults() {
-    stopTimer();
+    timer.stop();
     els.quiz.classList.add("hidden");
     els.loading.classList.remove("hidden");
     els.loading.textContent = "Montando resultado…";
@@ -585,13 +526,30 @@
     if (els.btnAssist) {
       els.btnAssist.addEventListener("click", () => {
         const q = pending[index];
-        if (!q || q.assistUsed || assistQty < 1 || submitting || assistBusy) return;
+        if (!q || q.alreadyAnswered || q.assistUsed || assistQty < 1 || submitting || assistBusy) return;
         assistMode = !assistMode;
         els.btnAssist.classList.toggle("active", assistMode);
         els.assistHint.textContent = assistMode
           ? "Modo verificação: toque na alternativa que quer checar (verdadeira ou falsa)."
           : "Gasta 1 consumível · escolha uma letra · máx. 1 por questão";
         els.choices.classList.toggle("assist-picking", assistMode);
+      });
+    }
+    if (els.btnResolve) {
+      els.btnResolve.addEventListener("click", () => {
+        if (!selectedLetter) return;
+        void onChoose(selectedLetter);
+      });
+    }
+    if (els.btnNextQ) {
+      els.btnNextQ.addEventListener("click", () => {
+        if (submitting) return;
+        if (lastSessionComplete || index >= pending.length - 1) {
+          void showResults();
+          return;
+        }
+        index += 1;
+        renderQuestion();
       });
     }
 

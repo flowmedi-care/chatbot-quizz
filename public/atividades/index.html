@@ -165,7 +165,11 @@
               <h1 id="q-title" class="omissas-q-title">Questão</h1>
               <p id="q-meta" class="omissas-q-meta"></p>
             </div>
-            <p id="q-progress" class="omissas-progress"></p>
+            <div class="omissas-head-right">
+              <p id="q-timer" class="omissas-timer" title="Tempo nesta questão">0:00</p>
+              <p id="q-timer-hint" class="omissas-timer-hint"></p>
+              <p id="q-progress" class="omissas-progress"></p>
+            </div>
           </div>
 
           <div class="atv-quiz-toolbar" role="toolbar" aria-label="Navegação e ferramentas">
@@ -189,21 +193,46 @@
             <button type="button" class="atv-btn ghost atv-toolbar-nav" id="q-next" title="Próxima">Próx. ›</button>
           </div>
 
-          <div id="q-statement" class="statement-box atv-quiz-statement"></div>
+          <section class="solver-block">
+            <p class="solver-kicker">Enunciado</p>
+            <div id="q-statement" class="statement-box atv-quiz-statement"></div>
+          </section>
 
-          <div id="q-confidence" class="omissas-confidence" style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:8px 0;">
-            <span style="font-size:12px;color:#475569;">Confiança:</span>
-            <button type="button" class="btn-conf" data-conf="inseguro">Inseguro</button>
-            <button type="button" class="btn-conf" data-conf="chute">Chute</button>
-            <span id="q-conf-hint" style="font-size:12px;color:#94a3b8;">(Seguro — padrão)</span>
-          </div>
+          <section class="solver-block">
+            <p class="solver-kicker">Alternativas</p>
+            <div id="q-choices" class="solver-choices atv-quiz-choices"></div>
+            <p id="q-choices-hint" class="solver-hint">Clique para selecionar · duplo clique para riscar ou restaurar</p>
+          </section>
 
-          <label class="omissas-comment-field atv-quiz-justif">
-            <span>Justificativa (opcional)</span>
-            <textarea id="q-comment" rows="2" maxlength="2000" placeholder="Justificativa…"></textarea>
-          </label>
+          <section class="solver-actions">
+            <div id="q-confidence" class="omissas-confidence" style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:0 0 8px;">
+              <span style="font-size:12px;color:#475569;">Confiança:</span>
+              <button type="button" class="btn-conf" data-conf="inseguro">Inseguro</button>
+              <button type="button" class="btn-conf" data-conf="chute">Chute</button>
+              <span id="q-conf-hint" style="font-size:12px;color:#94a3b8;">(Seguro — padrão)</span>
+            </div>
+            <label class="omissas-comment-field atv-quiz-justif">
+              <span>Justificativa (opcional)</span>
+              <textarea id="q-comment" rows="2" maxlength="2000" placeholder="Justificativa…"></textarea>
+            </label>
+            <button type="button" id="btn-resolve" class="solver-resolve" disabled>Resolver questão</button>
+            <div id="q-result" class="solver-result hidden"></div>
+            <button type="button" id="btn-atv-results" class="solver-next hidden">Ver resultado</button>
+          </section>
 
-          <div id="q-choices" class="choice-grid atv-quiz-choices"></div>
+          <section id="via-panel" class="via-panel hidden">
+            <div class="via-panel-head">
+              <p class="via-panel-kicker">Via Aprovação</p>
+              <p class="via-panel-sub">Anotações sincronizadas com o app de estudo</p>
+            </div>
+            <ul id="via-notes" class="via-notes"></ul>
+            <p id="via-empty" class="via-empty hidden">Nenhuma anotação ainda.</p>
+            <textarea id="via-draft" rows="3" maxlength="4000" placeholder="Dúvida, conceito a revisar…"></textarea>
+            <div class="via-panel-actions">
+              <button type="button" id="via-send" class="via-send">Salvar no app</button>
+              <span id="via-status" class="via-status"></span>
+            </div>
+          </section>
 
           <div id="q-details" class="atv-quiz-details" aria-live="polite">
             <p id="q-details-text" class="atv-quiz-details-text">Questão sem categoria</p>
@@ -217,6 +246,7 @@
         </section>
       </section>
     </div>
+    <script src="/js/quiz-solver.js" defer></script>
     <script src="/js/atividades.js" defer></script>
   </body>
 </html>
