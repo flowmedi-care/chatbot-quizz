@@ -40,30 +40,42 @@ async function notifyStudyApp(path, body) {
   }
 }
 
-async function lookupTecIdForPublishedQuestion(supabase, publishedQuestionId) {
-  if (!publishedQuestionId) return null;
+async function lookupCadernoContextForPublishedQuestion(supabase, publishedQuestionId) {
+  if (!publishedQuestionId) return { tecId: null, cadernoId: null };
   const { data, error } = await supabase
     .from("caderno_questions")
-    .select("tec_question_id")
+    .select("tec_question_id, caderno_id")
     .eq("published_question_id", publishedQuestionId)
     .maybeSingle();
-  if (error || !data) return null;
+  if (error || !data) return { tecId: null, cadernoId: null };
   const raw = data.tec_question_id;
-  if (raw == null || raw === "") return null;
-  const n = Number(raw);
-  return Number.isFinite(n) ? n : null;
+  const n = raw == null || raw === "" ? NaN : Number(raw);
+  return {
+    tecId: Number.isFinite(n) ? n : null,
+    cadernoId: data.caderno_id != null ? Number(data.caderno_id) : null
+  };
 }
 
-async function lookupTecIdForShortId(supabase, shortId) {
+async function lookupTecIdForPublishedQuestion(supabase, publishedQuestionId) {
+  const ctx = await lookupCadernoContextForPublishedQuestion(supabase, publishedQuestionId);
+  return ctx.tecId;
+}
+
+async function lookupCadernoContextForShortId(supabase, shortId) {
   const sid = String(shortId || "").trim().toUpperCase();
-  if (!sid) return null;
+  if (!sid) return { tecId: null, cadernoId: null };
   const { data: q, error } = await supabase
     .from("questions")
     .select("id")
     .eq("short_id", sid)
     .maybeSingle();
-  if (error || !q) return null;
-  return lookupTecIdForPublishedQuestion(supabase, q.id);
+  if (error || !q) return { tecId: null, cadernoId: null };
+  return lookupCadernoContextForPublishedQuestion(supabase, q.id);
+}
+
+async function lookupTecIdForShortId(supabase, shortId) {
+  const ctx = await lookupCadernoContextForShortId(supabase, shortId);
+  return ctx.tecId;
 }
 
 function normalizeConfidence(raw) {
@@ -84,12 +96,16 @@ function capDurationMs(ms) {
 async function notifyStudyAppAnswer(supabase, input) {
   if (input.syncSource === "app") return;
   let tecId = input.tecId != null ? Number(input.tecId) : null;
-  if (!Number.isFinite(tecId) || tecId <= 0) {
-    tecId = await lookupTecIdForShortId(supabase, input.shortId);
+  let cadernoId = input.cadernoId != null ? Number(input.cadernoId) : null;
+  if (!Number.isFinite(tecId) || tecId <= 0 || !Number.isFinite(cadernoId) || cadernoId <= 0) {
+    const ctx = await lookupCadernoContextForShortId(supabase, input.shortId);
+    if (!Number.isFinite(tecId) || tecId <= 0) tecId = ctx.tecId;
+    if (!Number.isFinite(cadernoId) || cadernoId <= 0) cadernoId = ctx.cadernoId;
   }
   if (!tecId) return;
   await notifyStudyApp("/api/quiz-sync/answer", {
     tecId,
+    cadernoId: Number.isFinite(cadernoId) && cadernoId > 0 ? cadernoId : null,
     userJid: input.userJid,
     answerLetter: String(input.answerLetter || "").toLowerCase().slice(0, 1),
     comment: input.comment || null,
@@ -117,6 +133,8 @@ module.exports = {
   notifyStudyApp,
   notifyStudyAppAnswer,
   notifyStudyAppPublished,
+  lookupCadernoContextForShortId,
+  lookupCadernoContextForPublishedQuestion,
   lookupTecIdForShortId,
   lookupTecIdForPublishedQuestion,
   normalizeConfidence,

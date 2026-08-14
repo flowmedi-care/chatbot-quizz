@@ -168,9 +168,9 @@ async function insertCadernoBundle(supabase, input) {
   }
 
   const cadernoId = cadernoRow.id;
-  const rows = questions.map((q) => ({
+  const rows = questions.map((q, i) => ({
     caderno_id: cadernoId,
-    position: q.position,
+    position: i + 1,
     tec_question_id: sanitizePostgresText(q.tecQuestionId),
     tec_url: sanitizePostgresText(q.tecUrl),
     banca: sanitizePostgresText(q.banca),
@@ -181,15 +181,41 @@ async function insertCadernoBundle(supabase, input) {
     options: q.options || []
   }));
 
-  let { error: bulkErr } = await supabase.from("caderno_questions").insert(rows);
-  if (bulkErr && /options/i.test(bulkErr.message || "")) {
-    const withoutOpts = rows.map(({ options: _o, ...rest }) => rest);
-    const retry = await supabase.from("caderno_questions").insert(withoutOpts);
-    bulkErr = retry.error;
+  async function insertQuestionRows(payloadRows) {
+    let { data, error } = await supabase
+      .from("caderno_questions")
+      .insert(payloadRows)
+      .select("id, position, tec_question_id");
+    if (error && /options/i.test(error.message || "")) {
+      const withoutOpts = payloadRows.map(({ options: _o, ...rest }) => rest);
+      const retry = await supabase
+        .from("caderno_questions")
+        .insert(withoutOpts)
+        .select("id, position, tec_question_id");
+      data = retry.data;
+      error = retry.error;
+    }
+    return { data, error };
   }
+
+  let { data: insertedQs, error: bulkErr } = await insertQuestionRows(rows);
   if (bulkErr) {
     await supabase.from("cadernos").delete().eq("id", cadernoId);
     throw new Error(`Erro ao salvar questoes: ${bulkErr.message}`);
+  }
+
+  let savedQuestions = insertedQs || [];
+  if (savedQuestions.length === 0) {
+    const { data: existing, count } = await supabase
+      .from("caderno_questions")
+      .select("id, position, tec_question_id", { count: "exact" })
+      .eq("caderno_id", cadernoId)
+      .order("position", { ascending: true });
+    savedQuestions = existing || [];
+    if (!count && savedQuestions.length === 0) {
+      await supabase.from("cadernos").delete().eq("id", cadernoId);
+      throw new Error("Erro ao salvar questoes: nenhuma linha gravada.");
+    }
   }
 
   if (deliveryMode === "private") {
@@ -246,7 +272,17 @@ async function insertCadernoBundle(supabase, input) {
     }
   }
 
-  return { cadernoId, status, nextRunAt };
+  return {
+    cadernoId,
+    status,
+    nextRunAt,
+    totalQuestions: savedQuestions.length,
+    questions: savedQuestions.map((q) => ({
+      id: q.id,
+      position: q.position,
+      tecQuestionId: q.tec_question_id
+    }))
+  };
 }
 
 function timezoneSafe(tz) {

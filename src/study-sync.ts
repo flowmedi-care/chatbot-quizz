@@ -13,6 +13,7 @@ function studyAppSecret(): string | null {
 
 export async function notifyStudyAppAnswer(input: {
   tecId?: number | null;
+  cadernoId?: number | null;
   shortId: string;
   userJid: string;
   answerLetter: string;
@@ -35,6 +36,7 @@ export async function notifyStudyAppAnswer(input: {
       },
       body: JSON.stringify({
         tecId: input.tecId ?? null,
+        cadernoId: input.cadernoId ?? null,
         shortId: input.shortId,
         userJid: input.userJid,
         answerLetter: input.answerLetter,

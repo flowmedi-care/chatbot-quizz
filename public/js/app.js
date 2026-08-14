@@ -2228,7 +2228,9 @@
       .map((c) => {
         const published = typeof c.publishedCount === "number" ? c.publishedCount : c.cursor;
         const total = Number(c.totalQuestions) || 0;
+        const answered = Number(c.answeredPublishedCount) || 0;
         const pct = total > 0 ? Math.min(100, Math.round((published / total) * 100)) : 0;
+        const progressLabel = `Enviadas ${published}/${total} · Respondidas ${answered}/${published}`;
         const nextIso = getCadernoNextIso(c);
         const next =
           c.status === "active" ? formatNextRunPretty(nextIso, c.timezone) : "—";
@@ -2269,7 +2271,7 @@
           </div>
           <div class="caderno-card-meta">
             <div><strong>Envio:</strong> ${esc(scheduleText)}</div>
-            <div><strong>Progresso:</strong> ${published}/${total}</div>
+            <div><strong>Progresso:</strong> ${esc(progressLabel)}</div>
             <div><strong>Próximo:</strong> ${esc(next)}</div>
           </div>
           <div class="caderno-card-actions">
@@ -2294,7 +2296,7 @@
             <div class="cb-progress">
               <div class="cb-progress-top">
                 <span>Progresso</span>
-                <span>${published}/${total || "?"} · ${pct}%</span>
+                <span>${esc(progressLabel)} · ${pct}%</span>
               </div>
               <div class="cb-progress-bar" aria-hidden="true"><span style="width:${pct}%"></span></div>
             </div>

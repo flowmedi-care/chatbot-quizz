@@ -200,14 +200,18 @@ async function handleIngestAnswer(req, res) {
       question = data;
     }
     if (!question && tecId) {
-      const { data: cq } = await supabase
+      const cadernoId =
+        body.cadernoId != null && Number.isFinite(Number(body.cadernoId))
+          ? Number(body.cadernoId)
+          : null;
+      let cqQuery = supabase
         .from("caderno_questions")
         .select("published_question_id")
         .eq("tec_question_id", tecId)
         .not("published_question_id", "is", null)
-        .order("published_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
+        .order("published_at", { ascending: false });
+      if (cadernoId) cqQuery = cqQuery.eq("caderno_id", cadernoId);
+      const { data: cq } = await cqQuery.limit(1).maybeSingle();
       if (cq?.published_question_id) {
         const { data } = await supabase
           .from("questions")

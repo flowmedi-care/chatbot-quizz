@@ -95,12 +95,39 @@ async function handleGet(req, res, supabase) {
 
     const totalByCaderno = new Map();
     const publishedGroupByCaderno = new Map();
+    const publishedIdsByCaderno = new Map();
+    const allPublishedIds = [];
     for (const row of counts || []) {
       const id = row.caderno_id;
       totalByCaderno.set(id, (totalByCaderno.get(id) || 0) + 1);
       if (row.published_question_id != null) {
         publishedGroupByCaderno.set(id, (publishedGroupByCaderno.get(id) || 0) + 1);
+        if (!publishedIdsByCaderno.has(id)) publishedIdsByCaderno.set(id, []);
+        publishedIdsByCaderno.get(id).push(row.published_question_id);
+        allPublishedIds.push(row.published_question_id);
       }
+    }
+
+    const answeredQuestionIds = new Set();
+    if (allPublishedIds.length > 0) {
+      const uniquePublished = [...new Set(allPublishedIds)];
+      const { data: ansRows, error: ansErr } = await supabase
+        .from("answers")
+        .select("question_id")
+        .in("question_id", uniquePublished);
+      if (!ansErr && ansRows) {
+        for (const a of ansRows) {
+          if (a.question_id != null) answeredQuestionIds.add(a.question_id);
+        }
+      }
+    }
+
+    const answeredByCaderno = new Map();
+    for (const [cid, ids] of publishedIdsByCaderno.entries()) {
+      answeredByCaderno.set(
+        cid,
+        ids.filter((qid) => answeredQuestionIds.has(qid)).length
+      );
     }
 
     const privateIds = cadernos.filter((c) => c.delivery_mode === "private").map((c) => c.id);
@@ -198,6 +225,7 @@ async function handleGet(req, res, supabase) {
         randomOrder: Boolean(c.random_order),
         totalQuestions: totalByCaderno.get(c.id) || 0,
         publishedCount,
+        answeredPublishedCount: answeredByCaderno.get(c.id) || 0,
         engagedCount: engagedCountByCaderno.get(c.id) || 0,
         lastRunAt: c.last_run_at,
         nextRunAt: dm === "private" ? null : c.next_run_at,
