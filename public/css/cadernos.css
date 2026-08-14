@@ -379,6 +379,31 @@ body[data-page="cadernos"] {
   word-break: break-word;
 }
 
+.cb-integration {
+  margin-top: 0.75rem;
+  padding: 0.7rem 0.8rem;
+  border-radius: 12px;
+  border: 1px solid rgba(61, 48, 36, 0.08);
+  background: #f6f3ee;
+  font-size: 0.82rem;
+}
+
+.cb-integration p {
+  margin: 0 0 0.35rem;
+}
+
+.cb-integration-people {
+  margin: 0;
+  padding-left: 1.1rem;
+  color: var(--text);
+}
+
+.cb-integration-warn,
+.cb-integration-empty {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
 .cb-card-actions {
   display: flex;
   flex-wrap: wrap;

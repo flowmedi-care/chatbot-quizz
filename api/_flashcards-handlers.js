@@ -512,6 +512,69 @@ async function handleUserAnswers(req, res) {
   }
 }
 
+async function handleCadernoStatus(req, res) {
+  if (req.method !== "GET") return res.status(405).json({ error: "Method not allowed" });
+  const url = new URL(req.url || "/", "http://localhost");
+  const cadernoId = Number(
+    (req.query && req.query.cadernoId) || url.searchParams.get("cadernoId")
+  );
+  if (!Number.isFinite(cadernoId) || cadernoId <= 0) {
+    return res.status(400).json({ error: "cadernoId obrigatório" });
+  }
+  try {
+    const supabase = getClient();
+    let originNotebookId = null;
+    let caderno = null;
+    const first = await supabase
+      .from("cadernos")
+      .select("id, name, origin_notebook_id")
+      .eq("id", cadernoId)
+      .maybeSingle();
+    if (first.error && /origin_notebook_id/i.test(first.error.message || "")) {
+      const retry = await supabase
+        .from("cadernos")
+        .select("id, name")
+        .eq("id", cadernoId)
+        .maybeSingle();
+      if (retry.error) throw retry.error;
+      caderno = retry.data;
+    } else if (first.error) throw first.error;
+    else {
+      caderno = first.data;
+      originNotebookId = caderno?.origin_notebook_id || null;
+    }
+
+    const { data: eng } = await supabase
+      .from("caderno_engagement")
+      .select("user_jid, engaged")
+      .eq("caderno_id", cadernoId);
+    const { data: links } = await supabase
+      .from("flashcards_whatsapp_links")
+      .select("user_jid, display_label, status");
+
+    return res.status(200).json({
+      cadernoId,
+      name: caderno?.name || null,
+      originNotebookId,
+      linkedToApp: Boolean(originNotebookId),
+      engaged: (eng || []).map((e) => ({
+        userJid: e.user_jid,
+        engaged: Boolean(e.engaged),
+        displayLabel:
+          (links || []).find((l) => l.user_jid === e.user_jid)?.display_label || e.user_jid
+      })),
+      flashcardsLinks: (links || []).map((l) => ({
+        userJid: l.user_jid,
+        displayLabel: l.display_label,
+        status: l.status
+      }))
+    });
+  } catch (e) {
+    console.error("[quiz-sync-status]", e);
+    return res.status(500).json({ error: e.message || "Erro ao ler status" });
+  }
+}
+
 module.exports = {
   handleWhatsappUsers,
   handleLinkRequest,
@@ -521,6 +584,7 @@ module.exports = {
   handleOmissasForApp,
   handleInventoryQty,
   handleUserAnswers,
+  handleCadernoStatus,
   applyCors,
   checkFlashcardsInboundAuth
 };

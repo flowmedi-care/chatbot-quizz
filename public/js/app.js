@@ -2208,6 +2208,32 @@
       <div class="cb-stat-pill"><span>Aguardando</span><strong>${waiting}</strong></div>`;
   }
 
+  function renderIntegrationBlock(c) {
+    const integ = c.integration || {};
+    const linked = Boolean(integ.linkedToApp || c.originNotebookId);
+    if (!linked && !(integ.people && integ.people.length)) return "";
+    const people = Array.isArray(integ.people) ? integ.people : [];
+    const appNote =
+      integ.appReachable === false
+        ? `<p class="cb-integration-warn">App não alcançado (STUDY_APP_URL).</p>`
+        : "";
+    const peopleHtml = people.length
+      ? `<ul class="cb-integration-people">${people
+          .map((p) => `<li>${esc(p.line || p.label || "")}</li>`)
+          .join("")}</ul>`
+      : `<p class="cb-integration-empty">Nenhuma pessoa listada ainda.</p>`;
+    return `
+      <div class="cb-integration">
+        <p><strong>Integração</strong> ${
+          linked
+            ? `ligado ao app${c.originNotebookId ? ` · origem ${esc(String(c.originNotebookId).slice(0, 8))}…` : ""}`
+            : "sem vínculo com o app"
+        }</p>
+        ${appNote}
+        ${peopleHtml}
+      </div>`;
+  }
+
   function renderCadernos() {
     if (!els.cadernosList) return;
     renderCadernosSummary();
@@ -2257,6 +2283,9 @@
           c.waitForAnswers ? `<span class="cb-badge">Esperar resposta</span>` : "",
           c.deliveryMode !== "private" && c.engagedCount > 0
             ? `<span class="cb-badge">${c.engagedCount} engajado(s)</span>`
+            : "",
+          c.originNotebookId || (c.integration && c.integration.linkedToApp)
+            ? `<span class="cb-badge">App</span>`
             : ""
         ]
           .filter(Boolean)
@@ -2306,6 +2335,7 @@
               <div class="cb-stat"><span>Próximo envio</span><strong>${esc(next)}</strong></div>
               <div class="cb-stat"><span>Último envio</span><strong>${esc(last)}</strong></div>
             </div>
+            ${renderIntegrationBlock(c)}
           </div>
           <div class="cb-card-actions caderno-card-actions">
             <button type="button" class="btn-primary-action" data-action="trigger" ${isActive ? "" : "disabled"} title="Envia a próxima questão agora (até 60s)">Enviar agora</button>

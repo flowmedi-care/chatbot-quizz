@@ -21,7 +21,8 @@ const {
   handleAppAssist,
   handleOmissasForApp,
   handleInventoryQty,
-  handleUserAnswers
+  handleUserAnswers,
+  handleCadernoStatus
 } = require("./_flashcards-handlers.js");
 
 function resolveRoute(req) {
@@ -35,7 +36,8 @@ function resolveRoute(req) {
     fromQuery === "assist" ||
     fromQuery === "omissas" ||
     fromQuery === "inventory" ||
-    fromQuery === "answers"
+    fromQuery === "answers" ||
+    fromQuery === "status"
   ) {
     return fromQuery;
   }
@@ -55,6 +57,7 @@ function resolveRoute(req) {
   if (path.includes("quiz-sync-omissas")) return "omissas";
   if (path.includes("quiz-sync-inventory")) return "inventory";
   if (path.includes("quiz-sync-answers")) return "answers";
+  if (path.includes("quiz-sync-status")) return "status";
   return null;
 }
 
@@ -76,6 +79,7 @@ module.exports = async (req, res) => {
   if (route === "omissas") return handleOmissasForApp(req, res);
   if (route === "inventory") return handleInventoryQty(req, res);
   if (route === "answers") return handleUserAnswers(req, res);
+  if (route === "status") return handleCadernoStatus(req, res);
 
   return res.status(404).json({ error: "Rota flashcards desconhecida" });
 };

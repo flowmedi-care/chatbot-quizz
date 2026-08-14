@@ -40,6 +40,29 @@ async function notifyStudyApp(path, body) {
   }
 }
 
+async function getStudyApp(path) {
+  const base = getStudyAppBaseUrl();
+  const secret = getStudyAppSecret();
+  if (!base || !secret) return { skipped: true };
+  const url = `${base}${path.startsWith("/") ? path : `/${path}`}`;
+  try {
+    const res = await fetch(url, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${secret}` },
+      signal: AbortSignal.timeout(5000)
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      console.warn("[study-sync] GET", res.status, JSON.stringify(data).slice(0, 200));
+      return { ok: false, status: res.status, data };
+    }
+    return { ok: true, data };
+  } catch (e) {
+    console.warn("[study-sync] GET", e.message || e);
+    return { ok: false };
+  }
+}
+
 async function lookupCadernoContextForPublishedQuestion(supabase, publishedQuestionId) {
   if (!publishedQuestionId) return { tecId: null, cadernoId: null };
   const { data, error } = await supabase
@@ -131,6 +154,7 @@ module.exports = {
   getStudyAppBaseUrl,
   getStudyAppSecret,
   notifyStudyApp,
+  getStudyApp,
   notifyStudyAppAnswer,
   notifyStudyAppPublished,
   lookupCadernoContextForShortId,

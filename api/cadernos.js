@@ -6,6 +6,9 @@ const { parseSendTimes } = require("./_send-times.js");
 const MAX_RELEASE_HOUR = 15;
 
 const SELECT_COLUMNS =
+  "id, name, target_group_jid, created_by_jid, delivery_mode, status, questions_per_day, send_times, start_hour, start_minute, end_hour, end_minute, wait_for_answers, current_day_date, current_day_sent, questions_per_run, interval_days, send_hour, send_minute, timezone, cursor, random_order, last_run_at, next_run_at, created_at, origin_notebook_id";
+
+const SELECT_COLUMNS_NO_ORIGIN =
   "id, name, target_group_jid, created_by_jid, delivery_mode, status, questions_per_day, send_times, start_hour, start_minute, end_hour, end_minute, wait_for_answers, current_day_date, current_day_sent, questions_per_run, interval_days, send_hour, send_minute, timezone, cursor, random_order, last_run_at, next_run_at, created_at";
 
 const SELECT_COLUMNS_NO_DM =
@@ -57,6 +60,21 @@ async function fetchCadernosList(supabase, groupJid) {
     .select(SELECT_COLUMNS)
     .eq("target_group_jid", groupJid)
     .order("created_at", { ascending: false });
+
+  if (error && String(error.message || "").toLowerCase().includes("origin_notebook_id")) {
+    const r = await supabase
+      .from("cadernos")
+      .select(SELECT_COLUMNS_NO_ORIGIN)
+      .eq("target_group_jid", groupJid)
+      .order("created_at", { ascending: false });
+    if (r.error) {
+      error = r.error;
+      cadernos = r.data;
+    } else {
+      cadernos = (r.data || []).map((c) => ({ ...c, origin_notebook_id: null }));
+      error = null;
+    }
+  }
 
   if (error && String(error.message || "").toLowerCase().includes("delivery_mode")) {
     const r = await supabase
@@ -135,17 +153,20 @@ async function handleGet(req, res, supabase) {
     const privateRecipientsByCaderno = new Map();
     const engagedCountByCaderno = new Map();
 
+    const engagedJidsByCaderno = new Map();
     const groupIds = cadernos.filter((c) => c.delivery_mode !== "private").map((c) => c.id);
     if (groupIds.length > 0) {
       const { data: engRows, error: engErr } = await supabase
         .from("caderno_engagement")
-        .select("caderno_id")
+        .select("caderno_id, user_jid")
         .in("caderno_id", groupIds)
         .eq("engaged", true);
       if (!engErr && engRows) {
         for (const row of engRows) {
           const cid = row.caderno_id;
           engagedCountByCaderno.set(cid, (engagedCountByCaderno.get(cid) || 0) + 1);
+          if (!engagedJidsByCaderno.has(cid)) engagedJidsByCaderno.set(cid, []);
+          if (row.user_jid) engagedJidsByCaderno.get(cid).push(row.user_jid);
         }
       }
     }
@@ -193,6 +214,86 @@ async function handleGet(req, res, supabase) {
       }
     }
 
+    const { data: fcLinks } = await supabase
+      .from("flashcards_whatsapp_links")
+      .select("user_jid, display_label, status");
+    const linksByJid = new Map();
+    for (const l of fcLinks || []) {
+      if (l.user_jid) linksByJid.set(l.user_jid, l);
+    }
+
+    const appPeopleByCaderno = new Map();
+    const originCadernos = cadernos.filter((c) => c.origin_notebook_id);
+    if (originCadernos.length > 0) {
+      const { getStudyApp } = require("./_study-sync.js");
+      await Promise.all(
+        originCadernos.map(async (c) => {
+          try {
+            const r = await getStudyApp(`/api/quiz-sync/roster?cadernoId=${c.id}`);
+            if (r.ok && r.data) appPeopleByCaderno.set(c.id, r.data);
+          } catch {
+            /* app unreachable */
+          }
+        })
+      );
+    }
+
+    function integrationFor(c) {
+      const originNotebookId = c.origin_notebook_id || null;
+      const linkedToApp = Boolean(originNotebookId);
+      const appData = appPeopleByCaderno.get(c.id);
+      const appPeople = Array.isArray(appData?.people) ? appData.people : [];
+      const engagedJids = engagedJidsByCaderno.get(c.id) || [];
+      const chatbotByJid = new Map();
+      for (const jid of engagedJids) {
+        const link = linksByJid.get(jid);
+        chatbotByJid.set(jid, {
+          label: (link && link.display_label) || jid,
+          synced: true
+        });
+      }
+      for (const [jid, link] of linksByJid) {
+        if (link.status !== "active") continue;
+        if (chatbotByJid.has(jid)) continue;
+        chatbotByJid.set(jid, { label: link.display_label || jid, synced: true });
+      }
+      const seen = new Set();
+      const people = [];
+      for (const p of appPeople) {
+        const jid = p.userJid || null;
+        if (jid) seen.add(jid);
+        const bot = jid ? chatbotByJid.get(jid) : null;
+        const appSynced = Boolean(p.appSynced);
+        const chatbotSynced = Boolean(bot && bot.synced);
+        const label = p.label || jid || "usuário";
+        people.push({
+          label,
+          appSynced,
+          chatbotSynced,
+          line: `${label} — ${appSynced ? "sincronizado" : "não sincronizado"} no app · ${
+            chatbotSynced ? "sincronizado" : "não sincronizado"
+          } no chatbot`
+        });
+      }
+      for (const [jid, bot] of chatbotByJid) {
+        if (seen.has(jid)) continue;
+        people.push({
+          label: bot.label,
+          appSynced: false,
+          chatbotSynced: bot.synced,
+          line: `${bot.label} — não sincronizado no app · ${
+            bot.synced ? "sincronizado" : "não sincronizado"
+          } no chatbot`
+        });
+      }
+      return {
+        linkedToApp,
+        originNotebookId,
+        appReachable: linkedToApp ? Boolean(appData) : null,
+        people
+      };
+    }
+
     const out = cadernos.map((c) => {
       const dm = c.delivery_mode === "private" ? "private" : "group";
       const publishedCount =
@@ -230,6 +331,8 @@ async function handleGet(req, res, supabase) {
         lastRunAt: c.last_run_at,
         nextRunAt: dm === "private" ? null : c.next_run_at,
         createdAt: c.created_at,
+        originNotebookId: c.origin_notebook_id || null,
+        integration: integrationFor(c),
         privateRecipients: privateRecipientsByCaderno.get(c.id) || []
       };
     });

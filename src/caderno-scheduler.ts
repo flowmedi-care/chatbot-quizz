@@ -217,6 +217,18 @@ async function publishPrivateCadernoQuestion(
       engagedLine
     );
     await recordPrivateSend(caderno.id, recipient.userJid, question.id, dbId);
+    try {
+      const tec = question.tecQuestionId != null ? Number(question.tecQuestionId) : null;
+      const { notifyStudyAppPublished } = await import("./study-sync");
+      await notifyStudyAppPublished({
+        tecId: Number.isFinite(tec as number) ? (tec as number) : null,
+        cadernoId: caderno.id,
+        shortId,
+        publishedQuestionId: dbId
+      });
+    } catch (syncErr) {
+      console.warn("[study-sync] flush private", (syncErr as Error).message);
+    }
     console.log(
       `[caderno-scheduler] privado #${shortId} -> ${recipient.userJid} (caderno ${caderno.id}, pos ${question.position})`
     );

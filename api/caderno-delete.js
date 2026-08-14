@@ -25,6 +25,22 @@ module.exports = async (req, res) => {
 
   try {
     const supabase = getClient();
+    let originNotebookId = null;
+    const { data: row } = await supabase
+      .from("cadernos")
+      .select("id, origin_notebook_id")
+      .eq("id", id)
+      .maybeSingle();
+    if (row && row.origin_notebook_id) originNotebookId = row.origin_notebook_id;
+    try {
+      const { notifyStudyApp } = require("./_study-sync.js");
+      await notifyStudyApp("/api/quiz-sync/unlink", {
+        cadernoId: id,
+        originNotebookId
+      });
+    } catch (syncErr) {
+      console.warn("[caderno-delete] unlink app:", syncErr.message || syncErr);
+    }
     const { error } = await supabase.from("cadernos").delete().eq("id", id);
     if (error) throw error;
     return res.status(200).json({ ok: true, id });
