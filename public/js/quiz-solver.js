@@ -13,91 +13,181 @@
       .replace(/"/g, "&quot;");
   }
 
-  function optionsOf(q) {
-    if (!q) return [];
-    if (q.questionType === "true_false") {
-      return [
-        { letter: "c", label: "Certo", text: "Certo" },
-        { letter: "e", label: "Errado", text: "Errado" }
-      ];
-    }
-    const raw =
-      Array.isArray(q.options) && q.options.length
-        ? q.options
-        : ["A", "B", "C", "D", "E"].map((L) => ({ label: L, text: "" }));
-    return raw.map((o) => {
-      const L = String(o.label || o.letter || "")
-        .trim()
-        .toUpperCase()
-        .slice(0, 1);
-      const text = String(o.text || "").trim();
-      return { letter: L.toLowerCase(), label: L, text: text || L };
+  function mapStoredOptions(raw) {
+    if (!Array.isArray(raw) || !raw.length) return [];
+    return raw
+      .map((o) => {
+        const L = String((o && (o.label || o.letter)) || "")
+          .trim()
+          .toUpperCase()
+          .slice(0, 1);
+        if (!L) return null;
+        return { letter: L.toLowerCase(), label: L, text: String((o && o.text) || "").trim() };
+      })
+      .filter(Boolean);
+  }
+
+  function hasRealOptionText(opts) {
+    return (opts || []).some((o) => {
+      const t = String(o.text || "").trim();
+      const L = String(o.label || "").trim();
+      return t.length > 1 && t.toLowerCase() !== L.toLowerCase();
     });
   }
 
-  function isOptionLine(line) {
-    const t = String(line || "").trim();
-    if (!t) return false;
-    if (/^[A-Ea-e]\s*[\)\.\-–:]\s*\S/.test(t)) return true;
-    if (/^[A-Ea-e]\s*[\)\.\-–:]\s*$/.test(t)) return true;
-    if (/^(Certo|Errado)\s*$/i.test(t)) return true;
-    return false;
+  function parseChoiceBlock(raw) {
+    const text = String(raw || "")
+      .replace(/\r/g, "")
+      .trim();
+    if (!text) return { statement: "", options: [] };
+
+    const lines = text.split("\n");
+    let last = lines.length - 1;
+    while (last >= 0 && !String(lines[last]).trim()) last--;
+    let first = last;
+    const found = [];
+    while (first >= 0) {
+      const t = String(lines[first]).trim();
+      if (!t) {
+        first--;
+        continue;
+      }
+      const m = t.match(/^([A-Ea-e])\s*[\)\.\-–:]\s*(.*)$/);
+      if (m) {
+        found.push({ letter: m[1].toUpperCase(), text: String(m[2] || "").trim() });
+        first--;
+        continue;
+      }
+      break;
+    }
+    found.reverse();
+    const letters = found.map((c) => c.letter).join("");
+    const sequential =
+      found.length >= 2 &&
+      found[0].letter === "A" &&
+      letters === "ABCDE".slice(0, found.length) &&
+      found.some((c) => c.text.length > 0);
+    if (sequential) {
+      return {
+        statement: lines.slice(0, first + 1).join("\n").trim(),
+        options: found.map((c) => ({
+          letter: c.letter.toLowerCase(),
+          label: c.letter,
+          text: c.text
+        }))
+      };
+    }
+
+    const start = text.search(/(?:^|[\s\n])[Aa]\s*\)\s+\S/);
+    if (start >= 0) {
+      const cut = text[start] && /\s/.test(text[start]) ? start + 1 : start;
+      const head = text.slice(0, cut).trim();
+      const tail = text.slice(cut).trim();
+      const re = /([A-Ea-e])\s*\)\s+/g;
+      const marks = [];
+      let m;
+      while ((m = re.exec(tail))) {
+        marks.push({ letter: m[1].toUpperCase(), at: m.index, len: m[0].length });
+      }
+      if (marks.length >= 3 && marks[0].letter === "A") {
+        const options = marks.map((mark, idx) => {
+          const from = mark.at + mark.len;
+          const to = idx + 1 < marks.length ? marks[idx + 1].at : tail.length;
+          return {
+            letter: mark.letter.toLowerCase(),
+            label: mark.letter,
+            text: tail.slice(from, to).trim()
+          };
+        });
+        if (options.filter((o) => o.text.length > 1).length >= 3) {
+          return { statement: head, options };
+        }
+      }
+    }
+
+    return { statement: text, options: [] };
+  }
+
+  function letterFallback(stored) {
+    const labels = stored.length
+      ? stored.map((o) => o.label)
+      : ["A", "B", "C", "D", "E"];
+    return labels.map((L) => ({
+      letter: L.toLowerCase(),
+      label: L,
+      text: ""
+    }));
+  }
+
+  function optionsOf(q) {
+    return normalizeQuestion(q).options;
   }
 
   function stripStatementChoices(raw, options, questionType) {
-    let text = String(raw || "")
-      .replace(/\r/g, "")
-      .trim();
-    if (!text) return "";
+    return normalizeQuestion({
+      statementText: raw,
+      options,
+      questionType
+    }).statement;
+  }
 
-    if (questionType === "true_false") {
-      text = text.replace(/\s*\bCerto\s+Errado\s*$/i, "").trim();
+  function normalizeQuestion(q) {
+    if (!q) return { statement: "", options: [] };
+    const rawStatement = String(q.statementText || "").replace(/\r/g, "").trim();
+
+    if (q.questionType === "true_false") {
+      let text = rawStatement.replace(/\s*\bCerto\s+Errado\s*$/i, "").trim();
       const lines = text.split("\n");
       if (lines.length >= 2) {
         const a = lines[lines.length - 2].trim();
         const b = lines[lines.length - 1].trim();
         if (/^certo$/i.test(a) && /^errado$/i.test(b)) {
-          return lines.slice(0, -2).join("\n").trim();
+          text = lines.slice(0, -2).join("\n").trim();
         }
       }
-      return text;
+      return {
+        statement: text,
+        options: [
+          { letter: "c", label: "Certo", text: "Certo" },
+          { letter: "e", label: "Errado", text: "Errado" }
+        ]
+      };
     }
 
-    const opts = Array.isArray(options) ? options : [];
-    const firstText = String((opts[0] && opts[0].text) || "").trim();
-    const firstLabel = String((opts[0] && (opts[0].label || opts[0].letter)) || "A").trim();
-    if (firstText && firstText.length > 1) {
-      const idx = text.lastIndexOf(firstText);
-      if (idx > 24) {
-        const before = text.slice(0, idx);
-        const cut = before.search(
-          new RegExp(`[\\s\\n]*${firstLabel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*[\\)\\.]\\s*$`, "i")
-        );
-        if (cut > 24) return before.slice(0, cut).trim();
+    const parsed = parseChoiceBlock(rawStatement);
+    const stored = mapStoredOptions(q.options);
+    const options = hasRealOptionText(stored)
+      ? stored.map((o) => ({ ...o, text: o.text || o.label }))
+      : parsed.options.length
+        ? parsed.options
+        : letterFallback(stored);
+
+    let statement = rawStatement;
+    if (hasRealOptionText(options)) {
+      if (parsed.options.length) statement = parsed.statement;
+      else {
+        const first = options[0];
+        const idx = statement.lastIndexOf(first.text);
+        if (idx > 24) {
+          const before = statement.slice(0, idx);
+          const cut = before.search(
+            new RegExp(
+              `[\\s\\n]*${first.label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*[\\)\\.]\\s*$`,
+              "i"
+            )
+          );
+          if (cut > 24) statement = before.slice(0, cut).trim();
+        }
       }
     }
 
-    const lines = text.split("\n");
-    let i = lines.length - 1;
-    while (i >= 0 && !String(lines[i]).trim()) i--;
-    const end = i;
-    while (i >= 0 && isOptionLine(lines[i])) i--;
-    if (end - i >= 2) return lines.slice(0, i + 1).join("\n").trim();
-
-    const inline = text.search(/\s+[Aa]\s*\)\s+\S/);
-    if (inline > 24) {
-      const tail = text.slice(inline);
-      const labels = tail.match(/\b[A-Ea-e]\s*\)/g) || [];
-      if (labels.length >= 3) return text.slice(0, inline).trim();
-    }
-    return text;
+    return { statement, options };
   }
 
   function statementHtml(q) {
-    const opts = optionsOf(q);
-    const body = stripStatementChoices(q.statementText, opts, q.questionType);
+    const { statement } = normalizeQuestion(q);
     let html = "";
-    if (body) html += `<div class="statement-text">${esc(body)}</div>`;
+    if (statement) html += `<div class="statement-text">${esc(statement)}</div>`;
     if (q.statementMediaUrl && q.statementMediaMimeType) {
       if (String(q.statementMediaMimeType).startsWith("image/")) {
         html += `<img src="${esc(q.statementMediaUrl)}" alt="Enunciado" crossorigin="anonymous" />`;
@@ -109,16 +199,24 @@
   }
 
   function optionInner(opt, questionType) {
+    const text = String(opt.text || "").trim();
     const same =
       questionType === "true_false" ||
-      opt.text.trim().toLowerCase() === opt.label.trim().toLowerCase();
-    if (same) return `<span class="solver-opt-text">${esc(opt.text)}</span>`;
-    return `<span class="solver-opt-prefix">${esc(opt.label)})</span> <span class="solver-opt-text">${esc(opt.text)}</span>`;
+      !text ||
+      text.toLowerCase() === opt.label.trim().toLowerCase();
+    if (same) {
+      return `<span class="solver-opt-prefix">${esc(opt.label)}</span>${
+        text && text.toLowerCase() !== opt.label.toLowerCase()
+          ? ` <span class="solver-opt-text">${esc(text)}</span>`
+          : ""
+      }`;
+    }
+    return `<span class="solver-opt-prefix">${esc(opt.label)})</span> <span class="solver-opt-text">${esc(text)}</span>`;
   }
 
   function renderChoices(el, q) {
     if (!el) return;
-    const opts = optionsOf(q);
+    const opts = normalizeQuestion(q).options;
     el.classList.remove("choice-grid", "tf");
     el.classList.add("solver-choices");
     el.innerHTML = opts
@@ -320,6 +418,8 @@
     esc,
     optionsOf,
     stripStatementChoices,
+    parseChoiceBlock,
+    normalizeQuestion,
     statementHtml,
     renderChoices,
     paintChoices,
