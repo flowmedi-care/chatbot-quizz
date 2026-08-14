@@ -48,6 +48,7 @@
   let catsPanelOpen = false;
   let selectedLetter = null;
   let eliminated = new Set();
+  let resultsTimer = 0;
 
   const timer = quizUi.createTimer({
     timer: $("q-timer"),
@@ -276,14 +277,46 @@
     };
   }
 
-  function nextUnansweredIndex(fromIndex) {
-    for (let i = fromIndex + 1; i < pending.length; i++) {
-      if (!pending[i].alreadyAnswered) return i;
+  function sessionAllAnswered() {
+    return pending.length > 0 && pending.every((q) => q.alreadyAnswered);
+  }
+
+  function quizIsOpen() {
+    const wrap = $("atv-quiz-wrap");
+    const quiz = $("omissas-quiz");
+    return Boolean(
+      wrap &&
+        quiz &&
+        !wrap.classList.contains("hidden") &&
+        !quiz.classList.contains("hidden")
+    );
+  }
+
+  function cancelScheduledResults() {
+    if (resultsTimer) {
+      window.clearTimeout(resultsTimer);
+      resultsTimer = 0;
     }
-    for (let i = 0; i <= fromIndex; i++) {
-      if (!pending[i].alreadyAnswered) return i;
+  }
+
+  function scheduleShowResultsIfComplete() {
+    cancelScheduledResults();
+    if (!sessionAllAnswered()) return;
+    resultsTimer = window.setTimeout(() => {
+      resultsTimer = 0;
+      void showResults();
+    }, 1100);
+  }
+
+  function isTypingTarget(el) {
+    if (!el) return false;
+    const tag = String(el.tagName || "").toUpperCase();
+    if (tag === "TEXTAREA" || tag === "SELECT") return true;
+    if (tag === "INPUT") {
+      const type = String(el.type || "text").toLowerCase();
+      return type !== "button" && type !== "checkbox" && type !== "radio" && type !== "submit";
     }
-    return -1;
+    return Boolean(el.isContentEditable);
   }
 
   async function persistCatsIfAnswered() {
@@ -344,9 +377,14 @@
 
   function navigateQuiz(delta) {
     if (submitting || !pending.length) return;
+    cancelScheduledResults();
     saveDraftCatsForCurrent();
     setCatsPanelOpen(false);
     const next = index + delta;
+    if (delta > 0 && next >= pending.length && sessionAllAnswered()) {
+      void showResults();
+      return;
+    }
     if (next < 0 || next >= pending.length) return;
     index = next;
     renderQuestion();
@@ -355,8 +393,17 @@
   function syncQuizNavButtons() {
     const prev = $("q-prev");
     const next = $("q-next");
-    if (prev) prev.disabled = submitting || index <= 0;
-    if (next) next.disabled = submitting || index >= pending.length - 1;
+    const allDone = sessionAllAnswered();
+    if (prev) {
+      prev.disabled = submitting || index <= 0;
+      prev.title = "Anterior (←)";
+    }
+    if (next) {
+      const canGoResults = allDone && index >= pending.length - 1;
+      next.disabled = submitting || (index >= pending.length - 1 && !canGoResults);
+      next.textContent = canGoResults ? "Resultado ›" : "Próx. ›";
+      next.title = canGoResults ? "Ver resultado da seção (→)" : "Próxima (→)";
+    }
   }
 
   function addDaysIso(iso, n) {
@@ -645,6 +692,7 @@
   }
 
   async function openQuiz(t) {
+    cancelScheduledResults();
     token = t;
     pending = [];
     index = 0;
@@ -719,8 +767,7 @@
     quizUi.fillResult($("q-result"), q);
     const resultsBtn = $("btn-atv-results");
     if (resultsBtn) {
-      const allDone = pending.length > 0 && pending.every((item) => item.alreadyAnswered);
-      resultsBtn.classList.toggle("hidden", !allDone);
+      resultsBtn.classList.toggle("hidden", !sessionAllAnswered());
     }
   }
 
@@ -965,6 +1012,7 @@
       syncQuizNavButtons();
       paintCurrentChoices();
       syncAssistUi(q);
+      if (sessionAllAnswered()) scheduleShowResultsIfComplete();
     } catch (e) {
       submitting = false;
       syncQuizNavButtons();
@@ -976,6 +1024,7 @@
   }
 
   async function showResults() {
+    cancelScheduledResults();
     if (timer) timer.stop();
     $("omissas-quiz").classList.add("hidden");
     $("omissas-loading").classList.remove("hidden");
@@ -1135,6 +1184,18 @@
     }
     if ($("q-prev")) $("q-prev").addEventListener("click", () => navigateQuiz(-1));
     if ($("q-next")) $("q-next").addEventListener("click", () => navigateQuiz(1));
+    document.addEventListener("keydown", (ev) => {
+      if (!quizIsOpen() || submitting) return;
+      if (ev.altKey || ev.ctrlKey || ev.metaKey) return;
+      if (isTypingTarget(ev.target)) return;
+      if (ev.key === "ArrowLeft") {
+        ev.preventDefault();
+        navigateQuiz(-1);
+      } else if (ev.key === "ArrowRight") {
+        ev.preventDefault();
+        navigateQuiz(1);
+      }
+    });
     if ($("q-cats-toggle")) {
       $("q-cats-toggle").addEventListener("click", (ev) => {
         ev.stopPropagation();
@@ -1224,6 +1285,7 @@
     });
 
     $("btn-close-quiz").addEventListener("click", () => {
+      cancelScheduledResults();
       showQuizWrap(false);
       void refresh();
     });
