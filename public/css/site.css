@@ -2541,12 +2541,53 @@ table.tutorial-table code {
   color: var(--navy);
 }
 
+.omissas-timer-controls {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.omissas-timer-btn {
+  border: 1px solid var(--border, rgba(28, 25, 23, 0.1));
+  background: #fff;
+  color: var(--navy);
+  font: inherit;
+  font-size: 0.68rem;
+  font-weight: 700;
+  padding: 0.18rem 0.5rem;
+  border-radius: 999px;
+  cursor: pointer;
+  line-height: 1.2;
+}
+
+.omissas-timer-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.omissas-timer-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.omissas-timer-btn[aria-pressed="true"] {
+  background: var(--navy);
+  color: #fff;
+  border-color: var(--navy);
+}
+
 .omissas-timer-hint {
   margin: 0;
   font-size: 0.7rem;
   color: var(--muted);
   max-width: 11rem;
   text-align: right;
+}
+
+#omissas-quiz.atv-quiz-card {
+  touch-action: pan-y;
 }
 
 .via-panel {

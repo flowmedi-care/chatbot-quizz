@@ -16,6 +16,7 @@
       rel="stylesheet"
     />
     <link rel="stylesheet" href="/css/site.css" />
+    <link rel="stylesheet" href="/css/atividades.css" />
   </head>
   <body class="omissas-page">
     <div class="wrap omissas-wrap">
@@ -30,31 +31,51 @@
       <div id="omissas-error" class="error-banner hidden" role="alert"></div>
       <div id="omissas-loading" class="omissas-loading">Carregando sua sessão…</div>
 
-      <section id="omissas-quiz" class="omissas-card hidden" aria-live="polite">
-        <div class="omissas-card-head">
+      <section id="omissas-quiz" class="omissas-card atv-quiz-card hidden" aria-live="polite">
+        <div class="omissas-card-head atv-quiz-meta">
           <div>
             <h1 id="q-title" class="omissas-q-title">Questão</h1>
             <p id="q-meta" class="omissas-q-meta"></p>
           </div>
           <div class="omissas-head-right">
-            <p id="q-timer" class="omissas-timer" title="Tempo nesta questão">0:00</p>
+            <div class="omissas-timer-controls">
+              <p id="q-timer" class="omissas-timer" title="Tempo nesta questão">0:00</p>
+              <button type="button" id="q-timer-pause" class="omissas-timer-btn" title="Pausar cronômetro">Pausar</button>
+              <button type="button" id="q-timer-reset" class="omissas-timer-btn" title="Zerar cronômetro">Zerar</button>
+            </div>
             <p id="q-timer-hint" class="omissas-timer-hint"></p>
             <p id="q-progress" class="omissas-progress" aria-label="Progresso"></p>
           </div>
         </div>
-        <section class="solver-block">
-          <p class="solver-kicker">Enunciado</p>
-          <div id="q-statement" class="statement-box"></div>
-        </section>
-        <section class="solver-block">
-          <p class="solver-kicker">Alternativas</p>
-          <div id="q-assist" class="omissas-assist hidden">
+
+        <div class="atv-quiz-toolbar" role="toolbar" aria-label="Navegação e ferramentas">
+          <button type="button" class="atv-btn ghost atv-toolbar-nav" id="q-prev" title="Anterior (←)">‹ Ant.</button>
+          <div id="q-assist" class="atv-toolbar-shop">
             <button type="button" id="btn-assist" class="omissas-assist-btn">
               Verificar alternativa
             </button>
-            <p id="assist-hint" class="omissas-assist-hint"></p>
           </div>
-          <div id="q-choices" class="solver-choices"></div>
+          <div class="atv-toolbar-cats-wrap">
+            <button type="button" id="q-cats-toggle" class="atv-cats-toggle" aria-expanded="false" aria-controls="q-cats-panel">
+              Categorias
+              <span id="q-cats-toggle-count" class="atv-cats-toggle-count"></span>
+              <span class="atv-cats-caret" aria-hidden="true">▾</span>
+            </button>
+            <div id="q-cats-panel" class="atv-cats-panel-pop hidden" role="group" aria-label="Selecionar categorias">
+              <div id="q-categories-toggles" class="atv-cat-checks"></div>
+              <button type="button" id="q-new-cat" class="atv-btn atv-cats-add">+ Nova categoria</button>
+            </div>
+          </div>
+          <button type="button" class="atv-btn ghost atv-toolbar-nav" id="q-next" title="Próxima (→)">Próx. ›</button>
+        </div>
+
+        <section class="solver-block">
+          <p class="solver-kicker">Enunciado</p>
+          <div id="q-statement" class="statement-box atv-quiz-statement"></div>
+        </section>
+        <section class="solver-block">
+          <p class="solver-kicker">Alternativas</p>
+          <div id="q-choices" class="solver-choices atv-quiz-choices"></div>
           <p id="q-choices-hint" class="solver-hint">Clique para selecionar · duplo clique para riscar ou restaurar</p>
         </section>
         <section class="solver-actions">
@@ -64,18 +85,22 @@
             <button type="button" class="btn-conf" data-conf="chute">Chute</button>
             <span id="q-conf-hint" style="font-size:12px;color:#94a3b8;">(Seguro — padrão)</span>
           </div>
-          <label class="omissas-comment-field">
-            <span>Comentário (opcional)</span>
+          <label class="omissas-comment-field atv-quiz-justif">
+            <span>Justificativa (opcional)</span>
             <textarea
               id="q-comment"
-              rows="3"
+              rows="2"
               maxlength="2000"
-              placeholder="Ex.: justificativa da alternativa…"
+              placeholder="Justificativa…"
             ></textarea>
           </label>
           <button type="button" id="btn-resolve" class="solver-resolve" disabled>Resolver questão</button>
           <div id="q-result" class="solver-result hidden"></div>
-          <button type="button" id="btn-next-q" class="solver-next hidden">Próxima questão</button>
+          <button type="button" id="btn-next-q" class="solver-next hidden">Ver resultado</button>
+          <div class="atv-quiz-footnav" role="navigation" aria-label="Navegar questões">
+            <button type="button" class="atv-btn ghost atv-toolbar-nav" id="q-prev-bottom" title="Anterior (←)">‹ Anterior</button>
+            <button type="button" class="atv-btn ghost atv-toolbar-nav" id="q-next-bottom" title="Próxima (→)">Próxima ›</button>
+          </div>
         </section>
         <section id="via-panel" class="via-panel hidden">
           <div class="via-panel-head">
@@ -90,6 +115,9 @@
             <span id="via-status" class="via-status"></span>
           </div>
         </section>
+        <div id="q-details" class="atv-quiz-details" aria-live="polite">
+          <p id="q-details-text" class="atv-quiz-details-text">Questão sem categoria</p>
+        </div>
         <p id="q-status" class="omissas-status hidden"></p>
       </section>
 

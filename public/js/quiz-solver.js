@@ -295,45 +295,165 @@
     return `${s}s`;
   }
 
+  function isTypingTarget(el) {
+    if (!el) return false;
+    const tag = String(el.tagName || "").toUpperCase();
+    if (tag === "TEXTAREA" || tag === "SELECT") return true;
+    if (tag === "INPUT") {
+      const type = String(el.type || "text").toLowerCase();
+      return type !== "button" && type !== "checkbox" && type !== "radio" && type !== "submit";
+    }
+    return Boolean(el.isContentEditable);
+  }
+
+  function bindSwipeNav(el, handlers) {
+    if (!el || el.dataset.swipeBound) return;
+    el.dataset.swipeBound = "1";
+    let startX = 0;
+    let startY = 0;
+    let tracking = false;
+    const threshold = 56;
+
+    el.addEventListener(
+      "touchstart",
+      (e) => {
+        if (handlers.isEnabled && !handlers.isEnabled()) return;
+        if (e.touches.length !== 1) return;
+        if (isTypingTarget(e.target)) return;
+        tracking = true;
+        startX = e.touches[0].clientX;
+        startY = e.touches[0].clientY;
+      },
+      { passive: true }
+    );
+
+    el.addEventListener(
+      "touchend",
+      (e) => {
+        if (!tracking) return;
+        tracking = false;
+        if (handlers.isEnabled && !handlers.isEnabled()) return;
+        const t = e.changedTouches[0];
+        if (!t) return;
+        const dx = t.clientX - startX;
+        const dy = t.clientY - startY;
+        if (Math.abs(dx) < threshold || Math.abs(dx) <= Math.abs(dy) * 1.2) return;
+        if (dx < 0) {
+          if (handlers.onNext) handlers.onNext();
+        } else if (handlers.onPrev) {
+          handlers.onPrev();
+        }
+      },
+      { passive: true }
+    );
+  }
+
   function createTimer(els) {
     let openedAt = 0;
+    let accumulatedMs = 0;
     let frozenMs = null;
+    let paused = false;
     let tick = null;
 
-    function paint() {
-      if (!els.timer) return;
-      if (frozenMs != null) {
-        els.timer.textContent = formatQuestionMs(frozenMs);
-        return;
-      }
-      els.timer.textContent = formatQuestionMs(openedAt ? Date.now() - openedAt : 0);
+    function currentMs() {
+      if (frozenMs != null) return frozenMs;
+      if (paused) return accumulatedMs;
+      return accumulatedMs + (openedAt ? Date.now() - openedAt : 0);
     }
 
-    function stop() {
+    function stopTick() {
       if (tick) {
         clearInterval(tick);
         tick = null;
       }
     }
 
-    function start(frozen) {
-      stop();
-      openedAt = Date.now();
-      frozenMs = frozen != null && Number(frozen) > 0 ? Number(frozen) : null;
-      if (els.hint) {
-        els.hint.textContent = frozenMs ? "Tempo nesta questão" : "";
-      }
-      paint();
-      if (frozenMs != null) return;
+    function startTick() {
+      stopTick();
+      if (frozenMs != null || paused) return;
       tick = setInterval(paint, 1000);
     }
 
-    function elapsed() {
-      if (frozenMs != null) return frozenMs;
-      return openedAt ? Date.now() - openedAt : 0;
+    function syncControls() {
+      if (els.pauseBtn) {
+        const frozen = frozenMs != null;
+        els.pauseBtn.disabled = frozen;
+        els.pauseBtn.textContent = paused && !frozen ? "Continuar" : "Pausar";
+        els.pauseBtn.setAttribute("aria-pressed", paused && !frozen ? "true" : "false");
+        els.pauseBtn.title = paused ? "Continuar cronômetro" : "Pausar cronômetro";
+      }
+      if (els.resetBtn) {
+        els.resetBtn.disabled = frozenMs != null;
+      }
+      if (els.hint) {
+        if (frozenMs != null) els.hint.textContent = "Tempo nesta questão";
+        else if (paused) els.hint.textContent = "Pausado";
+        else els.hint.textContent = "";
+      }
     }
 
-    return { start, stop, paint, elapsed };
+    function paint() {
+      if (els.timer) els.timer.textContent = formatQuestionMs(currentMs());
+      syncControls();
+    }
+
+    function stop() {
+      stopTick();
+    }
+
+    function start(frozen) {
+      stopTick();
+      paused = false;
+      accumulatedMs = 0;
+      openedAt = Date.now();
+      frozenMs = frozen != null && Number(frozen) > 0 ? Number(frozen) : null;
+      paint();
+      startTick();
+    }
+
+    function pause() {
+      if (frozenMs != null || paused) return;
+      accumulatedMs = currentMs();
+      paused = true;
+      openedAt = 0;
+      stopTick();
+      paint();
+    }
+
+    function resume() {
+      if (frozenMs != null || !paused) return;
+      paused = false;
+      openedAt = Date.now();
+      startTick();
+      paint();
+    }
+
+    function togglePause() {
+      if (paused) resume();
+      else pause();
+    }
+
+    function reset() {
+      if (frozenMs != null) return;
+      accumulatedMs = 0;
+      openedAt = paused ? 0 : Date.now();
+      paint();
+    }
+
+    function elapsed() {
+      return currentMs();
+    }
+
+    if (els.pauseBtn && !els.pauseBtn.dataset.timerBound) {
+      els.pauseBtn.dataset.timerBound = "1";
+      els.pauseBtn.addEventListener("click", () => togglePause());
+    }
+    if (els.resetBtn && !els.resetBtn.dataset.timerBound) {
+      els.resetBtn.dataset.timerBound = "1";
+      els.resetBtn.addEventListener("click", () => reset());
+    }
+
+    return { start, stop, paint, elapsed, pause, resume, reset, togglePause };
   }
 
   function createViaPanel(els, deps) {
@@ -431,6 +551,8 @@
     bindChoices,
     fillResult,
     formatQuestionMs,
+    isTypingTarget,
+    bindSwipeNav,
     createTimer,
     createViaPanel
   };

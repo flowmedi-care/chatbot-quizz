@@ -52,7 +52,9 @@
 
   const timer = quizUi.createTimer({
     timer: $("q-timer"),
-    hint: $("q-timer-hint")
+    hint: $("q-timer-hint"),
+    pauseBtn: $("q-timer-pause"),
+    resetBtn: $("q-timer-reset")
   });
   const via = quizUi.createViaPanel(
     {
@@ -909,7 +911,7 @@
     const sid = q.shortId;
     void via.load(sid).then((data) => {
       if (!pending[index] || pending[index].shortId !== sid) return;
-      if (data && data.durationMs) timer.start(data.durationMs);
+      if (q.alreadyAnswered && data && data.durationMs) timer.start(data.durationMs);
     });
 
     const choices = $("q-choices");
@@ -1182,6 +1184,13 @@
         navigateQuiz(1);
       }
     });
+    if (quizUi.bindSwipeNav) {
+      quizUi.bindSwipeNav($("omissas-quiz"), {
+        isEnabled: () => quizIsOpen() && !submitting,
+        onPrev: () => navigateQuiz(-1),
+        onNext: () => navigateQuiz(1)
+      });
+    }
     if ($("q-cats-toggle")) {
       $("q-cats-toggle").addEventListener("click", (ev) => {
         ev.stopPropagation();

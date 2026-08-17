@@ -7,7 +7,9 @@
     assist: "/api/omissas-assist",
     via: (t, shortId) =>
       `/api/omissas-via?t=${encodeURIComponent(t)}&shortId=${encodeURIComponent(shortId)}`,
-    results: (t) => `/api/omissas-results?t=${encodeURIComponent(t)}`
+    results: (t) => `/api/omissas-results?t=${encodeURIComponent(t)}`,
+    userCategories: "/api/user-categories",
+    answerCategories: "/api/answer-categories"
   };
 
   const els = {
@@ -23,7 +25,6 @@
     comment: document.getElementById("q-comment"),
     assist: document.getElementById("q-assist"),
     btnAssist: document.getElementById("btn-assist"),
-    assistHint: document.getElementById("assist-hint"),
     choices: document.getElementById("q-choices"),
     choicesHint: document.getElementById("q-choices-hint"),
     btnResolve: document.getElementById("btn-resolve"),
@@ -47,8 +48,6 @@
   /** @type {any[]} */
   let pending = [];
   let index = 0;
-  let totalInSession = 0;
-  let answeredAtStart = 0;
   let submitting = false;
   let assistQty = 0;
   let userName = "";
@@ -58,13 +57,21 @@
   let assistBusy = false;
   let selectedLetter = null;
   let eliminated = new Set();
-  let lastSessionComplete = false;
+  /** @type {{ id: number, name: string }[]} */
+  let userCategories = [];
+  /** @type {Set<number>} */
+  let selectedCategoryIds = new Set();
+  /** @type {Map<string, number[]>} */
+  let draftCatsByShortId = new Map();
+  let resultsTimer = 0;
 
   const quizUi = window.PapaQuizUi;
 
   const timer = quizUi.createTimer({
     timer: els.timer,
-    hint: els.timerHint
+    hint: els.timerHint,
+    pauseBtn: document.getElementById("q-timer-pause"),
+    resetBtn: document.getElementById("q-timer-reset")
   });
   const via = quizUi.createViaPanel(
     {
@@ -82,6 +89,242 @@
       viaGetUrl: (shortId) => API.via(token, shortId)
     }
   );
+
+  function esc(s) {
+    return String(s ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  function firstName(name) {
+    const t = String(name || "").trim();
+    if (!t || t === "Participante") return "";
+    return t.split(/\s+/)[0];
+  }
+
+  function catKey(q) {
+    return String(q && q.shortId ? q.shortId : "").toUpperCase();
+  }
+
+  function sessionAllAnswered() {
+    return pending.length > 0 && pending.every((q) => q.alreadyAnswered);
+  }
+
+  function quizIsOpen() {
+    return Boolean(els.quiz && !els.quiz.classList.contains("hidden"));
+  }
+
+  function cancelScheduledResults() {
+    if (resultsTimer) {
+      window.clearTimeout(resultsTimer);
+      resultsTimer = 0;
+    }
+  }
+
+  function scheduleShowResultsIfComplete() {
+    cancelScheduledResults();
+    if (!sessionAllAnswered()) return;
+    resultsTimer = window.setTimeout(() => {
+      resultsTimer = 0;
+      void showResults();
+    }, 1100);
+  }
+
+  function saveDraftCatsForCurrent() {
+    const q = pending[index];
+    if (!q) return;
+    const ids = Array.from(selectedCategoryIds);
+    draftCatsByShortId.set(catKey(q), ids);
+    q.categoryIds = ids;
+  }
+
+  function loadDraftCatsForCurrent() {
+    const q = pending[index];
+    selectedCategoryIds = new Set();
+    if (!q) return;
+    const draft = draftCatsByShortId.get(catKey(q));
+    if (draft) {
+      selectedCategoryIds = new Set(draft.map(Number));
+      return;
+    }
+    if (Array.isArray(q.categoryIds) && q.categoryIds.length) {
+      selectedCategoryIds = new Set(q.categoryIds.map(Number));
+    }
+  }
+
+  async function persistCatsIfAnswered() {
+    const q = pending[index];
+    if (!q || !q.alreadyAnswered || !userJid) return;
+    const ids = Array.from(selectedCategoryIds);
+    q.categoryIds = ids;
+    draftCatsByShortId.set(catKey(q), ids);
+    try {
+      await fetchJson(API.answerCategories, {
+        method: "POST",
+        body: JSON.stringify({ userJid, shortId: q.shortId, categoryIds: ids })
+      });
+    } catch (e) {
+      if (els.status) {
+        els.status.classList.remove("hidden");
+        els.status.textContent = e.message || "Erro ao salvar categorias.";
+      }
+    }
+  }
+
+  function formatAssistDetail(q) {
+    if (!q || !q.assistUsed || !q.assistReveal) return null;
+    const r = q.assistReveal;
+    const L = (r.letter || r.removed || "?").toString().toUpperCase();
+    if (r.isCorrect === true) return `Utilizado item Verificar alternativa · ${L} é verdadeira`;
+    return `Utilizado item Verificar alternativa · ${L} é falsa`;
+  }
+
+  function updateQuestionDetails() {
+    const el = document.getElementById("q-details-text");
+    if (!el) return;
+    const parts = [];
+    const selected = userCategories.filter((c) => selectedCategoryIds.has(Number(c.id)));
+    if (selected.length) {
+      parts.push(`Categorias: <strong>${esc(selected.map((c) => c.name).join(", "))}</strong>`);
+    } else {
+      parts.push("Questão sem categoria");
+    }
+    const q = pending[index];
+    const assistLine = formatAssistDetail(q);
+    if (assistLine) parts.push(esc(assistLine));
+    el.innerHTML = parts.join(" · ");
+  }
+
+  function setCatsPanelOpen(open) {
+    const panel = document.getElementById("q-cats-panel");
+    const toggle = document.getElementById("q-cats-toggle");
+    if (!panel || !toggle) return;
+    panel.classList.toggle("hidden", !open);
+    toggle.setAttribute("aria-expanded", open ? "true" : "false");
+  }
+
+  function syncCatsToggleLabel() {
+    const countEl = document.getElementById("q-cats-toggle-count");
+    if (!countEl) return;
+    const n = selectedCategoryIds.size;
+    countEl.textContent = n > 0 ? String(n) : "";
+  }
+
+  function renderQuizCategoryToggles() {
+    const wrap = document.getElementById("q-categories-toggles");
+    if (!wrap) return;
+    if (!userCategories.length) {
+      wrap.innerHTML =
+        '<p class="atv-muted" style="margin:0 0 0.35rem;font-size:0.78rem;font-weight:500">Nenhuma ainda.</p>';
+    } else {
+      wrap.innerHTML = userCategories
+        .map((c) => {
+          const id = Number(c.id);
+          const on = selectedCategoryIds.has(id);
+          return `<label class="atv-cat-check">
+            <input type="checkbox" data-id="${esc(String(id))}" ${on ? "checked" : ""} />
+            <span>${esc(c.name)}</span>
+          </label>`;
+        })
+        .join("");
+      wrap.querySelectorAll('input[type="checkbox"]').forEach((input) => {
+        input.addEventListener("change", () => {
+          const id = Number(input.dataset.id);
+          if (input.checked) selectedCategoryIds.add(id);
+          else selectedCategoryIds.delete(id);
+          saveDraftCatsForCurrent();
+          if (pending[index] && pending[index].alreadyAnswered) {
+            void persistCatsIfAnswered();
+          }
+          syncCatsToggleLabel();
+          updateQuestionDetails();
+        });
+      });
+    }
+    syncCatsToggleLabel();
+    updateQuestionDetails();
+  }
+
+  async function loadUserCategories() {
+    if (!userJid) {
+      userCategories = [];
+      renderQuizCategoryToggles();
+      return;
+    }
+    try {
+      const data = await fetchJson(`${API.userCategories}?userJid=${encodeURIComponent(userJid)}`);
+      userCategories = data.categories || [];
+      renderQuizCategoryToggles();
+    } catch {
+      userCategories = [];
+      renderQuizCategoryToggles();
+    }
+  }
+
+  async function createUserCategory(name) {
+    const trimmed = String(name || "").trim();
+    if (!userJid || !trimmed) return null;
+    try {
+      const data = await fetchJson(API.userCategories, {
+        method: "POST",
+        body: JSON.stringify({ userJid, name: trimmed })
+      });
+      const cat = data.category;
+      if (cat && !userCategories.some((c) => Number(c.id) === Number(cat.id))) {
+        userCategories.push(cat);
+        userCategories.sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
+      }
+      return cat;
+    } catch (e) {
+      if (els.status) {
+        els.status.classList.remove("hidden");
+        els.status.textContent = e.message || "Erro ao criar categoria.";
+      }
+      return null;
+    }
+  }
+
+  function navigateQuiz(delta) {
+    if (submitting || !pending.length) return;
+    cancelScheduledResults();
+    saveDraftCatsForCurrent();
+    setCatsPanelOpen(false);
+    const next = index + delta;
+    if (delta > 0 && next >= pending.length && sessionAllAnswered()) {
+      void showResults();
+      return;
+    }
+    if (next < 0 || next >= pending.length) return;
+    index = next;
+    renderQuestion();
+  }
+
+  function syncQuizNavButtons() {
+    const prevBtns = [document.getElementById("q-prev"), document.getElementById("q-prev-bottom")].filter(
+      Boolean
+    );
+    const nextBtns = [document.getElementById("q-next"), document.getElementById("q-next-bottom")].filter(
+      Boolean
+    );
+    const allDone = sessionAllAnswered();
+    const canGoResults = allDone && index >= pending.length - 1;
+    const nextTitle = canGoResults ? "Ver resultado da seção (→)" : "Próxima (→)";
+    prevBtns.forEach((prev) => {
+      prev.disabled = submitting || index <= 0;
+      prev.title = "Anterior (←)";
+    });
+    nextBtns.forEach((next) => {
+      next.disabled = submitting || (index >= pending.length - 1 && !canGoResults);
+      if (next.id === "q-next-bottom") {
+        next.textContent = canGoResults ? "Ver resultado ›" : "Próxima ›";
+      } else {
+        next.textContent = canGoResults ? "Resultado ›" : "Próx. ›";
+      }
+      next.title = nextTitle;
+    });
+  }
 
   function paintCurrentChoices() {
     const q = pending[index];
@@ -102,11 +345,7 @@
     });
     quizUi.fillResult(els.result, null);
     if (els.btnNextQ) {
-      const show = Boolean(q && q.alreadyAnswered);
-      els.btnNextQ.classList.toggle("hidden", !show);
-      els.btnNextQ.textContent = lastSessionComplete
-        ? "Ver resultado da sessão"
-        : "Próxima questão";
+      els.btnNextQ.classList.toggle("hidden", !sessionAllAnswered());
     }
   }
 
@@ -132,14 +371,6 @@
         paintCurrentChoices();
       }
     });
-  }
-
-  function esc(s) {
-    return String(s ?? "")
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;");
   }
 
   document.addEventListener("click", (ev) => {
@@ -191,12 +422,6 @@
     return (u.searchParams.get("t") || u.searchParams.get("token") || "").trim();
   }
 
-  function firstName(name) {
-    const t = String(name || "").trim();
-    if (!t || t === "Participante") return "";
-    return t.split(/\s+/)[0];
-  }
-
   function applyAssistReveal(q, reveal) {
     if (!reveal) return;
     q.assistUsed = true;
@@ -217,36 +442,20 @@
 
   function syncAssistUi(q) {
     assistMode = false;
-    if (!els.assist) return;
-    if (!q || q.assistUsed) {
-      els.assist.classList.remove("hidden");
+    if (!els.assist || !els.btnAssist) return;
+    els.assist.classList.remove("hidden");
+    if (!q || q.assistUsed || q.alreadyAnswered) {
       els.btnAssist.disabled = true;
       els.btnAssist.classList.remove("active");
-      els.btnAssist.textContent = "Assistência usada nesta questão";
-      const r = q && q.assistReveal;
-      if (r) {
-        const L = (r.letter || r.removed || "?").toString().toUpperCase();
-        els.assistHint.textContent =
-          r.isCorrect === true
-            ? `${L} é verdadeira (gabarito).`
-            : `${L} é falsa — descartada.`;
-      } else {
-        els.assistHint.textContent = "";
-      }
+      els.btnAssist.textContent = q && q.alreadyAnswered ? "Respondida" : "Item usado";
+      updateQuestionDetails();
       return;
     }
-
-    els.assist.classList.remove("hidden");
     els.btnAssist.disabled = assistQty < 1 || submitting;
     els.btnAssist.classList.remove("active");
     els.btnAssist.textContent =
-      assistQty > 0
-        ? `Verificar alternativa (${assistQty} no inventário)`
-        : "Sem assistência no inventário";
-    els.assistHint.textContent =
-      assistQty > 0
-        ? "Gasta 1 consumível · escolha uma letra · máx. 1 por questão"
-        : "Compre “Eliminar uma alternativa” no Hub /loja (50 Créditos)";
+      assistQty > 0 ? `Verificar alt. (${assistQty})` : "Sem item loja";
+    updateQuestionDetails();
   }
 
   function renderQuestion() {
@@ -260,18 +469,21 @@
     els.results.classList.add("hidden");
     els.quiz.classList.remove("hidden");
     els.status.classList.add("hidden");
-    els.comment.value = "";
-    els.comment.readOnly = false;
+    els.comment.value = q.alreadyAnswered ? q.yourComment || "" : "";
+    els.comment.readOnly = Boolean(q.alreadyAnswered);
     assistMode = false;
-    lastSessionComplete = false;
     currentConfidence = q.yourConfidence || "seguro";
-    selectedLetter = null;
+    setCatsPanelOpen(false);
+    loadDraftCatsForCurrent();
+    selectedLetter = q.alreadyAnswered
+      ? String(q.yourLetter || q.yourAnswer || "").toLowerCase()
+      : null;
     eliminated = new Set();
     timer.start(q.alreadyAnswered && q.durationMs ? q.durationMs : null);
     const sid = q.shortId;
     void via.load(sid).then((data) => {
       if (!pending[index] || pending[index].shortId !== sid) return;
-      if (data && data.durationMs) timer.start(data.durationMs);
+      if (q.alreadyAnswered && data && data.durationMs) timer.start(data.durationMs);
     });
     document.querySelectorAll(".btn-conf").forEach((btn) => {
       const on = btn.dataset.conf === currentConfidence;
@@ -285,17 +497,20 @@
     const hint = document.getElementById("q-conf-hint");
     if (hint) hint.textContent = currentConfidence === "seguro" ? "(Seguro — padrão)" : "";
 
-    const doneSoFar = answeredAtStart + index;
-    const total = totalInSession;
     const hello = firstName(userName);
     els.title.textContent = `Questão #${q.shortId}`;
     const metaParts = [];
     if (hello) metaParts.push(`Olá, ${hello}`);
     if (q.creatorName) metaParts.push(`Por ${q.creatorName}`);
     els.meta.textContent = metaParts.join(" · ");
-    els.progress.textContent = `${doneSoFar + 1} / ${total}`;
+    els.progress.textContent = q.alreadyAnswered
+      ? `${index + 1} / ${pending.length} · respondida`
+      : `${index + 1} / ${pending.length}`;
 
     els.statement.innerHTML = quizUi.statementHtml(q) || "<p>(Sem enunciado)</p>";
+
+    renderQuizCategoryToggles();
+    syncQuizNavButtons();
 
     els.choices.classList.remove("assist-picking");
     quizUi.renderChoices(els.choices, q);
@@ -303,6 +518,7 @@
     if (q.assistReveal) applyAssistReveal(q, q.assistReveal);
     paintCurrentChoices();
     syncAssistUi(q);
+    updateQuestionDetails();
   }
 
   async function useAssistOnLetter(letter) {
@@ -321,8 +537,9 @@
       });
       assistQty = data.assistEliminateQty != null ? data.assistEliminateQty : Math.max(0, assistQty - 1);
       applyAssistReveal(q, data.assistReveal || { letter: letter.toUpperCase(), isCorrect: data.isCorrect });
-      els.status.textContent = data.message || "Assistência usada.";
+      els.status.classList.add("hidden");
       syncAssistUi(q);
+      updateQuestionDetails();
     } catch (e) {
       els.status.textContent = e.message || "Erro ao usar assistência.";
       assistMode = false;
@@ -339,6 +556,7 @@
 
     submitting = true;
     assistMode = false;
+    syncQuizNavButtons();
     paintCurrentChoices();
     if (els.btnAssist) els.btnAssist.disabled = true;
     els.status.classList.remove("hidden");
@@ -352,6 +570,7 @@
           shortId: q.shortId,
           letter,
           comment: els.comment.value || "",
+          categoryIds: Array.from(selectedCategoryIds),
           confidenceLevel: currentConfidence,
           durationMs: timer.elapsed()
         })
@@ -360,19 +579,25 @@
       q.alreadyAnswered = true;
       q.yourLetter = data.yourAnswer || letter;
       q.yourAnswer = data.yourAnswer || letter;
+      q.yourComment = els.comment.value || "";
       q.answerKey = data.answerKey;
       q.correct = data.correct;
+      q.categoryIds = Array.from(selectedCategoryIds);
+      draftCatsByShortId.set(catKey(q), q.categoryIds);
       selectedLetter = String(q.yourLetter || letter).toLowerCase();
-      lastSessionComplete = Boolean(data.sessionComplete);
       q.durationMs = data.durationMs != null ? data.durationMs : timer.elapsed();
       timer.start(q.durationMs);
       els.comment.readOnly = true;
       els.status.classList.add("hidden");
+      updateQuestionDetails();
       submitting = false;
+      syncQuizNavButtons();
       paintCurrentChoices();
       syncAssistUi(q);
+      if (sessionAllAnswered()) scheduleShowResultsIfComplete();
     } catch (e) {
       submitting = false;
+      syncQuizNavButtons();
       els.status.textContent = e.message || "Erro ao salvar.";
       paintCurrentChoices();
       syncAssistUi(q);
@@ -380,6 +605,7 @@
   }
 
   async function showResults() {
+    cancelScheduledResults();
     timer.stop();
     els.quiz.classList.add("hidden");
     els.loading.classList.remove("hidden");
@@ -531,9 +757,6 @@
         if (!q || q.alreadyAnswered || q.assistUsed || assistQty < 1 || submitting || assistBusy) return;
         assistMode = !assistMode;
         els.btnAssist.classList.toggle("active", assistMode);
-        els.assistHint.textContent = assistMode
-          ? "Modo verificação: toque na alternativa que quer checar (verdadeira ou falsa)."
-          : "Gasta 1 consumível · escolha uma letra · máx. 1 por questão";
         els.choices.classList.toggle("assist-picking", assistMode);
       });
     }
@@ -546,37 +769,96 @@
     if (els.btnNextQ) {
       els.btnNextQ.addEventListener("click", () => {
         if (submitting) return;
-        if (lastSessionComplete || index >= pending.length - 1) {
-          void showResults();
-          return;
-        }
-        index += 1;
-        renderQuestion();
+        void showResults();
       });
     }
+    ["q-prev", "q-prev-bottom"].forEach((id) => {
+      const btn = document.getElementById(id);
+      if (btn) btn.addEventListener("click", () => navigateQuiz(-1));
+    });
+    ["q-next", "q-next-bottom"].forEach((id) => {
+      const btn = document.getElementById(id);
+      if (btn) btn.addEventListener("click", () => navigateQuiz(1));
+    });
+    document.addEventListener("keydown", (ev) => {
+      if (!quizIsOpen() || submitting) return;
+      if (ev.altKey || ev.ctrlKey || ev.metaKey) return;
+      if (quizUi.isTypingTarget(ev.target)) return;
+      if (ev.key === "ArrowLeft") {
+        ev.preventDefault();
+        navigateQuiz(-1);
+      } else if (ev.key === "ArrowRight") {
+        ev.preventDefault();
+        navigateQuiz(1);
+      }
+    });
+    quizUi.bindSwipeNav(els.quiz, {
+      isEnabled: () => quizIsOpen() && !submitting,
+      onPrev: () => navigateQuiz(-1),
+      onNext: () => navigateQuiz(1)
+    });
+    const catsToggle = document.getElementById("q-cats-toggle");
+    if (catsToggle) {
+      catsToggle.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        const panel = document.getElementById("q-cats-panel");
+        const open = panel && !panel.classList.contains("hidden");
+        setCatsPanelOpen(!open);
+      });
+    }
+    const newCat = document.getElementById("q-new-cat");
+    if (newCat) {
+      newCat.addEventListener("click", async (ev) => {
+        ev.stopPropagation();
+        const name = window.prompt("Nome da nova categoria:");
+        if (!name) return;
+        const cat = await createUserCategory(name);
+        if (cat) {
+          selectedCategoryIds.add(Number(cat.id));
+          saveDraftCatsForCurrent();
+          if (pending[index] && pending[index].alreadyAnswered) {
+            void persistCatsIfAnswered();
+          }
+          renderQuizCategoryToggles();
+          setCatsPanelOpen(true);
+        }
+      });
+    }
+    document.addEventListener("click", (ev) => {
+      const wrap = document.querySelector(".atv-toolbar-cats-wrap");
+      if (!wrap || wrap.contains(ev.target)) return;
+      setCatsPanelOpen(false);
+    });
 
     try {
       const data = await fetchJson(API.session(token));
-      totalInSession = data.total || 0;
-      answeredAtStart = data.answeredCount || 0;
       assistQty = data.assistEliminateQty || 0;
       userName = data.userName || "";
       userJid = data.userJid || data.user_jid || "";
       if (els.greeting && userName && userName !== "Participante") {
         els.greeting.textContent = `${firstName(userName)}, suas omissas · sessão pessoal`;
       }
-      pending = (data.questions || []).filter((q) => !q.missing && !q.alreadyAnswered);
+      pending = (data.questions || []).filter((q) => !q.missing);
+      draftCatsByShortId = new Map();
+      for (const q of pending) {
+        if (Array.isArray(q.categoryIds) && q.categoryIds.length) {
+          draftCatsByShortId.set(catKey(q), q.categoryIds.map(Number));
+        }
+      }
+      await loadUserCategories();
 
       if (!pending.length) {
-        if ((data.questions || []).some((q) => q.alreadyAnswered) || data.completedAt) {
-          await showResults();
-          return;
-        }
         showError("Nenhuma questão pendente nesta sessão.");
         return;
       }
 
-      index = 0;
+      if (pending.every((q) => q.alreadyAnswered) || data.completedAt) {
+        await showResults();
+        return;
+      }
+
+      const firstOpen = pending.findIndex((q) => !q.alreadyAnswered);
+      index = firstOpen >= 0 ? firstOpen : 0;
       renderQuestion();
     } catch (e) {
       showError(e.message || "Não foi possível abrir a sessão.");
