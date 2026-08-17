@@ -465,6 +465,11 @@ body.atv-page {
   margin-top: 1.25rem;
 }
 
+.atv-quiz-card {
+  min-width: 0;
+  overflow: visible;
+}
+
 .atv-cats-panel {
   margin: 0 0 1rem;
   padding: 0.9rem 1rem;
@@ -548,7 +553,8 @@ body.atv-page {
 
 .atv-quiz-toolbar {
   display: grid;
-  grid-template-columns: auto minmax(7rem, 10.5rem) minmax(7.5rem, 1fr) auto;
+  grid-template-columns: auto minmax(0, max-content) minmax(0, 1fr) auto;
+  grid-template-areas: "prev shop cats next";
   gap: 0.5rem 0.55rem;
   align-items: center;
   margin: 0 0 0.9rem;
@@ -558,12 +564,32 @@ body.atv-page {
   background: var(--paper-2);
   position: relative;
   z-index: 3;
+  width: 100%;
+  min-width: 0;
+  overflow: visible;
+}
+
+.atv-quiz-toolbar #q-prev {
+  grid-area: prev;
+}
+
+.atv-quiz-toolbar .atv-toolbar-shop {
+  grid-area: shop;
+}
+
+.atv-quiz-toolbar .atv-toolbar-cats-wrap {
+  grid-area: cats;
+}
+
+.atv-quiz-toolbar #q-next {
+  grid-area: next;
 }
 
 .atv-toolbar-nav {
-  min-width: 4rem;
-  padding: 0.4rem 0.5rem;
-  font-size: 0.8rem;
+  min-width: 4.5rem;
+  min-height: 2.75rem;
+  padding: 0.45rem 0.65rem;
+  font-size: 0.82rem;
   font-weight: 700;
 }
 
@@ -738,23 +764,46 @@ body.atv-page {
   color: var(--danger);
 }
 
+.atv-quiz-footnav {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.85rem;
+}
+
+.atv-quiz-footnav .atv-toolbar-nav {
+  flex: 1;
+}
+
 @media (max-width: 720px) {
   .atv-quiz-toolbar {
     grid-template-columns: 1fr 1fr;
+    grid-template-areas:
+      "prev next"
+      "shop cats";
   }
-  .atv-toolbar-nav:first-child {
-    order: 1;
+  .atv-quiz-toolbar #q-prev,
+  .atv-quiz-toolbar #q-next {
+    width: 100%;
+    justify-self: stretch;
   }
-  .atv-toolbar-nav:last-child {
-    order: 2;
-    justify-self: end;
+  .atv-cats-toggle {
+    min-height: 2.75rem;
   }
-  .atv-toolbar-shop {
-    order: 3;
+  .atv-cats-panel-pop {
+    left: 0;
+    right: 0;
+    width: auto;
+    min-width: 0;
+    max-width: none;
   }
-  .atv-toolbar-cats-wrap {
-    order: 4;
-    grid-column: 1 / -1;
+}
+
+@media (max-width: 420px) {
+  .atv-quiz-toolbar {
+    grid-template-areas:
+      "prev next"
+      "shop shop"
+      "cats cats";
   }
 }
 

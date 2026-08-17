@@ -268,15 +268,6 @@
     }
   }
 
-  function gabaritoExtra(q) {
-    if (!q || !q.alreadyAnswered || q.correct == null || !q.answerKey) return null;
-    return {
-      correct: q.correct,
-      answerKey: q.answerKey,
-      yourAnswer: q.yourLetter || q.yourAnswer || ""
-    };
-  }
-
   function sessionAllAnswered() {
     return pending.length > 0 && pending.every((q) => q.alreadyAnswered);
   }
@@ -347,7 +338,7 @@
     return `Utilizado item Verificar alternativa · ${L} é falsa`;
   }
 
-  function updateQuestionDetails(extra) {
+  function updateQuestionDetails() {
     const el = $("q-details-text");
     if (!el) return;
     const parts = [];
@@ -360,18 +351,6 @@
     const q = pending[index];
     const assistLine = formatAssistDetail(q);
     if (assistLine) parts.push(esc(assistLine));
-    const gabarito = extra && extra.correct != null && extra.answerKey ? extra : gabaritoExtra(q);
-    if (gabarito && gabarito.correct != null && gabarito.answerKey) {
-      const key = String(gabarito.answerKey).toUpperCase();
-      const yours = String(gabarito.yourAnswer || "").toUpperCase();
-      if (gabarito.correct) {
-        parts.push(`<span class="ok">A letra ${esc(key)} está correta</span>`);
-      } else {
-        parts.push(
-          `<span class="bad">Você marcou ${esc(yours || "—")}</span> · <span class="ok">a letra ${esc(key)} está correta</span>`
-        );
-      }
-    }
     el.innerHTML = parts.join(" · ");
   }
 
@@ -391,19 +370,24 @@
   }
 
   function syncQuizNavButtons() {
-    const prev = $("q-prev");
-    const next = $("q-next");
+    const prevBtns = [$("q-prev"), $("q-prev-bottom")].filter(Boolean);
+    const nextBtns = [$("q-next"), $("q-next-bottom")].filter(Boolean);
     const allDone = sessionAllAnswered();
-    if (prev) {
+    const canGoResults = allDone && index >= pending.length - 1;
+    const nextTitle = canGoResults ? "Ver resultado da seção (→)" : "Próxima (→)";
+    prevBtns.forEach((prev) => {
       prev.disabled = submitting || index <= 0;
       prev.title = "Anterior (←)";
-    }
-    if (next) {
-      const canGoResults = allDone && index >= pending.length - 1;
+    });
+    nextBtns.forEach((next) => {
       next.disabled = submitting || (index >= pending.length - 1 && !canGoResults);
-      next.textContent = canGoResults ? "Resultado ›" : "Próx. ›";
-      next.title = canGoResults ? "Ver resultado da seção (→)" : "Próxima (→)";
-    }
+      if (next.id === "q-next-bottom") {
+        next.textContent = canGoResults ? "Ver resultado ›" : "Próxima ›";
+      } else {
+        next.textContent = canGoResults ? "Resultado ›" : "Próx. ›";
+      }
+      next.title = nextTitle;
+    });
   }
 
   function addDaysIso(iso, n) {
@@ -760,11 +744,11 @@
       selected: selectedLetter,
       eliminated,
       locked: Boolean(q && q.alreadyAnswered) || submitting,
-      answerKey: q && q.answerKey,
+      answerKey: "",
       yourLetter: (q && (q.yourLetter || q.yourAnswer)) || selectedLetter,
-      showResult: Boolean(q && q.alreadyAnswered && q.answerKey)
+      showResult: false
     });
-    quizUi.fillResult($("q-result"), q);
+    quizUi.fillResult($("q-result"), null);
     const resultsBtn = $("btn-atv-results");
     if (resultsBtn) {
       resultsBtn.classList.toggle("hidden", !sessionAllAnswered());
@@ -935,7 +919,7 @@
     if (q.assistReveal) applyAssistReveal(q, q.assistReveal);
     paintCurrentChoices();
     syncAssistUi(q);
-    updateQuestionDetails(gabaritoExtra(q));
+    updateQuestionDetails();
   }
 
   async function useAssistOnLetter(letter) {
@@ -1003,11 +987,7 @@
       timer.start(q.durationMs);
       $("q-status").classList.add("hidden");
       $("q-comment").readOnly = true;
-      updateQuestionDetails({
-        correct: data.correct,
-        answerKey: data.answerKey,
-        yourAnswer: data.yourAnswer || letter
-      });
+      updateQuestionDetails();
       submitting = false;
       syncQuizNavButtons();
       paintCurrentChoices();
@@ -1182,8 +1162,14 @@
         }
       });
     }
-    if ($("q-prev")) $("q-prev").addEventListener("click", () => navigateQuiz(-1));
-    if ($("q-next")) $("q-next").addEventListener("click", () => navigateQuiz(1));
+    ["q-prev", "q-prev-bottom"].forEach((id) => {
+      const btn = $(id);
+      if (btn) btn.addEventListener("click", () => navigateQuiz(-1));
+    });
+    ["q-next", "q-next-bottom"].forEach((id) => {
+      const btn = $(id);
+      if (btn) btn.addEventListener("click", () => navigateQuiz(1));
+    });
     document.addEventListener("keydown", (ev) => {
       if (!quizIsOpen() || submitting) return;
       if (ev.altKey || ev.ctrlKey || ev.metaKey) return;

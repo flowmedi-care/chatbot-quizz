@@ -83,7 +83,8 @@ import {
   getDiscussionPostByQuestionId,
   insertDiscussionComment,
   listDiscussionCommentsForPost,
-  formatDiscussionCommentsTree
+  formatDiscussionCommentsTree,
+  markDiscussionCommentsSharedToWa
 } from "./supabase";
 import {
   computeNextRunAt,
@@ -689,7 +690,7 @@ async function maybeWakeCadernoAfterAnswer(sock: WASocket, rawShortId: string): 
 
 function buildResultMessage(
   result: Awaited<ReturnType<typeof getQuestionResult>>,
-  opts?: { statementSentSeparately?: boolean }
+  opts?: { statementSentSeparately?: boolean; discussionTree?: string }
 ): string {
   const keys = buildDistributionKeys(result.questionType);
   const distributionLines = keys.map((key) => `${key} - ${result.distribution[key] ?? 0}`);
@@ -737,7 +738,10 @@ function buildResultMessage(
     wrong,
     "",
     "Comentario do autor:",
-    explanationBlock
+    explanationBlock,
+    ...(opts?.discussionTree
+      ? ["", `[Discussão] #${result.shortId}`, "Comentários já registrados (site/adiantar/WhatsApp):", opts.discussionTree]
+      : [])
   ].join("\n");
 }
 
@@ -831,6 +835,27 @@ async function publishQuestionResult(
   const statementText = result.statementText?.trim() ?? "";
   let statementSentSeparately = false;
   const statementIds: string[] = [];
+  const isGroup = jid.endsWith("@g.us");
+
+  let discussionTree = "";
+  let discussionCommentIds: number[] = [];
+  if (isGroup && result.questionId && options.discussionSource) {
+    try {
+      const post = await upsertDiscussionPost({
+        questionId: result.questionId,
+        shortId: result.shortId,
+        groupJid: jid,
+        source: options.discussionSource
+      });
+      if (post) {
+        const comments = await listDiscussionCommentsForPost(post.id);
+        discussionTree = formatDiscussionCommentsTree(comments);
+        discussionCommentIds = comments.map((c) => c.id);
+      }
+    } catch (e) {
+      console.warn("[discussions] load digest:", (e as Error).message);
+    }
+  }
 
   if (hasStatementMedia) {
     const mediaId = await sendStatementMedia(sock, jid, result);
@@ -848,12 +873,14 @@ async function publishQuestionResult(
 
   const header = options.headerPrefix ? `${options.headerPrefix}\n` : "";
   const resultSent = await sock.sendMessage(jid, {
-    text: `${header}${buildResultMessage(result, { statementSentSeparately })}`
+    text: `${header}${buildResultMessage(result, {
+      statementSentSeparately,
+      discussionTree
+    })}`
   });
   const resultId = resultSent?.key?.id ? String(resultSent.key.id) : null;
   const explanationId = await sendExplanationMedia(sock, jid, result);
 
-  const isGroup = jid.endsWith("@g.us");
   if (isGroup && result.questionId) {
     for (const waId of statementIds) {
       await insertQuestionWaMessage({
@@ -882,49 +909,48 @@ async function publishQuestionResult(
         role: "explanation_media"
       });
     }
-    if (options.discussionSource) {
-      try {
-        const post = await upsertDiscussionPost({
+    if (discussionTree) {
+      const discText = [
+        `[Discussão] #${result.shortId}`,
+        "Comentários já registrados (site/adiantar/WhatsApp):",
+        discussionTree
+      ].join("\n");
+      let discSent: Awaited<ReturnType<WASocket["sendMessage"]>> | undefined;
+      if (resultId) {
+        try {
+          discSent = await sock.sendMessage(
+            jid,
+            { text: discText },
+            {
+              quoted: {
+                key: { remoteJid: jid, id: resultId, fromMe: true },
+                message: { conversation: `Resultado da Questao #${result.shortId}` }
+              }
+            }
+          );
+        } catch (e) {
+          console.warn("[discussions] quoted digest failed:", (e as Error).message);
+        }
+      }
+      if (!discSent?.key?.id) {
+        try {
+          discSent = await sock.sendMessage(jid, { text: discText });
+        } catch (e) {
+          console.warn("[discussions] plain digest failed:", (e as Error).message);
+        }
+      }
+      const discId = discSent?.key?.id ? String(discSent.key.id) : null;
+      if (discId) {
+        await insertQuestionWaMessage({
           questionId: result.questionId,
           shortId: result.shortId,
           groupJid: jid,
-          source: options.discussionSource
+          waMessageId: discId,
+          role: "statement"
         });
-        if (post) {
-          const comments = await listDiscussionCommentsForPost(post.id);
-          const tree = formatDiscussionCommentsTree(comments);
-          if (tree) {
-            const discText = [
-              `[Discussão] #${result.shortId}`,
-              "Comentários já registrados (site/adiantar/WhatsApp):",
-              tree
-            ].join("\n");
-            const discSent = await sock.sendMessage(
-              jid,
-              { text: discText },
-              resultId
-                ? {
-                    quoted: {
-                      key: { remoteJid: jid, id: resultId, fromMe: true },
-                      message: { conversation: `Resultado da Questao #${result.shortId}` }
-                    }
-                  }
-                : undefined
-            );
-            const discId = discSent?.key?.id ? String(discSent.key.id) : null;
-            if (discId) {
-              await insertQuestionWaMessage({
-                questionId: result.questionId,
-                shortId: result.shortId,
-                groupJid: jid,
-                waMessageId: discId,
-                role: "statement"
-              });
-            }
-          }
-        }
-      } catch (e) {
-        console.warn("[discussions] upsert/send digest:", (e as Error).message);
+      }
+      if (discussionCommentIds.length) {
+        await markDiscussionCommentsSharedToWa(discussionCommentIds);
       }
     }
   }

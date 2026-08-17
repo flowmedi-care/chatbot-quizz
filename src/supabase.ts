@@ -4277,7 +4277,8 @@ export async function upsertDiscussionPost(input: {
   groupJid: string;
   source: DiscussionPostSource;
 }): Promise<DiscussionPost | null> {
-  const { data: existing, error: findErr } = await supabase
+  const shortId = String(input.shortId || "").trim().toUpperCase();
+  const { data: byQuestion, error: findErr } = await supabase
     .from("discussion_posts")
     .select(DISCUSSION_POST_SELECT)
     .eq("question_id", input.questionId)
@@ -4293,6 +4294,20 @@ export async function upsertDiscussionPost(input: {
     throw new Error(`Erro ao buscar discussion_post: ${findErr.message}`);
   }
 
+  let existing = byQuestion;
+  if (!existing && shortId) {
+    const { data: byShort, error: shortErr } = await supabase
+      .from("discussion_posts")
+      .select(DISCUSSION_POST_SELECT)
+      .eq("short_id", shortId)
+      .maybeSingle();
+    if (shortErr) {
+      if (discussionsMissingTable(shortErr)) return null;
+      throw new Error(`Erro ao buscar discussion_post: ${shortErr.message}`);
+    }
+    existing = byShort;
+  }
+
   const nowIso = new Date().toISOString();
   const promoteToFeed = isFeedSource(input.source);
 
@@ -4302,6 +4317,15 @@ export async function upsertDiscussionPost(input: {
     if (promoteToFeed) {
       if (!isFeedSource(prevSource)) patch.source = input.source;
       if (existing.feed_at == null) patch.feed_at = nowIso;
+    }
+    if (Number(existing.question_id) !== input.questionId) {
+      patch.question_id = input.questionId;
+    }
+    if (shortId && String(existing.short_id || "").toUpperCase() !== shortId) {
+      patch.short_id = shortId;
+    }
+    if (input.groupJid && String(existing.group_jid || "") !== input.groupJid) {
+      patch.group_jid = input.groupJid;
     }
 
     if (Object.keys(patch).length > 0) {
@@ -4341,7 +4365,16 @@ export async function upsertDiscussionPost(input: {
         .select(DISCUSSION_POST_SELECT)
         .eq("question_id", input.questionId)
         .maybeSingle();
-      return again ? mapDiscussionPost(again as Record<string, unknown>) : null;
+      if (again) return mapDiscussionPost(again as Record<string, unknown>);
+      if (shortId) {
+        const { data: byShort } = await supabase
+          .from("discussion_posts")
+          .select(DISCUSSION_POST_SELECT)
+          .eq("short_id", shortId)
+          .maybeSingle();
+        if (byShort) return mapDiscussionPost(byShort as Record<string, unknown>);
+      }
+      return null;
     }
     throw new Error(`Erro ao criar discussion_post: ${error.message}`);
   }
@@ -4460,6 +4493,12 @@ export function formatDiscussionCommentsTree(
     }
   }
   walk("root", 0);
+  if (!lines.length) {
+    for (const c of comments) {
+      const author = (c.authorName && c.authorName.trim()) || "Participante";
+      lines.push(`• ${author}: ${c.body}`);
+    }
+  }
   let text = lines.join("\n");
   if (text.length > maxChars) text = `${text.slice(0, maxChars - 1)}…`;
   return text;
@@ -4542,6 +4581,19 @@ export async function markDiscussionCommentSharedToWa(commentId: number): Promis
     .is("shared_to_wa_at", null);
   if (error) {
     console.warn("[discussions] mark shared:", error.message);
+  }
+}
+
+export async function markDiscussionCommentsSharedToWa(commentIds: number[]): Promise<void> {
+  const ids = [...new Set(commentIds.filter((id) => Number.isFinite(id) && id > 0))];
+  if (!ids.length) return;
+  const { error } = await supabase
+    .from("discussion_comments")
+    .update({ shared_to_wa_at: new Date().toISOString() })
+    .in("id", ids)
+    .is("shared_to_wa_at", null);
+  if (error) {
+    console.warn("[discussions] mark shared batch:", error.message);
   }
 }
 

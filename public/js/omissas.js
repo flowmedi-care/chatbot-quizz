@@ -96,11 +96,11 @@
       selected: selectedLetter,
       eliminated,
       locked: Boolean(q && q.alreadyAnswered) || submitting,
-      answerKey: q && q.answerKey,
+      answerKey: "",
       yourLetter: (q && (q.yourLetter || q.yourAnswer)) || selectedLetter,
-      showResult: Boolean(q && q.alreadyAnswered && q.answerKey)
+      showResult: false
     });
-    quizUi.fillResult(els.result, q);
+    quizUi.fillResult(els.result, null);
     if (els.btnNextQ) {
       const show = Boolean(q && q.alreadyAnswered);
       els.btnNextQ.classList.toggle("hidden", !show);
