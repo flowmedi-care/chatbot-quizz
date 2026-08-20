@@ -305,11 +305,144 @@
     });
   }
 
+  function jidKey(jid) {
+    const raw = String(jid || "")
+      .trim()
+      .toLowerCase();
+    const at = raw.indexOf("@");
+    if (at < 0) return raw;
+    return `${raw.slice(0, at).split(":")[0]}@${raw.slice(at + 1)}`;
+  }
+
+  function looksLikeRawParticipantName(s) {
+    const t = String(s || "").trim();
+    if (!t) return true;
+    if (/^participante$/i.test(t)) return true;
+    if (/^caderno:/i.test(t)) return true;
+    if (/^\d{8,}$/.test(t) || /^\+?\d{8,20}$/.test(t)) return true;
+    if (t.includes("@")) return true;
+    return false;
+  }
+
+  function normalizePersonName(s) {
+    return String(s || "")
+      .trim()
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/\s+/g, " ");
+  }
+
+  function participantIdentityKey(p) {
+    const name = String(p.userName || "").trim();
+    if (!looksLikeRawParticipantName(name)) return `name:${normalizePersonName(name)}`;
+    return `jid:${jidKey(p.userJid || p.userJidKey)}`;
+  }
+
+  function uniqueParticipantsFromAnswers(answers) {
+    const m = new Map();
+    for (const a of answers) {
+      if (!m.has(a.userJid)) m.set(a.userJid, { userJid: a.userJid, userName: a.userName });
+    }
+    return Array.from(m.values()).sort((a, b) =>
+      a.userName.localeCompare(b.userName, "pt-BR")
+    );
+  }
+
+  function mergedParticipants() {
+    const parts =
+      reportData && reportData.participants && reportData.participants.length
+        ? reportData.participants
+        : uniqueParticipantsFromAnswers((reportData && reportData.answers) || []);
+    const byKey = new Map();
+    for (const p of parts) {
+      const key = participantIdentityKey(p);
+      const cur = byKey.get(key);
+      if (!cur) {
+        byKey.set(key, {
+          userJid: p.userJid,
+          userName: p.userName,
+          aliasJids: [p.userJid]
+        });
+        continue;
+      }
+      if (!cur.aliasJids.includes(p.userJid)) cur.aliasJids.push(p.userJid);
+      if (looksLikeRawParticipantName(cur.userName) && !looksLikeRawParticipantName(p.userName)) {
+        cur.userName = p.userName;
+        cur.userJid = p.userJid;
+      }
+    }
+    if (reportData && reportData.answers) {
+      for (const a of reportData.answers) {
+        if (looksLikeRawParticipantName(a.userName)) continue;
+        const key = `name:${normalizePersonName(a.userName)}`;
+        const cur = byKey.get(key);
+        if (!cur) continue;
+        if (!cur.aliasJids.includes(a.userJid)) cur.aliasJids.push(a.userJid);
+      }
+    }
+    return Array.from(byKey.values()).sort((a, b) =>
+      a.userName.localeCompare(b.userName, "pt-BR")
+    );
+  }
+
+  function aliasKeysForScope(scopeJid) {
+    const keys = new Set([jidKey(scopeJid)]);
+    const hit = mergedParticipants().find(
+      (p) =>
+        p.userJid === scopeJid ||
+        (p.aliasJids || []).some((j) => j === scopeJid || jidKey(j) === jidKey(scopeJid))
+    );
+    if (hit) {
+      for (const j of hit.aliasJids || []) keys.add(jidKey(j));
+    }
+    const name = nomeParticipante(scopeJid);
+    if (!looksLikeRawParticipantName(name)) {
+      const nn = normalizePersonName(name);
+      for (const a of (reportData && reportData.answers) || []) {
+        if (normalizePersonName(a.userName) === nn) keys.add(jidKey(a.userJid));
+      }
+    }
+    return keys;
+  }
+
+  function answerBelongsToScope(answer, scopeJid) {
+    if (!scopeJid || scopeJid === "__all__") return true;
+    return aliasKeysForScope(scopeJid).has(jidKey(answer.userJid || answer.userJidKey));
+  }
+
+  function pickAnswerForScope(answersHere, scopeJid) {
+    const hits = (answersHere || []).filter((a) => answerBelongsToScope(a, scopeJid));
+    if (!hits.length) return null;
+    if (hits.length === 1) return hits[0];
+    const withComment = hits.find((a) => a.answerComment);
+    const base = withComment || hits[0];
+    const catMap = new Map();
+    for (const h of hits) {
+      for (const c of h.categories || []) catMap.set(Number(c.id), c);
+    }
+    return { ...base, categories: [...catMap.values()] };
+  }
+
   function userAnswerFor(shortId, userJid) {
     if (!reportData || !reportData.answers) return null;
-    return reportData.answers.find(
-      (a) => a.questionShortId === shortId && a.userJid === userJid
+    const here = reportData.answers.filter((a) => a.questionShortId === shortId);
+    return pickAnswerForScope(here, userJid);
+  }
+
+  function categoriesForScope(scopeJid) {
+    const byUser = (reportData && reportData.categoriesByUser) || {};
+    const hit = mergedParticipants().find(
+      (p) =>
+        p.userJid === scopeJid ||
+        (p.aliasJids || []).some((j) => j === scopeJid || jidKey(j) === jidKey(scopeJid))
     );
+    const jids = hit ? hit.aliasJids : [scopeJid];
+    const map = new Map();
+    for (const j of jids) {
+      for (const c of byUser[j] || []) map.set(Number(c.id), c);
+    }
+    return Array.from(map.values());
   }
 
   function questionPasses(shortId) {
@@ -380,10 +513,7 @@
       return;
     }
     els.questionsFilters.classList.remove("hidden");
-    const parts =
-      reportData.participants && reportData.participants.length
-        ? reportData.participants
-        : uniqueParticipantsFromAnswers(reportData.answers || []);
+    const parts = mergedParticipants();
 
     els.filterPerson.innerHTML =
       '<option value="__all__">Todos</option>' +
@@ -397,16 +527,6 @@
     updateOutcomeOptions();
   }
 
-  function uniqueParticipantsFromAnswers(answers) {
-    const m = new Map();
-    for (const a of answers) {
-      if (!m.has(a.userJid)) m.set(a.userJid, { userJid: a.userJid, userName: a.userName });
-    }
-    return Array.from(m.values()).sort((a, b) =>
-      a.userName.localeCompare(b.userName, "pt-BR")
-    );
-  }
-
   function populateReportSelect() {
     if (!els.reportPerson) return;
     if (!reportData || !(reportData.questions && reportData.questions.length)) {
@@ -416,9 +536,7 @@
       }
       return;
     }
-    const parts = reportData.participants && reportData.participants.length
-      ? reportData.participants
-      : uniqueParticipantsFromAnswers(reportData.answers || []);
+    const parts = mergedParticipants();
 
     els.reportPerson.innerHTML =
       '<option value="__all__">Todos (tabela consolidada)</option>' +
@@ -626,9 +744,7 @@
   function categoryOptionsHtml(selectedKey) {
     const scopeJid = els.reportPerson ? els.reportPerson.value : "";
     const catalog =
-      reportData && reportData.categoriesByUser && scopeJid && scopeJid !== "__all__"
-        ? reportData.categoriesByUser[scopeJid] || []
-        : [];
+      scopeJid && scopeJid !== "__all__" ? categoriesForScope(scopeJid) : [];
     const opts = [
       `<option value="__all__">Todas</option>`,
       `<option value="__none__">Sem categorias</option>`,
@@ -1143,7 +1259,7 @@
     lines.push(`> Filtros: ${qs.length} de ${qsAll.length} questão(ões)`);
     lines.push("");
     lines.push(
-      "Este relatório usa **respostas registradas pelo WhatsApp** (tabela `answers`). Respostas feitas só no navegador não entram aqui."
+      "Este relatório usa respostas gravadas na tabela `answers` (WhatsApp, omissas/site e app de estudo, quando a identidade foi salva). Comentário da resposta entra em Discussões se não houver o mesmo texto na thread."
     );
     lines.push("");
 
@@ -1152,15 +1268,20 @@
       lines.push("");
       lines.push(`- Questões no relatório: **${qs.length}**`);
       lines.push(`- Registros de resposta: **${ans.length}**`);
-      lines.push(`- Participantes distintos: **${new Set(ans.map((a) => a.userJid)).size}**`);
+      lines.push(`- Participantes distintos: **${new Set(ans.map((a) => participantIdentityKey(a))).size}**`);
       lines.push("");
     } else {
-      const mine = ans.filter((a) => a.userJid === scopeJid);
-      const ok = mine.filter((a) => a.correct).length;
-      const bad = mine.filter((a) => !a.correct).length;
+      const mine = ans.filter((a) => answerBelongsToScope(a, scopeJid));
+      const byQ = new Map();
+      for (const a of mine) {
+        if (!byQ.has(a.questionShortId)) byQ.set(a.questionShortId, a);
+      }
+      const uniqueMine = [...byQ.values()];
+      const ok = uniqueMine.filter((a) => a.correct).length;
+      const bad = uniqueMine.filter((a) => !a.correct).length;
       lines.push("## Sumário (esta pessoa)");
       lines.push("");
-      lines.push(`- Respostas registradas: **${mine.length}**`);
+      lines.push(`- Respostas registradas: **${uniqueMine.length}**`);
       lines.push(`- Acertos: **${ok}** · Erros: **${bad}**`);
       lines.push("");
     }
@@ -1244,16 +1365,21 @@
       const answersHere = ans.filter((a) => a.questionShortId === shortId);
 
       if (scopeJid === "__all__") {
-        lines.push("### Respostas (WhatsApp)");
+        lines.push("### Respostas");
         lines.push("");
         lines.push("| Participante | Marcou | Gabarito | Resultado | Comentário | Categorias |");
         lines.push("| --- | --- | --- | --- | --- | --- |");
-        if (!answersHere.length) {
+        const rowsForTable = mergedParticipants()
+          .map((p) => {
+            const row = pickAnswerForScope(answersHere, p.userJid);
+            return row ? { ...row, userName: p.userName } : null;
+          })
+          .filter(Boolean)
+          .sort((a, b) => a.userName.localeCompare(b.userName, "pt-BR"));
+        if (!rowsForTable.length) {
           lines.push("| — | — | — | Nenhuma resposta registrada | — | — |");
         } else {
-          for (const row of answersHere.sort((a, b) =>
-            a.userName.localeCompare(b.userName, "pt-BR")
-          )) {
+          for (const row of rowsForTable) {
             const commentCell = row.answerComment ? mdCell(row.answerComment) : "—";
             const catsCell =
               Array.isArray(row.categories) && row.categories.length
@@ -1266,7 +1392,7 @@
         }
         lines.push("");
       } else {
-        const row = answersHere.find((a) => a.userJid === scopeJid);
+        const row = pickAnswerForScope(answersHere, scopeJid);
         lines.push("### Esta pessoa");
         lines.push("");
         if (!row) {
@@ -1289,9 +1415,22 @@
 
       if (els.reportIncludeDiscussions && els.reportIncludeDiscussions.checked) {
         const thread = (reportData.discussions && reportData.discussions[shortId]) || [];
+        const seenBodies = new Set(
+          thread.map((c) => String(c.body || "").trim().toLowerCase()).filter(Boolean)
+        );
+        const answerNotes = [];
+        for (const a of answersHere) {
+          if (scopeJid !== "__all__" && !answerBelongsToScope(a, scopeJid)) continue;
+          const body = a.answerComment ? String(a.answerComment).trim() : "";
+          if (!body) continue;
+          const k = body.toLowerCase();
+          if (seenBodies.has(k)) continue;
+          seenBodies.add(k);
+          answerNotes.push({ authorName: a.userName, body });
+        }
         lines.push("### Discussões");
         lines.push("");
-        if (!thread.length) {
+        if (!thread.length && !answerNotes.length) {
           lines.push("*Sem discussões registradas para esta questão.*");
           lines.push("");
         } else {
@@ -1318,6 +1457,9 @@
             }
           }
           walk("root", 0);
+          for (const n of answerNotes) {
+            lines.push(`- **${mdCell(n.authorName)}** [resposta]: ${mdCell(n.body)}`);
+          }
           lines.push("");
         }
       }
@@ -1349,9 +1491,17 @@
   }
 
   function nomeParticipante(jid) {
-    const p = (reportData.participants || []).find((x) => x.userJid === jid);
+    const merged = mergedParticipants().find(
+      (p) => p.userJid === jid || (p.aliasJids || []).some((x) => x === jid || jidKey(x) === jidKey(jid))
+    );
+    if (merged) return merged.userName;
+    const p = (reportData.participants || []).find(
+      (x) => x.userJid === jid || jidKey(x.userJid) === jidKey(jid)
+    );
     if (p) return p.userName;
-    const a = (reportData.answers || []).find((x) => x.userJid === jid);
+    const a = (reportData.answers || []).find(
+      (x) => x.userJid === jid || jidKey(x.userJid) === jidKey(jid)
+    );
     return a ? a.userName : jid;
   }
 
@@ -2903,7 +3053,19 @@
       reportData = fresh;
       populateFilters();
       populateReportSelect();
-      if (els.reportPerson) els.reportPerson.value = scope;
+      if (els.reportPerson) {
+        const opts = [...els.reportPerson.options].map((o) => o.value);
+        if (opts.includes(scope)) {
+          els.reportPerson.value = scope;
+        } else {
+          const hit = mergedParticipants().find(
+            (p) =>
+              p.userJid === scope ||
+              (p.aliasJids || []).some((j) => j === scope || jidKey(j) === jidKey(scope))
+          );
+          if (hit && opts.includes(hit.userJid)) els.reportPerson.value = hit.userJid;
+        }
+      }
       if (els.reportCaderno && [...els.reportCaderno.options].some((o) => o.value === keepCaderno)) {
         els.reportCaderno.value = keepCaderno;
       }
@@ -2911,7 +3073,7 @@
       collectReportCategoryRulesFromDom();
       renderReportCategoryRules();
       if (els.reportStatus) els.reportStatus.textContent = "Gerando ZIP… pode levar alguns segundos.";
-      await buildReportZip(scope);
+      await buildReportZip(els.reportPerson ? els.reportPerson.value : scope);
       if (els.reportStatus) els.reportStatus.textContent = "Download iniciado.";
       closeReportModal();
     } catch (e) {

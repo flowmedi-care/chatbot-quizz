@@ -6,7 +6,7 @@
  * POST /api/discussions            → { postId? | shortId?, userJid, body, parentId? }
  * POST /api/discussions/share-whatsapp → { commentId, userJid }
  */
-const { pickTargetGroupJid } = require("./_lib.js");
+const { pickTargetGroupJid, fetchAllIn } = require("./_lib.js");
 const {
   getMembersForGroup,
   getNameHintsForGroup,
@@ -637,11 +637,10 @@ async function listThreadsForShortIds(supabase, shortIds) {
   const discussions = {};
   if (!ids.length) return discussions;
 
-  const { data: posts, error } = await supabase
-    .from("discussion_posts")
-    .select("id, short_id")
-    .in("short_id", ids);
-  if (error) {
+  let posts;
+  try {
+    posts = await fetchAllIn(supabase, "discussion_posts", "id, short_id", "short_id", ids);
+  } catch (error) {
     if (discussionsMissing(error)) return discussions;
     throw error;
   }
@@ -651,14 +650,21 @@ async function listThreadsForShortIds(supabase, shortIds) {
   for (const p of posts) {
     postIdToShort.set(Number(p.id), String(p.short_id).toUpperCase());
   }
-  const { data: comments, error: cErr } = await supabase
-    .from("discussion_comments")
-    .select(
-      "id, post_id, parent_id, author_jid, author_name, body, source, wa_message_id, shared_to_wa_at, created_at"
-    )
-    .in("post_id", [...postIdToShort.keys()])
-    .order("created_at", { ascending: true });
-  if (cErr) throw cErr;
+  let comments;
+  try {
+    comments = await fetchAllIn(
+      supabase,
+      "discussion_comments",
+      "id, post_id, parent_id, author_jid, author_name, body, source, wa_message_id, shared_to_wa_at, created_at",
+      "post_id",
+      [...postIdToShort.keys()]
+    );
+  } catch (cErr) {
+    if (discussionsMissing(cErr)) return discussions;
+    throw cErr;
+  }
+
+  comments.sort((a, b) => String(a.created_at || "").localeCompare(String(b.created_at || "")));
 
   for (const row of comments || []) {
     const shortId = postIdToShort.get(Number(row.post_id));

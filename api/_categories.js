@@ -1,6 +1,7 @@
 /**
  * Helpers de categorias pessoais (user_categories + answer_categories).
  */
+const { fetchAllIn } = require("./_lib.js");
 
 function normalizeCategoryName(text) {
   return String(text || "")
@@ -198,11 +199,14 @@ async function mapCategoriesByAnswerIds(supabase, answerIds) {
   const ids = [...new Set((answerIds || []).map((x) => Number(x)).filter((n) => Number.isFinite(n)))];
   if (!ids.length) return map;
 
-  const { data, error } = await supabase
-    .from("answer_categories")
-    .select("answer_id, user_categories(id, name)")
-    .in("answer_id", ids);
-  if (error) throw error;
+  const data = await fetchAllIn(
+    supabase,
+    "answer_categories",
+    "answer_id, user_categories(id, name)",
+    "answer_id",
+    ids,
+    { orderColumn: "answer_id" }
+  );
 
   for (const row of data || []) {
     const aid = Number(row.answer_id);

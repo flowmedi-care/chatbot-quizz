@@ -1,4 +1,11 @@
-const { getClient, pickTargetGroupJid, applyCors, fetchQuestionsForGroup } = require("./_lib.js");
+const {
+  getClient,
+  pickTargetGroupJid,
+  applyCors,
+  fetchQuestionsForGroup,
+  fetchAllIn,
+  jidComparableKey
+} = require("./_lib.js");
 const { mapCategoriesByAnswerIds, listUserCategories } = require("./_categories.js");
 const { listThreadsForShortIds } = require("./_discussions.js");
 
@@ -46,13 +53,13 @@ module.exports = async (req, res) => {
     const questionIds = rows.map((r) => r.id);
     let answersRaw = [];
     if (questionIds.length) {
-      const { data: ans, error: aErr } = await supabase
-        .from("answers")
-        .select("id, question_id, question_short_id, user_jid, user_name, answer_letter, answer_comment")
-        .in("question_id", questionIds);
-
-      if (aErr) throw aErr;
-      answersRaw = ans || [];
+      answersRaw = await fetchAllIn(
+        supabase,
+        "answers",
+        "id, question_id, question_short_id, user_jid, user_name, answer_letter, answer_comment",
+        "question_id",
+        questionIds
+      );
     }
 
     const answerIds = answersRaw.map((r) => Number(r.id)).filter((n) => Number.isFinite(n));
@@ -65,11 +72,14 @@ module.exports = async (req, res) => {
 
     const cadernoByQuestionId = new Map();
     if (questionIds.length) {
-      const { data: cqRows, error: cqErr } = await supabase
-        .from("caderno_questions")
-        .select("published_question_id, caderno_id")
-        .in("published_question_id", questionIds);
-      if (!cqErr) {
+      try {
+        const cqRows = await fetchAllIn(
+          supabase,
+          "caderno_questions",
+          "published_question_id, caderno_id",
+          "published_question_id",
+          questionIds
+        );
         for (const row of cqRows || []) {
           const qid = Number(row.published_question_id);
           const cid = Number(row.caderno_id);
@@ -77,6 +87,8 @@ module.exports = async (req, res) => {
             cadernoByQuestionId.set(qid, cid);
           }
         }
+      } catch (cqErr) {
+        console.warn("[report-data] caderno_questions:", cqErr.message || cqErr);
       }
     }
 
@@ -114,6 +126,7 @@ module.exports = async (req, res) => {
         questionId: row.question_id,
         questionShortId: String(row.question_short_id || "").toUpperCase(),
         userJid: row.user_jid,
+        userJidKey: jidComparableKey(row.user_jid),
         userName: (row.user_name && String(row.user_name).trim()) || row.user_jid,
         answerLetter: String(row.answer_letter || "").toLowerCase(),
         answerLetterDisplay: normalizeLetter(row.answer_letter),
@@ -129,7 +142,11 @@ module.exports = async (req, res) => {
     const partMap = new Map();
     for (const a of answers) {
       if (!partMap.has(a.userJid)) {
-        partMap.set(a.userJid, { userJid: a.userJid, userName: a.userName });
+        partMap.set(a.userJid, {
+          userJid: a.userJid,
+          userJidKey: a.userJidKey,
+          userName: a.userName
+        });
       }
     }
     const participants = Array.from(partMap.values()).sort((x, y) =>

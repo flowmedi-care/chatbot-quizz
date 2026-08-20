@@ -32,6 +32,60 @@ function applyCors(res) {
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
 }
 
+/** Normaliza JID (ignora sufixo de device: `123:64@s.whatsapp.net` → `123@s.whatsapp.net`). */
+function jidComparableKey(jid) {
+  const raw = String(jid || "")
+    .trim()
+    .toLowerCase();
+  const at = raw.indexOf("@");
+  if (at < 0) return raw;
+  const user = raw.slice(0, at).split(":")[0];
+  const domain = raw.slice(at + 1);
+  return `${user}@${domain}`;
+}
+
+function chunkList(items, size = 80) {
+  const list = Array.isArray(items) ? items : [];
+  const n = Math.max(1, Number(size) || 80);
+  const out = [];
+  for (let i = 0; i < list.length; i += n) out.push(list.slice(i, i + n));
+  return out;
+}
+
+/**
+ * `.in()` + paginação. Sem isso o PostgREST corta em 1000 linhas
+ * e `.in()` grande estoura URL.
+ */
+async function fetchAllIn(supabase, table, select, column, ids, options = {}) {
+  const pageSize = Math.min(1000, Math.max(1, Number(options.pageSize) || 1000));
+  const chunkSize = Math.max(1, Number(options.chunkSize) || 80);
+  const orderColumn = options.orderColumn || "id";
+  const uniq = [...new Set((ids || []).filter((x) => x != null && x !== ""))];
+  const all = [];
+  for (const part of chunkList(uniq, chunkSize)) {
+    let from = 0;
+    let orderOk = Boolean(orderColumn);
+    for (;;) {
+      let q = supabase.from(table).select(select).in(column, part);
+      if (orderOk) q = q.order(orderColumn, { ascending: true });
+      const { data, error } = await q.range(from, from + pageSize - 1);
+      if (error) {
+        const msg = String(error.message || "");
+        if (orderOk && /column|does not exist/i.test(msg)) {
+          orderOk = false;
+          continue;
+        }
+        throw error;
+      }
+      const rows = data || [];
+      all.push(...rows);
+      if (rows.length < pageSize) break;
+      from += pageSize;
+    }
+  }
+  return all;
+}
+
 /** Destino privado (caderno no PV), não o grupo do quiz. */
 function isPrivateQuizTargetJid(jid) {
   const t = String(jid || "").toLowerCase();
@@ -69,13 +123,13 @@ async function fetchPublishedCadernoQuestionIdsForGroup(supabase, groupJid) {
   const cadernoIds = (cadernos || []).map((c) => c.id).filter((id) => Number.isFinite(Number(id)));
   if (!cadernoIds.length) return new Set();
 
-  const { data: rows, error: qErr } = await supabase
-    .from("caderno_questions")
-    .select("published_question_id")
-    .in("caderno_id", cadernoIds)
-    .not("published_question_id", "is", null);
-
-  if (qErr) throw qErr;
+  const rows = await fetchAllIn(
+    supabase,
+    "caderno_questions",
+    "published_question_id",
+    "caderno_id",
+    cadernoIds
+  );
 
   const out = new Set();
   for (const row of rows || []) {
@@ -128,6 +182,9 @@ module.exports = {
   getClient,
   pickTargetGroupJid,
   applyCors,
+  jidComparableKey,
+  chunkList,
+  fetchAllIn,
   fetchQuestionsForGroup,
   fetchPublishedCadernoQuestionIdsForGroup,
   isGroupQuizQuestion,
