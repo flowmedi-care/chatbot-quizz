@@ -18,36 +18,103 @@ function sb() {
   return createClient(config.supabaseUrl, config.supabaseServiceRoleKey);
 }
 
+function tecIdFromRaw(raw: unknown): number | null {
+  const n = raw == null || raw === "" ? NaN : Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+function cadernoIdFromRaw(raw: unknown): number | null {
+  const n = raw == null || raw === "" ? NaN : Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+function parseCadernoFromQuestionRow(row: {
+  creator_jid?: string | null;
+  wa_message_id?: string | null;
+}): { cadernoId: number | null; cadernoQuestionId: number | null } {
+  const creator = String(row?.creator_jid || "");
+  const creatorMatch = creator.match(/^caderno:(\d+)@bot$/i);
+  const wa = String(row?.wa_message_id || "");
+  const waMatch = wa.match(/^caderno-(\d+)-(\d+)/i);
+  return {
+    cadernoId: cadernoIdFromRaw(waMatch ? waMatch[1] : creatorMatch ? creatorMatch[1] : null),
+    cadernoQuestionId: cadernoIdFromRaw(waMatch ? waMatch[2] : null)
+  };
+}
+
 async function lookupCadernoContext(opts: {
   shortId?: string | null;
   publishedQuestionId?: number | null;
 }): Promise<{ tecId: number | null; cadernoId: number | null }> {
   const client = sb();
   let publishedId = opts.publishedQuestionId != null ? Number(opts.publishedQuestionId) : NaN;
+  let questionRow: {
+    id?: number;
+    creator_jid?: string | null;
+    wa_message_id?: string | null;
+  } | null = null;
   if (!Number.isFinite(publishedId) || publishedId <= 0) {
     const sid = String(opts.shortId || "").trim().toUpperCase();
     if (!sid) return { tecId: null, cadernoId: null };
     const { data: q } = await client
       .from("questions")
-      .select("id")
+      .select("id, creator_jid, wa_message_id")
       .eq("short_id", sid)
       .limit(1)
       .maybeSingle();
+    questionRow = q;
     publishedId = q?.id != null ? Number(q.id) : NaN;
   }
   if (!Number.isFinite(publishedId) || publishedId <= 0) return { tecId: null, cadernoId: null };
-  const { data } = await client
+
+  const { data: directRows } = await client
     .from("caderno_questions")
     .select("tec_question_id, caderno_id")
     .eq("published_question_id", publishedId)
+    .limit(5);
+  const direct = directRows?.[0];
+  let tecId = direct ? tecIdFromRaw(direct.tec_question_id) : null;
+  let cadernoId = direct ? cadernoIdFromRaw(direct.caderno_id) : null;
+  if (tecId && cadernoId) return { tecId, cadernoId };
+
+  const { data: queue } = await client
+    .from("caderno_send_queue")
+    .select("caderno_id, caderno_question_id")
+    .eq("published_question_id", publishedId)
     .limit(1)
     .maybeSingle();
-  if (!data) return { tecId: null, cadernoId: null };
-  const n = data.tec_question_id == null || data.tec_question_id === "" ? NaN : Number(data.tec_question_id);
-  return {
-    tecId: Number.isFinite(n) ? n : null,
-    cadernoId: data.caderno_id != null ? Number(data.caderno_id) : null
-  };
+  if (queue?.caderno_question_id) {
+    const { data: cq } = await client
+      .from("caderno_questions")
+      .select("tec_question_id, caderno_id")
+      .eq("id", queue.caderno_question_id)
+      .maybeSingle();
+    tecId = tecId || tecIdFromRaw(cq?.tec_question_id);
+    cadernoId = cadernoId || cadernoIdFromRaw(queue.caderno_id) || cadernoIdFromRaw(cq?.caderno_id);
+    if (tecId && cadernoId) return { tecId, cadernoId };
+  }
+
+  if (!questionRow) {
+    const { data: q } = await client
+      .from("questions")
+      .select("id, creator_jid, wa_message_id")
+      .eq("id", publishedId)
+      .maybeSingle();
+    questionRow = q;
+  }
+  const parsed = parseCadernoFromQuestionRow(questionRow || {});
+  if (parsed.cadernoQuestionId) {
+    const { data: cq } = await client
+      .from("caderno_questions")
+      .select("tec_question_id, caderno_id")
+      .eq("id", parsed.cadernoQuestionId)
+      .maybeSingle();
+    tecId = tecId || tecIdFromRaw(cq?.tec_question_id);
+    cadernoId = cadernoId || cadernoIdFromRaw(cq?.caderno_id) || parsed.cadernoId;
+  } else if (!cadernoId) {
+    cadernoId = parsed.cadernoId;
+  }
+  return { tecId, cadernoId };
 }
 
 export async function notifyStudyAppAnswer(input: {

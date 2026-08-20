@@ -164,6 +164,64 @@ function parseBody(req) {
   }
 }
 
+function ingestJidCandidates(userJid) {
+  const raw = String(userJid || "").trim()
+  if (!raw) return []
+  const out = new Set([raw])
+  const at = raw.indexOf("@")
+  const local = (at >= 0 ? raw.slice(0, at) : raw).trim()
+  if (local) {
+    out.add(`${local}@s.whatsapp.net`)
+    out.add(`${local}@lid`)
+  }
+  return [...out]
+}
+
+function looksLikeRawUserName(s) {
+  const t = String(s || "").trim()
+  if (!t) return true
+  if (/@/.test(t)) return true
+  if (/^\+?\d{8,}$/.test(t)) return true
+  return false
+}
+
+async function resolveIngestUserName(supabase, userJid, provided) {
+  const raw = provided != null ? String(provided).trim() : ""
+  if (raw && !looksLikeRawUserName(raw)) return raw
+  const candidates = ingestJidCandidates(userJid)
+  try {
+    const { data: ecos } = await supabase
+      .from("user_economy")
+      .select("display_name")
+      .in("user_jid", candidates)
+      .limit(5)
+    const eco = (ecos || []).find((row) => row.display_name && !looksLikeRawUserName(row.display_name))
+    if (eco?.display_name) return String(eco.display_name).trim()
+    const { data: eng } = await supabase
+      .from("group_member_engagement")
+      .select("quiz_display_name, user_label")
+      .in("user_jid", candidates)
+      .limit(5)
+    for (const row of eng || []) {
+      const n = row.quiz_display_name || row.user_label
+      if (n && !looksLikeRawUserName(n)) return String(n).trim()
+    }
+    const { data: ans } = await supabase
+      .from("answers")
+      .select("user_name")
+      .in("user_jid", candidates)
+      .not("user_name", "is", null)
+      .limit(20)
+    for (const row of ans || []) {
+      const n = String(row.user_name || "").trim()
+      if (n && !looksLikeRawUserName(n) && n !== "Participante") return n
+    }
+  } catch (e) {
+    console.warn("[ingest] resolve user_name:", e.message || e)
+  }
+  return raw || "Participante"
+}
+
 async function handleIngestAnswer(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
   const body = parseBody(req);
@@ -225,11 +283,13 @@ async function handleIngestAnswer(req, res) {
       return res.status(202).json({ pending: true, reason: "Questao ainda nao publicada no WhatsApp." });
     }
 
+    const userName = await resolveIngestUserName(supabase, userJid, body.userName)
+
     const row = {
       question_id: question.id,
       question_short_id: String(question.short_id || "").toUpperCase(),
       user_jid: userJid,
-      user_name: body.userName != null ? String(body.userName) : null,
+      user_name: userName,
       answer_letter: letter,
       answer_comment: comment || null,
       source_message_id: `app:${Date.now()}`,
@@ -385,16 +445,18 @@ async function handleOmissasForApp(req, res) {
     const { session } = loaded;
     const questions = await fetchQuestionsByShortIds(supabase, session.shortIds || []);
     const ids = questions.map((q) => q.id).filter(Boolean);
-    let tecByPublished = new Map();
+    let optionsByPublished = new Map();
     if (ids.length) {
       const { data: cq } = await supabase
         .from("caderno_questions")
-        .select("published_question_id, tec_question_id, caderno_id, options")
+        .select("published_question_id, options")
         .in("published_question_id", ids);
       for (const row of cq || []) {
-        tecByPublished.set(Number(row.published_question_id), row);
+        optionsByPublished.set(Number(row.published_question_id), row.options);
       }
     }
+    const { lookupCadernoContextsByPublishedIds } = require("./_study-sync.js");
+    const ctxByPublished = await lookupCadernoContextsByPublishedIds(supabase, ids);
     return res.status(200).json({
       token: session.token,
       mode: session.mode,
@@ -402,16 +464,14 @@ async function handleOmissasForApp(req, res) {
       userName: session.userName,
       groupJid: session.groupJid,
       questions: questions.map((q) => {
-        const extra = tecByPublished.get(Number(q.id)) || {};
-        const tecRaw = extra.tec_question_id;
-        const tecId = tecRaw != null && tecRaw !== "" && Number.isFinite(Number(tecRaw)) ? Number(tecRaw) : null;
+        const ctx = ctxByPublished.get(Number(q.id)) || {};
         return {
           shortId: String(q.short_id || "").toUpperCase(),
-          tecId,
-          cadernoId: extra.caderno_id != null ? Number(extra.caderno_id) : null,
+          tecId: ctx.tecId ?? null,
+          cadernoId: ctx.cadernoId ?? null,
           questionType: q.question_type,
           statementText: q.statement_text,
-          options: extra.options || q.options || [],
+          options: optionsByPublished.get(Number(q.id)) || q.options || [],
           alreadyAnswered: false
         };
       })
@@ -463,19 +523,10 @@ async function handleUserAnswers(req, res) {
     if (error) throw error;
     const rows = answers || [];
     const qids = rows.map((a) => a.question_id).filter(Boolean);
-    const tecByPublished = new Map();
-    if (qids.length) {
-      const { data: cq } = await supabase
-        .from("caderno_questions")
-        .select("published_question_id, tec_question_id")
-        .in("published_question_id", qids);
-      for (const row of cq || []) {
-        const tecRaw = row.tec_question_id;
-        const tecId =
-          tecRaw != null && tecRaw !== "" && Number.isFinite(Number(tecRaw)) ? Number(tecRaw) : null;
-        tecByPublished.set(Number(row.published_question_id), tecId);
-      }
-    }
+    const { lookupCadernoContextsByPublishedIds } = require("./_study-sync.js");
+    const ctxByPublished = qids.length
+      ? await lookupCadernoContextsByPublishedIds(supabase, qids)
+      : new Map();
     const tagsByAnswer = new Map();
     const answerIds = rows.map((a) => a.id).filter(Boolean);
     if (answerIds.length) {
@@ -495,16 +546,20 @@ async function handleUserAnswers(req, res) {
       }
     }
     return res.status(200).json({
-      answers: rows.map((a) => ({
-        shortId: String(a.question_short_id || "").toUpperCase(),
-        tecId: tecByPublished.get(Number(a.question_id)) || null,
-        answerLetter: String(a.answer_letter || "").toLowerCase().slice(0, 1),
-        comment: a.answer_comment || null,
-        confidenceLevel: a.confidence_level || "seguro",
-        durationMs: a.duration_ms != null ? Number(a.duration_ms) : null,
-        tags: tagsByAnswer.get(Number(a.id)) || [],
-        sentAt: a.sent_at
-      }))
+      answers: rows.map((a) => {
+        const ctx = ctxByPublished.get(Number(a.question_id)) || {};
+        return {
+          shortId: String(a.question_short_id || "").toUpperCase(),
+          tecId: ctx.tecId ?? null,
+          cadernoId: ctx.cadernoId ?? null,
+          answerLetter: String(a.answer_letter || "").toLowerCase().slice(0, 1),
+          comment: a.answer_comment || null,
+          confidenceLevel: a.confidence_level || "seguro",
+          durationMs: a.duration_ms != null ? Number(a.duration_ms) : null,
+          tags: tagsByAnswer.get(Number(a.id)) || [],
+          sentAt: a.sent_at
+        };
+      })
     });
   } catch (e) {
     console.error("[quiz-sync-answers]", e);
