@@ -15,6 +15,7 @@
     { "source": "/api/quiz-sync-inventory", "destination": "/api/flashcards-inbound?fc=inventory" },
     { "source": "/api/quiz-sync-answers", "destination": "/api/flashcards-inbound?fc=answers" },
     { "source": "/api/quiz-sync-status", "destination": "/api/flashcards-inbound?fc=status" },
+    { "source": "/api/quiz-sync-replay-gabarito", "destination": "/api/flashcards-inbound?fc=replay-gabarito" },
     { "source": "/api/ranking", "destination": "/api/qa-stats" },
     { "source": "/api/shop", "destination": "/api/economy?view=shop" },
     { "source": "/api/diario", "destination": "/api/economy?view=diario" },

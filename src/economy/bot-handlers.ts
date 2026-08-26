@@ -541,17 +541,19 @@ export async function flushEconomyOutbox(sock: WASocket): Promise<void> {
             await markBotPendingEventProcessed(ev.id);
             continue;
           }
-          await processEconomyAfterAnswer(sock, {
-            userJid,
-            userName: p.userName != null ? String(p.userName) : "",
-            questionShortId: shortId,
-            questionId: (p.questionId as string | number) ?? shortId,
-            answerLetter: String(p.answerLetter || ""),
-            answerKey: p.answerKey != null ? String(p.answerKey) : null,
-            groupJid: p.groupJid != null ? String(p.groupJid) : quizGroupJid(),
-            wasUpdate: Boolean(p.wasUpdate),
-            previousLetter: p.previousLetter != null ? String(p.previousLetter) : null
-          });
+          if (!p.skipEconomy) {
+            await processEconomyAfterAnswer(sock, {
+              userJid,
+              userName: p.userName != null ? String(p.userName) : "",
+              questionShortId: shortId,
+              questionId: (p.questionId as string | number) ?? shortId,
+              answerLetter: String(p.answerLetter || ""),
+              answerKey: p.answerKey != null ? String(p.answerKey) : null,
+              groupJid: p.groupJid != null ? String(p.groupJid) : quizGroupJid(),
+              wasUpdate: Boolean(p.wasUpdate),
+              previousLetter: p.previousLetter != null ? String(p.previousLetter) : null
+            });
+          }
 
           try {
             const cadernoId = await getCadernoIdForQuestion(shortId);

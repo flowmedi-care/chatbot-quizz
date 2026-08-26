@@ -252,7 +252,7 @@ async function handleIngestAnswer(req, res) {
     if (shortIdRaw) {
       const { data } = await supabase
         .from("questions")
-        .select("id, short_id, answer_key, creator_jid")
+        .select("id, short_id, answer_key, creator_jid, target_group_jid, group_jid")
         .eq("short_id", shortIdRaw)
         .maybeSingle();
       question = data;
@@ -273,7 +273,7 @@ async function handleIngestAnswer(req, res) {
       if (cq?.published_question_id) {
         const { data } = await supabase
           .from("questions")
-          .select("id, short_id, answer_key, creator_jid")
+          .select("id, short_id, answer_key, creator_jid, target_group_jid, group_jid")
           .eq("id", cq.published_question_id)
           .maybeSingle();
         question = data;
@@ -301,7 +301,7 @@ async function handleIngestAnswer(req, res) {
 
     const { data: existing } = await supabase
       .from("answers")
-      .select("id")
+      .select("id, answer_letter")
       .eq("question_id", question.id)
       .eq("user_jid", userJid)
       .maybeSingle();
@@ -352,6 +352,26 @@ async function handleIngestAnswer(req, res) {
       } catch (catErr) {
         console.warn("[ingest] categories:", catErr.message || catErr);
       }
+    }
+
+    try {
+      const { enqueueBotEvent } = require("./_omissas-web.js");
+      await enqueueBotEvent(supabase, "web_answer", {
+        userJid,
+        userName,
+        questionShortId: String(question.short_id || "").toUpperCase(),
+        questionId: question.id,
+        answerLetter: letter,
+        answerKey: question.answer_key,
+        groupJid:
+          String(question.target_group_jid || question.group_jid || "").trim() ||
+          pickTargetGroupJid(),
+        wasUpdate: Boolean(existing),
+        previousLetter: existing?.answer_letter != null ? String(existing.answer_letter) : null,
+        source: "app"
+      });
+    } catch (evErr) {
+      console.warn("[ingest] bot_pending_events:", evErr.message || evErr);
     }
 
     return res.status(200).json({
@@ -630,6 +650,107 @@ async function handleCadernoStatus(req, res) {
   }
 }
 
+async function handleReplayGabarito(req, res) {
+  if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
+  const body = parseBody(req) || {};
+  const days = Math.min(7, Math.max(1, Number(body.days) || 3));
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+
+  try {
+    const supabase = getClient();
+    const { enqueueBotEvent } = require("./_omissas-web.js");
+    const { data: answers, error } = await supabase
+      .from("answers")
+      .select("id, question_id, question_short_id, user_jid, user_name, answer_letter, sent_at")
+      .gte("sent_at", since)
+      .order("sent_at", { ascending: false })
+      .limit(2000);
+    if (error) throw error;
+
+    const byShort = new Map();
+    for (const a of answers || []) {
+      const sid = String(a.question_short_id || "").trim().toUpperCase();
+      if (!sid || byShort.has(sid)) continue;
+      byShort.set(sid, a);
+    }
+
+    const qids = [
+      ...new Set(
+        [...byShort.values()]
+          .map((a) => (a.question_id != null ? Number(a.question_id) : NaN))
+          .filter((n) => Number.isFinite(n) && n > 0)
+      )
+    ];
+
+    const qById = new Map();
+    if (qids.length) {
+      const { data: qs } = await supabase
+        .from("questions")
+        .select("id, short_id, answer_key, target_group_jid, group_jid")
+        .in("id", qids);
+      for (const q of qs || []) qById.set(Number(q.id), q);
+    }
+
+    const posted = new Set();
+    if (qids.length) {
+      const { data: results, error: resErr } = await supabase
+        .from("question_wa_messages")
+        .select("question_id")
+        .eq("role", "result")
+        .in("question_id", qids);
+      if (resErr) {
+        const msg = String(resErr.message || "").toLowerCase();
+        if (!(msg.includes("relation") && msg.includes("does not exist"))) {
+          console.warn("[replay-gabarito] question_wa_messages:", resErr.message);
+        }
+      } else {
+        for (const r of results || []) posted.add(Number(r.question_id));
+      }
+    }
+
+    const groupFallback = pickTargetGroupJid();
+    let queued = 0;
+    let skippedPosted = 0;
+    for (const [sid, a] of byShort) {
+      const qid = a.question_id != null ? Number(a.question_id) : null;
+      if (qid && posted.has(qid)) {
+        skippedPosted += 1;
+        continue;
+      }
+      const q = qid ? qById.get(qid) : null;
+      await enqueueBotEvent(supabase, "web_answer", {
+        userJid: a.user_jid,
+        userName: a.user_name,
+        questionShortId: sid,
+        questionId: a.question_id,
+        answerLetter: a.answer_letter,
+        answerKey: q?.answer_key ?? null,
+        groupJid:
+          String(q?.target_group_jid || q?.group_jid || "").trim() || groupFallback,
+        wasUpdate: false,
+        skipEconomy: true,
+        source: "replay"
+      });
+      queued += 1;
+    }
+
+    return res.status(200).json({
+      ok: true,
+      days,
+      considered: byShort.size,
+      queued,
+      skippedPosted,
+      hint:
+        queued > 0
+          ? "O bot vai publicar no grupo as que os engajados já fecharam (cerca de 1 min por lote de 40)."
+          : "Nada pendente: ou já foi ao grupo, ou ainda falta engajado responder."
+    });
+  } catch (e) {
+    console.error("[quiz-sync-replay-gabarito]", e);
+    return res.status(500).json({ error: e.message || "Erro ao reenfileirar gabaritos" });
+  }
+}
+
 module.exports = {
   handleWhatsappUsers,
   handleLinkRequest,
@@ -640,6 +761,7 @@ module.exports = {
   handleInventoryQty,
   handleUserAnswers,
   handleCadernoStatus,
+  handleReplayGabarito,
   applyCors,
   checkFlashcardsInboundAuth
 };

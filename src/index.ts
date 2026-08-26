@@ -84,7 +84,8 @@ import {
   insertDiscussionComment,
   listDiscussionCommentsForPost,
   formatDiscussionCommentsTree,
-  markDiscussionCommentsSharedToWa
+  markDiscussionCommentsSharedToWa,
+  getResultWaMessageIdForQuestion
 } from "./supabase";
 import {
   computeNextRunAt,
@@ -426,8 +427,14 @@ async function maybePostAutoGabaritoToGroup(sock: WASocket, rawShortId: string):
       const selfAnswered = answeredComparable.some((jc) => jc === pk);
       if (!selfAnswered) return;
 
-      autoGabaritoPostedQuestionIds.add(shortUp);
       const result = await getQuestionResult(shortUp);
+      const alreadyPosted = await getResultWaMessageIdForQuestion(result.questionId, groupJid);
+      if (alreadyPosted) {
+        autoGabaritoPostedQuestionIds.add(shortUp);
+        return;
+      }
+
+      autoGabaritoPostedQuestionIds.add(shortUp);
       await publishQuestionResult(sock, groupJid, result, {
         headerPrefix:
           "[Resposta registrada]\nResultado enviado automaticamente (caderno privado)."
@@ -480,9 +487,15 @@ async function maybePostAutoGabaritoToGroup(sock: WASocket, rawShortId: string):
     const allAnswered = expectAnswer.every((m) => participantHasMatchingAnswer(m, answered));
     if (!allAnswered) return;
 
+    const result = await getQuestionResult(shortUp);
+    const alreadyPosted = await getResultWaMessageIdForQuestion(result.questionId, groupJid);
+    if (alreadyPosted) {
+      autoGabaritoPostedQuestionIds.add(shortUp);
+      return;
+    }
+
     autoGabaritoPostedQuestionIds.add(shortUp);
 
-    const result = await getQuestionResult(shortUp);
     await publishQuestionResult(sock, groupJid, result, {
       headerPrefix: `[Engajados responderam] #${shortUp}`,
       discussionSource: "auto_gabarito"
