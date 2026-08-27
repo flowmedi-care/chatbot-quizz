@@ -52,6 +52,7 @@
   /** @type {Map<string, Promise<any>>} */
   let pendingSaves = new Map();
   let advancing = false;
+  let aiPollTimer = 0;
 
   const timer = quizUi.createTimer({
     timer: $("q-timer"),
@@ -59,22 +60,39 @@
     pauseBtn: $("q-timer-pause"),
     resetBtn: $("q-timer-reset")
   });
-  const via = quizUi.createViaPanel(
-    {
-      panel: $("via-panel"),
-      notes: $("via-notes"),
-      empty: $("via-empty"),
-      draft: $("via-draft"),
-      send: $("via-send"),
-      status: $("via-status")
-    },
-    {
-      fetchJson,
-      token: () => token,
-      currentShortId: () => (pending[index] && pending[index].shortId) || "",
-      viaGetUrl: (shortId) => API.via(token, shortId)
+
+  function stopAiPoll() {
+    if (aiPollTimer) {
+      clearInterval(aiPollTimer);
+      aiPollTimer = 0;
     }
-  );
+  }
+
+  function startAiPoll(shortId) {
+    stopAiPoll();
+    if (!shortId) return;
+    quizUi.paintAiComment("", { pending: true });
+    let n = 0;
+    aiPollTimer = setInterval(() => {
+      n += 1;
+      if (n > 15) {
+        stopAiPoll();
+        quizUi.paintAiComment("", { warn: true });
+        return;
+      }
+      void fetchJson(API.via(token, shortId))
+        .then((data) => {
+          const ai = data && data.aiComment ? String(data.aiComment).trim() : "";
+          if (!ai) return;
+          const q = pending[index];
+          if (!q || q.shortId !== shortId) return;
+          q.yourAiComment = ai;
+          quizUi.paintAiComment(ai);
+          stopAiPoll();
+        })
+        .catch(() => {});
+    }, 4000);
+  }
 
   function esc(s) {
     return String(s ?? "")
@@ -1008,10 +1026,18 @@
     eliminated = new Set();
     timer.start(q.alreadyAnswered && q.durationMs ? q.durationMs : null);
     const sid = q.shortId;
-    void via.load(sid).then((data) => {
-      if (!pending[index] || pending[index].shortId !== sid) return;
-      if (q.alreadyAnswered && data && data.durationMs) timer.start(data.durationMs);
-    });
+    quizUi.paintAiComment(q.yourAiComment);
+    if (q.alreadyAnswered && (q.yourComment || "").trim() && !(q.yourAiComment || "").trim()) {
+      startAiPoll(sid);
+    } else {
+      stopAiPoll();
+    }
+    if (q.alreadyAnswered && sid) {
+      void quizUi.fetchViaDuration(fetchJson, API.via(token, sid)).then((ms) => {
+        if (!pending[index] || pending[index].shortId !== sid) return;
+        if (ms) timer.start(ms);
+      });
+    }
 
     const choices = $("q-choices");
     choices.classList.remove("assist-picking");
@@ -1118,6 +1144,22 @@
             <div class="omissas-result-head"><h3>#${esc(item.shortId)}</h3>${badge}</div>
             <p><strong>Sua:</strong> ${(item.yourLetter || "—").toUpperCase()}
               · <strong>Gabarito:</strong> ${esc(item.answerKey || "—")}</p>
+            ${
+              item.yourComment || item.yourAiComment
+                ? `<div class="omissas-note-card">
+              ${
+                item.yourComment
+                  ? `<p class="omissas-your-comment"><strong>Anotação:</strong> ${esc(item.yourComment)}</p>`
+                  : ""
+              }
+              ${
+                item.yourAiComment
+                  ? `<div class="omissas-ai-comment"><p class="omissas-ai-kicker">Resposta da IA</p><p class="omissas-ai-body">${esc(item.yourAiComment)}</p></div>`
+                  : `<p class="omissas-ai-warn">IA: sem resposta — crédito da API esgotado ou Via Aprovação ainda não vinculada.</p>`
+              }
+            </div>`
+                : ""
+            }
             <div class="omissas-discuss">
               <label class="omissas-discuss-label">Discussão antecipada
                 <textarea class="omissas-discuss-input" rows="2" maxlength="4000" placeholder="Comente agora — vai no feed quando o gabarito sair no grupo"></textarea>

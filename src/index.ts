@@ -110,6 +110,7 @@ import {
 import { notifyGroupOmissasEntered } from "./economy/omissas";
 import { ECONOMY_TZ } from "./economy/constants";
 import { MediaPayload, QuestionDraft, QuestionType } from "./types";
+import { AI_MISSING_HINT } from "./answer-comments";
 
 function toIsoTimestamp(value: unknown): string {
   if (typeof value === "number") {
@@ -193,6 +194,9 @@ const pendingCategoryResolve = new Map<string, PendingCategoryResolve>();
 const omissasOfferByUser = new Map<string, string[]>();
 
 const autoGabaritoPostedQuestionIds = new Set<string>();
+const autoGabaritoWaitingQuestionIds = new Set<string>();
+const AUTO_GABARITO_AI_WAIT_MS = 6000;
+const AUTO_GABARITO_AI_WAIT_TRIES = 8;
 
 function delayMs(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -405,12 +409,37 @@ async function fetchGroupParticipantIds(sock: WASocket, groupJid: string): Promi
   return parts.map((p) => String(p.id || "")).filter(Boolean);
 }
 
+function resultHasPendingStudentAi(
+  result: Awaited<ReturnType<typeof getQuestionResult>>
+): boolean {
+  const all = [...result.correctRespondents, ...result.wrongRespondents];
+  return all.some((r) => Boolean(r.comment) && !r.aiComment);
+}
+
+async function waitForPendingAiComments(
+  shortUp: string,
+  groupJid: string,
+  initial: Awaited<ReturnType<typeof getQuestionResult>>
+): Promise<Awaited<ReturnType<typeof getQuestionResult>>> {
+  let result = initial;
+  if (!resultHasPendingStudentAi(result)) return result;
+  for (let i = 0; i < AUTO_GABARITO_AI_WAIT_TRIES; i++) {
+    await delayMs(AUTO_GABARITO_AI_WAIT_MS);
+    const posted = await getResultWaMessageIdForQuestion(result.questionId, groupJid);
+    if (posted) return result;
+    result = await getQuestionResult(shortUp);
+    if (!resultHasPendingStudentAi(result)) return result;
+  }
+  return result;
+}
+
 async function maybePostAutoGabaritoToGroup(sock: WASocket, rawShortId: string): Promise<void> {
   const shortUp = rawShortId.toUpperCase();
 
   try {
     if (!config.autoGabaritoWhenAllReply) return;
     if (autoGabaritoPostedQuestionIds.has(shortUp)) return;
+    if (autoGabaritoWaitingQuestionIds.has(shortUp)) return;
 
     const meta = await getQuestionCreatorAndGroup(shortUp);
     if (!meta) return;
@@ -427,18 +456,30 @@ async function maybePostAutoGabaritoToGroup(sock: WASocket, rawShortId: string):
       const selfAnswered = answeredComparable.some((jc) => jc === pk);
       if (!selfAnswered) return;
 
-      const result = await getQuestionResult(shortUp);
-      const alreadyPosted = await getResultWaMessageIdForQuestion(result.questionId, groupJid);
-      if (alreadyPosted) {
-        autoGabaritoPostedQuestionIds.add(shortUp);
-        return;
-      }
+      autoGabaritoWaitingQuestionIds.add(shortUp);
+      try {
+        let result = await getQuestionResult(shortUp);
+        const alreadyPosted = await getResultWaMessageIdForQuestion(result.questionId, groupJid);
+        if (alreadyPosted) {
+          autoGabaritoPostedQuestionIds.add(shortUp);
+          return;
+        }
 
-      autoGabaritoPostedQuestionIds.add(shortUp);
-      await publishQuestionResult(sock, groupJid, result, {
-        headerPrefix:
-          "[Resposta registrada]\nResultado enviado automaticamente (caderno privado)."
-      });
+        result = await waitForPendingAiComments(shortUp, groupJid, result);
+        const postedAfterWait = await getResultWaMessageIdForQuestion(result.questionId, groupJid);
+        if (postedAfterWait) {
+          autoGabaritoPostedQuestionIds.add(shortUp);
+          return;
+        }
+
+        autoGabaritoPostedQuestionIds.add(shortUp);
+        await publishQuestionResult(sock, groupJid, result, {
+          headerPrefix:
+            "[Resposta registrada]\nResultado enviado automaticamente (caderno privado)."
+        });
+      } finally {
+        autoGabaritoWaitingQuestionIds.delete(shortUp);
+      }
       return;
     }
 
@@ -487,20 +528,33 @@ async function maybePostAutoGabaritoToGroup(sock: WASocket, rawShortId: string):
     const allAnswered = expectAnswer.every((m) => participantHasMatchingAnswer(m, answered));
     if (!allAnswered) return;
 
-    const result = await getQuestionResult(shortUp);
-    const alreadyPosted = await getResultWaMessageIdForQuestion(result.questionId, groupJid);
-    if (alreadyPosted) {
+    autoGabaritoWaitingQuestionIds.add(shortUp);
+    try {
+      let result = await getQuestionResult(shortUp);
+      const alreadyPosted = await getResultWaMessageIdForQuestion(result.questionId, groupJid);
+      if (alreadyPosted) {
+        autoGabaritoPostedQuestionIds.add(shortUp);
+        return;
+      }
+
+      result = await waitForPendingAiComments(shortUp, groupJid, result);
+      const postedAfterWait = await getResultWaMessageIdForQuestion(result.questionId, groupJid);
+      if (postedAfterWait) {
+        autoGabaritoPostedQuestionIds.add(shortUp);
+        return;
+      }
+
       autoGabaritoPostedQuestionIds.add(shortUp);
-      return;
+
+      await publishQuestionResult(sock, groupJid, result, {
+        headerPrefix: `[Engajados responderam] #${shortUp}`,
+        discussionSource: "auto_gabarito"
+      });
+    } finally {
+      autoGabaritoWaitingQuestionIds.delete(shortUp);
     }
-
-    autoGabaritoPostedQuestionIds.add(shortUp);
-
-    await publishQuestionResult(sock, groupJid, result, {
-      headerPrefix: `[Engajados responderam] #${shortUp}`,
-      discussionSource: "auto_gabarito"
-    });
   } catch (e) {
+    autoGabaritoWaitingQuestionIds.delete(shortUp);
     console.warn("[auto-gabarito]", (e as Error).message);
   }
 }
@@ -681,12 +735,27 @@ function truncateForWhatsApp(text: string, max = 700): string {
   return `${t.slice(0, max)}…`;
 }
 
-function formatRespondentLines(respondents: { name: string; letter: string; comment: string | null }[]): string {
+function formatRespondentLines(
+  respondents: {
+    name: string;
+    letter: string;
+    comment: string | null;
+    aiComment?: string | null;
+  }[]
+): string {
   if (!respondents.length) return "Ninguem";
   return respondents
     .map((r) => {
-      const base = `- ${r.name} (${r.letter})`;
-      return r.comment ? `${base}: ${r.comment}` : base;
+      const lines = [`- ${r.name} (${r.letter})`];
+      if (r.comment) {
+        lines.push(`  Anotação: ${r.comment}`);
+        if (r.aiComment) {
+          lines.push(`  IA (resposta à anotação): ${r.aiComment}`);
+        } else {
+          lines.push(`  IA: ${AI_MISSING_HINT}`);
+        }
+      }
+      return lines.join("\n");
     })
     .join("\n");
 }

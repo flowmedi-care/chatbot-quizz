@@ -337,7 +337,8 @@
         const result =
           a.correct === true ? "certo" : a.correct === false ? "errado" : "—";
         const comment = a.comment ? ` — “${esc(a.comment)}”` : "";
-        return `<li class="${cls}"><strong>${esc(a.userName)}</strong> marcou <strong>${esc(a.letter)}</strong> (${result})${comment}</li>`;
+        const ai = a.aiComment ? ` · IA: “${esc(a.aiComment)}”` : "";
+        return `<li class="${cls}"><strong>${esc(a.userName)}</strong> marcou <strong>${esc(a.letter)}</strong> (${result})${comment}${ai}</li>`;
       })
       .join("");
     return `<div class="disc-panel-block">

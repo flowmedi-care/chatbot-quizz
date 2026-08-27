@@ -56,7 +56,7 @@ module.exports = async (req, res) => {
       answersRaw = await fetchAllIn(
         supabase,
         "answers",
-        "id, question_id, question_short_id, user_jid, user_name, answer_letter, answer_comment",
+        "id, question_id, question_short_id, user_jid, user_name, answer_letter, answer_comment, ai_comment",
         "question_id",
         questionIds
       );
@@ -120,6 +120,8 @@ module.exports = async (req, res) => {
       const q = qById.get(row.question_id);
       const key = q ? q.answer_key : null;
       const correct = q ? answerIsCorrect(row.answer_letter, key) : false;
+      const { splitAnswerComments } = require("./_answer-comments.js");
+      const split = splitAnswerComments(row);
       const answerId = Number(row.id);
       return {
         answerId: Number.isFinite(answerId) ? answerId : null,
@@ -130,10 +132,8 @@ module.exports = async (req, res) => {
         userName: (row.user_name && String(row.user_name).trim()) || row.user_jid,
         answerLetter: String(row.answer_letter || "").toLowerCase(),
         answerLetterDisplay: normalizeLetter(row.answer_letter),
-        answerComment:
-          row.answer_comment != null && String(row.answer_comment).trim()
-            ? String(row.answer_comment).trim()
-            : null,
+        answerComment: split.comment,
+        answerAiComment: split.aiComment,
         correct,
         categories: categoriesByAnswer.get(answerId) || []
       };

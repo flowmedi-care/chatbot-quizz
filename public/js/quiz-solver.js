@@ -266,6 +266,27 @@
       : `Você errou! Gabarito: ${String(q.answerKey || "").toUpperCase()}.`;
   }
 
+  function paintAiComment(text, opts) {
+    const wrap = document.getElementById("q-ai-comment");
+    const body = document.getElementById("q-ai-comment-body");
+    const kicker = wrap ? wrap.querySelector(".solver-ai-kicker") : null;
+    if (!wrap || !body) return;
+    const t = String(text || "").trim();
+    const pending = Boolean(opts && opts.pending) && !t;
+    const warn = Boolean(opts && opts.warn) && !t;
+    wrap.classList.toggle("hidden", !t && !pending && !warn);
+    wrap.classList.toggle("is-warn", warn);
+    wrap.classList.toggle("is-pending", pending);
+    if (kicker) {
+      kicker.textContent = warn ? "IA" : pending ? "IA" : "Resposta da IA";
+    }
+    body.textContent = warn
+      ? "Sem resposta — crédito da API esgotado ou Via Aprovação ainda não vinculada."
+      : pending
+        ? "Aguardando resposta da IA…"
+        : t;
+  }
+
   function bindChoices(el, handlers) {
     if (!el) return;
     el.querySelectorAll(".solver-opt").forEach((btn) => {
@@ -456,87 +477,10 @@
     return { start, stop, paint, elapsed, pause, resume, reset, togglePause };
   }
 
-  function createViaPanel(els, deps) {
-    function renderNotes(notes) {
-      const list = Array.isArray(notes) ? notes : [];
-      if (!els.notes) return;
-      els.notes.innerHTML = list
-        .map((n) => {
-          const when = n.created_at
-            ? new Date(n.created_at).toLocaleString("pt-BR", {
-                dateStyle: "short",
-                timeStyle: "short"
-              })
-            : "";
-          return `<li><p class="via-note-meta">${esc(when)}</p><p class="via-note-body">${esc(n.body)}</p></li>`;
-        })
-        .join("");
-      if (els.empty) {
-        els.empty.classList.toggle("hidden", list.length > 0);
-        if (!list.length && !els.empty.textContent) els.empty.textContent = "Nenhuma anotação ainda.";
-      }
-    }
-
-    async function load(shortId) {
-      if (!els.panel) return { durationMs: null, linked: false };
-      els.panel.classList.remove("hidden");
-      if (els.draft) els.draft.value = "";
-      if (els.status) els.status.textContent = "";
-      try {
-        const data = await deps.fetchJson(deps.viaGetUrl(shortId));
-        if (data.linked) {
-          if (els.empty) els.empty.textContent = "Nenhuma anotação ainda.";
-          renderNotes(data.notes);
-          return data;
-        }
-        renderNotes([]);
-        if (els.empty) {
-          els.empty.classList.remove("hidden");
-          els.empty.textContent =
-            data.reason === "jid_not_linked"
-              ? "WhatsApp ainda não vinculado na Via Aprovação."
-              : "Caderno não sincronizado com a Via Aprovação.";
-        }
-        return data;
-      } catch {
-        renderNotes([]);
-        if (els.empty) {
-          els.empty.classList.remove("hidden");
-          els.empty.textContent = "Não foi possível carregar as anotações do app.";
-        }
-        return { linked: false, durationMs: null };
-      }
-    }
-
-    async function send(shortId) {
-      const body = els.draft ? els.draft.value.trim() : "";
-      if (!shortId || !body) return;
-      if (els.send) els.send.disabled = true;
-      if (els.status) els.status.textContent = "Salvando…";
-      try {
-        await deps.fetchJson("/api/omissas-via", {
-          method: "POST",
-          body: JSON.stringify({ t: deps.token(), shortId, body })
-        });
-        if (els.draft) els.draft.value = "";
-        await load(shortId);
-        if (els.status) els.status.textContent = "Salvo no app.";
-      } catch (e) {
-        if (els.status) els.status.textContent = e.message || "Erro ao salvar.";
-      } finally {
-        if (els.send) els.send.disabled = false;
-      }
-    }
-
-    if (els.send && !els.send.dataset.bound) {
-      els.send.dataset.bound = "1";
-      els.send.addEventListener("click", () => {
-        const sid = deps.currentShortId ? deps.currentShortId() : "";
-        void send(sid);
-      });
-    }
-
-    return { load, send, renderNotes };
+  function fetchViaDuration(fetchJson, url) {
+    return fetchJson(url)
+      .then((data) => (data && data.durationMs) || null)
+      .catch(() => null);
   }
 
   global.PapaQuizUi = {
@@ -550,10 +494,11 @@
     paintChoices,
     bindChoices,
     fillResult,
+    paintAiComment,
     formatQuestionMs,
     isTypingTarget,
     bindSwipeNav,
     createTimer,
-    createViaPanel
+    fetchViaDuration
   };
 })(window);

@@ -13,6 +13,7 @@ import {
   WEEKDAY_LABELS_PT
 } from "./schedule";
 import { AnswerInput, CreateQuestionInput, QuestionType } from "./types";
+import { splitAnswerComments } from "./answer-comments";
 import { ECONOMY_TZ, OMISSAS_SCHEDULE } from "./economy/constants";
 import {
   loadGroupOmissasContext,
@@ -551,6 +552,8 @@ export type QuestionRespondent = {
   name: string;
   letter: string;
   comment: string | null;
+  aiComment: string | null;
+  userJid: string | null;
 };
 
 export type QuestionResult = {
@@ -622,13 +625,47 @@ export async function getQuestionResult(shortId: string): Promise<QuestionResult
 
   const { data: answers, error } = await supabase
     .from("answers")
-    .select("answer_letter, user_name, user_jid, answer_comment")
+    .select("answer_letter, user_name, user_jid, answer_comment, ai_comment")
     .eq("question_short_id", normalizedId);
 
   if (error) {
+    if (/column/i.test(error.message || "")) {
+      const retry = await supabase
+        .from("answers")
+        .select("answer_letter, user_name, user_jid, answer_comment")
+        .eq("question_short_id", normalizedId);
+      if (retry.error) {
+        throw new Error(`Erro ao buscar respostas: ${retry.error.message}`);
+      }
+      return finishQuestionResult(question, retry.data || []);
+    }
     throw new Error(`Erro ao buscar respostas: ${error.message}`);
   }
 
+  return finishQuestionResult(question, answers || []);
+}
+
+function finishQuestionResult(
+  question: {
+    id: number | string;
+    short_id: string;
+    question_type: string;
+    answer_key: string;
+    statement_text: string | null;
+    statement_media_url: string | null;
+    statement_media_mime_type: string | null;
+    explanation_text: string | null;
+    explanation_media_url: string | null;
+    explanation_media_mime_type: string | null;
+  },
+  answers: {
+    answer_letter: string;
+    user_name: string | null;
+    user_jid: string;
+    answer_comment?: string | null;
+    ai_comment?: string | null;
+  }[]
+): QuestionResult {
   const distribution: Record<string, number> =
     question.question_type === "true_false" ? { C: 0, E: 0 } : { A: 0, B: 0, C: 0, D: 0, E: 0 };
   const correctUsers: string[] = [];
@@ -643,9 +680,14 @@ export async function getQuestionResult(shortId: string): Promise<QuestionResult
     }
 
     const label = (row.user_name && row.user_name.trim()) || row.user_jid;
-    const commentRaw = row.answer_comment != null ? String(row.answer_comment).trim() : "";
-    const comment = commentRaw.length > 0 ? commentRaw : null;
-    const respondent: QuestionRespondent = { name: label, letter, comment };
+    const split = splitAnswerComments(row);
+    const respondent: QuestionRespondent = {
+      name: label,
+      letter,
+      comment: split.comment,
+      aiComment: split.aiComment,
+      userJid: row.user_jid ? String(row.user_jid) : null
+    };
 
     if (letter === String(question.answer_key).toUpperCase()) {
       correctUsers.push(label);
@@ -661,7 +703,7 @@ export async function getQuestionResult(shortId: string): Promise<QuestionResult
 
   return {
     questionId: Number(question.id),
-    shortId: normalizedId,
+    shortId: String(question.short_id).toUpperCase(),
     answerKey: String(question.answer_key).toUpperCase(),
     questionType: question.question_type as QuestionType,
     statementText,

@@ -105,20 +105,32 @@ async function fetchQuestionsByShortIds(supabase, shortIds) {
 
 async function fetchUserAnswersForShortIds(supabase, userJid, shortIds) {
   if (!shortIds.length) return new Map();
-  const { data, error } = await supabase
+  let data;
+  const first = await supabase
     .from("answers")
-    .select("id, question_short_id, answer_letter, answer_comment, user_jid, confidence_level, duration_ms")
+    .select("id, question_short_id, answer_letter, answer_comment, ai_comment, user_jid, confidence_level, duration_ms")
     .in("question_short_id", shortIds);
-  if (error) throw error;
+  if (first.error && /column/i.test(first.error.message || "")) {
+    const retry = await supabase
+      .from("answers")
+      .select("id, question_short_id, answer_letter, answer_comment, user_jid, confidence_level, duration_ms")
+      .in("question_short_id", shortIds);
+    if (retry.error) throw retry.error;
+    data = retry.data;
+  } else if (first.error) throw first.error;
+  else data = first.data;
 
+  const { splitAnswerComments } = require("./_answer-comments.js");
   const userKey = jidComparableKey(userJid);
   const out = new Map();
   for (const row of data || []) {
     if (jidComparableKey(row.user_jid) !== userKey) continue;
+    const split = splitAnswerComments(row);
     out.set(String(row.question_short_id).toUpperCase(), {
       id: Number(row.id),
       letter: String(row.answer_letter || "").toLowerCase(),
-      comment: row.answer_comment != null ? String(row.answer_comment) : null,
+      comment: split.comment,
+      aiComment: split.aiComment,
       confidence: row.confidence_level != null ? String(row.confidence_level) : null,
       durationMs:
         row.duration_ms != null && Number(row.duration_ms) > 0 ? Number(row.duration_ms) : null
@@ -381,6 +393,8 @@ async function handleOmissasSession(req, res) {
           missing: true,
           alreadyAnswered: Boolean(ans),
           yourLetter,
+          yourComment: ans ? ans.comment : null,
+          yourAiComment: ans ? ans.aiComment : null,
           categoryIds,
           assistUsed: Boolean(assist),
           assistReveal: assist
@@ -398,6 +412,7 @@ async function handleOmissasSession(req, res) {
         yourConfidence: ans && ans.confidence ? ans.confidence : null,
         yourLetter,
         yourComment: ans ? ans.comment : null,
+        yourAiComment: ans ? ans.aiComment : null,
         durationMs: ans && ans.durationMs ? ans.durationMs : null,
         categoryIds,
         answerKey,
@@ -620,6 +635,7 @@ async function handleOmissasResults(req, res) {
           statementText: null,
           yourLetter: ans ? ans.letter : null,
           yourComment: ans ? ans.comment : null,
+          yourAiComment: ans ? ans.aiComment : null,
           answerKey: null,
           correct: null
         });
@@ -645,6 +661,7 @@ async function handleOmissasResults(req, res) {
         statementMediaMimeType: q.statement_media_mime_type || null,
         yourLetter: yours,
         yourComment: ans ? ans.comment : null,
+        yourAiComment: ans ? ans.aiComment : null,
         answerKey: expected ? expected.toUpperCase() : null,
         correct,
         explanationText: q.explanation_text || null,
@@ -804,18 +821,29 @@ async function handleOmissasVia(req, res) {
   }
 
   if (req.method === "GET") {
+    const answers = await fetchUserAnswersForShortIds(supabase, session.userJid, [shortId]);
+    const local = answers.get(shortId);
     const r = await getStudyApp(
       `/api/quiz-sync/context?userJid=${encodeURIComponent(session.userJid)}&shortId=${encodeURIComponent(shortId)}`
     );
+    const viaData = r.ok && !r.skipped ? r.data || {} : {};
+    const viaAi = Array.isArray(viaData.notes)
+      ? viaData.notes.map((n) => n && n.ai_feedback).find((t) => t && String(t).trim())
+      : null;
     if (!r.ok || r.skipped) {
       return res.status(200).json({
         linked: false,
         reason: r.reason || "unreachable",
         notes: [],
-        durationMs: null
+        durationMs: local && local.durationMs ? local.durationMs : null,
+        aiComment: local && local.aiComment ? local.aiComment : null
       });
     }
-    return res.status(200).json(r.data || { linked: false, notes: [], durationMs: null });
+    return res.status(200).json({
+      ...viaData,
+      durationMs: viaData.durationMs || (local && local.durationMs) || null,
+      aiComment: local && local.aiComment ? local.aiComment : viaAi || null
+    });
   }
 
   if (req.method === "POST") {

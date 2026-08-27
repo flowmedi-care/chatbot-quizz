@@ -727,6 +727,10 @@ body.atv-page {
   margin-bottom: 0.75rem;
 }
 
+.omissas-note-card .atv-quiz-justif {
+  margin-bottom: 0;
+}
+
 .atv-quiz-justif textarea {
   min-height: 3.2rem;
 }

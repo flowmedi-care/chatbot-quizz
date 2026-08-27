@@ -46,6 +46,7 @@ import {
   getQuestionResult
 } from "../supabase";
 import { tryAdvanceCadernoAfterAnswer } from "../caderno-scheduler";
+import { formatAiGroupMessage } from "../answer-comments";
 import { todayIso, addDaysToIso, economyDb } from "./db";
 
 async function handleDiscussionSharePending(
@@ -137,6 +138,39 @@ async function handleDiscussionSharePending(
   }
 
   await markDiscussionCommentSharedToWa(comment.id);
+}
+
+async function handleAiCommentPending(
+  sock: WASocket,
+  payload: Record<string, unknown>
+): Promise<void> {
+  const shortId = String(payload.questionShortId || "").toUpperCase();
+  const aiComment = String(payload.aiComment || "").trim();
+  if (!shortId || !aiComment) return;
+  const groupJid =
+    String(payload.groupJid || "").trim() || quizGroupJid();
+  if (!groupJid) return;
+  const questionId = Number(payload.questionId);
+  if (Number.isFinite(questionId) && questionId > 0) {
+    const posted = await getResultWaMessageIdForQuestion(questionId, groupJid);
+    if (!posted) return;
+  } else {
+    try {
+      const result = await getQuestionResult(shortId);
+      const posted = await getResultWaMessageIdForQuestion(result.questionId, groupJid);
+      if (!posted) return;
+    } catch {
+      return;
+    }
+  }
+  const text = formatAiGroupMessage({
+    shortId,
+    userName: payload.userName != null ? String(payload.userName) : null,
+    studentComment:
+      payload.studentComment != null ? String(payload.studentComment) : null,
+    aiComment
+  });
+  await sock.sendMessage(groupJid, { text });
 }
 
 function looksLikeRawId(s: string | null | undefined): boolean {
@@ -571,6 +605,8 @@ export async function flushEconomyOutbox(sock: WASocket): Promise<void> {
               console.warn("[economy] web_answer extra:", (extraErr as Error).message);
             }
           }
+        } else if (ev.kind === "ai_comment") {
+          await handleAiCommentPending(sock, ev.payload);
         } else if (ev.kind === "discussion_share") {
           await handleDiscussionSharePending(sock, ev.payload);
         }

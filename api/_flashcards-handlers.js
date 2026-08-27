@@ -234,7 +234,17 @@ async function handleIngestAnswer(req, res) {
     .slice(0, 1);
   const tecId = body.tecId != null ? String(body.tecId).trim() : "";
   const shortIdRaw = body.shortId != null ? String(body.shortId).trim().toUpperCase() : "";
-  const comment = body.comment != null ? String(body.comment).trim() : "";
+  const { splitAnswerComments } = require("./_answer-comments.js");
+  const incomingSplit = splitAnswerComments({
+    answer_comment: body.comment != null ? String(body.comment) : "",
+    ai_comment:
+      body.aiComment != null || body.ai_comment != null
+        ? String(body.aiComment ?? body.ai_comment)
+        : ""
+  });
+  const comment = incomingSplit.comment || "";
+  const aiComment = incomingSplit.aiComment || "";
+  const aiUpdate = body.aiUpdate === true || body.ai_update === true;
   const confidence = String(body.confidenceLevel || "seguro").toLowerCase();
   const durationMs =
     body.durationMs != null && Number.isFinite(Number(body.durationMs))
@@ -284,6 +294,98 @@ async function handleIngestAnswer(req, res) {
     }
 
     const userName = await resolveIngestUserName(supabase, userJid, body.userName)
+    const { enqueueBotEvent, pickTargetGroupJid } = require("./_omissas-web.js");
+
+    async function saveAnswerRow(targetId, payload, isUpdate) {
+      const query = isUpdate
+        ? supabase.from("answers").update(payload).eq("id", targetId)
+        : supabase.from("answers").insert(payload).select("id").maybeSingle();
+      let { data, error } = await query;
+      if (error && /column/i.test(error.message || "")) {
+        const slim = { ...payload };
+        delete slim.confidence_level;
+        delete slim.duration_ms;
+        delete slim.sync_source;
+        delete slim.ai_comment;
+        const retry = isUpdate
+          ? await supabase.from("answers").update(slim).eq("id", targetId)
+          : await supabase.from("answers").insert(slim).select("id").maybeSingle();
+        if (retry.error) throw retry.error;
+        data = retry.data;
+      } else if (error) throw error;
+      return data;
+    }
+
+    async function enqueueAiCommentIfNew(prevAi, nextAi, studentComment) {
+      const next = String(nextAi || "").trim();
+      const prev = String(prevAi || "").trim();
+      if (!next || next === prev) return;
+      const groupJid =
+        String(question.target_group_jid || question.group_jid || "").trim() ||
+        pickTargetGroupJid();
+      try {
+        const posted = await supabase
+          .from("question_wa_messages")
+          .select("wa_message_id")
+          .eq("question_id", question.id)
+          .eq("group_jid", groupJid)
+          .eq("role", "result")
+          .limit(1)
+          .maybeSingle();
+        if (posted.error || !posted.data || !posted.data.wa_message_id) return;
+      } catch {
+        return;
+      }
+      await enqueueBotEvent(supabase, "ai_comment", {
+        userJid,
+        userName,
+        questionId: question.id,
+        questionShortId: String(question.short_id || "").toUpperCase(),
+        groupJid,
+        studentComment: studentComment || null,
+        aiComment: next
+      });
+    }
+
+    let existing = null;
+    {
+      const first = await supabase
+        .from("answers")
+        .select("id, answer_letter, answer_comment, ai_comment")
+        .eq("question_id", question.id)
+        .eq("user_jid", userJid)
+        .maybeSingle();
+      if (first.error && /column/i.test(first.error.message || "")) {
+        const retry = await supabase
+          .from("answers")
+          .select("id, answer_letter, answer_comment")
+          .eq("question_id", question.id)
+          .eq("user_jid", userJid)
+          .maybeSingle();
+        if (retry.error) throw retry.error;
+        existing = retry.data;
+      } else if (first.error) throw first.error;
+      else existing = first.data;
+    }
+
+    const prevSplit = splitAnswerComments(existing || {});
+
+    if (aiUpdate) {
+      if (!existing) {
+        return res.status(202).json({ pending: true, reason: "Resposta ainda não existe no Papa." });
+      }
+      const patch = { ai_comment: aiComment || null };
+      if (comment) patch.answer_comment = comment;
+      await saveAnswerRow(existing.id, patch, true);
+      await enqueueAiCommentIfNew(prevSplit.aiComment, aiComment, comment || prevSplit.comment);
+      return res.status(200).json({
+        ok: true,
+        answerId: Number(existing.id),
+        shortId: String(question.short_id || "").toUpperCase(),
+        aiUpdate: true,
+        pending: false
+      });
+    }
 
     const row = {
       question_id: question.id,
@@ -292,6 +394,7 @@ async function handleIngestAnswer(req, res) {
       user_name: userName,
       answer_letter: letter,
       answer_comment: comment || null,
+      ai_comment: aiComment || null,
       source_message_id: `app:${Date.now()}`,
       sent_at: new Date().toISOString(),
       confidence_level: confidence === "inseguro" || confidence === "chute" ? confidence : "seguro",
@@ -299,38 +402,16 @@ async function handleIngestAnswer(req, res) {
       sync_source: "app"
     };
 
-    const { data: existing } = await supabase
-      .from("answers")
-      .select("id, answer_letter")
-      .eq("question_id", question.id)
-      .eq("user_jid", userJid)
-      .maybeSingle();
-
     let answerId;
     if (existing) {
-      const { error } = await supabase.from("answers").update(row).eq("id", existing.id);
-      if (error && /column/i.test(error.message || "")) {
-        const slim = { ...row };
-        delete slim.confidence_level;
-        delete slim.duration_ms;
-        delete slim.sync_source;
-        const retry = await supabase.from("answers").update(slim).eq("id", existing.id);
-        if (retry.error) throw retry.error;
-      } else if (error) throw error;
+      await saveAnswerRow(existing.id, row, true);
       answerId = Number(existing.id);
     } else {
-      const { data: inserted, error } = await supabase.from("answers").insert(row).select("id").maybeSingle();
-      if (error && /column/i.test(error.message || "")) {
-        const slim = { ...row };
-        delete slim.confidence_level;
-        delete slim.duration_ms;
-        delete slim.sync_source;
-        const retry = await supabase.from("answers").insert(slim).select("id").maybeSingle();
-        if (retry.error) throw retry.error;
-        answerId = Number(retry.data?.id);
-      } else if (error) throw error;
-      else answerId = Number(inserted?.id);
+      const inserted = await saveAnswerRow(null, row, false);
+      answerId = Number(inserted?.id);
     }
+
+    await enqueueAiCommentIfNew(prevSplit.aiComment, aiComment, comment || prevSplit.comment);
 
     if (tags.length && answerId) {
       try {

@@ -252,10 +252,21 @@ async function enrichPostsList(supabase, rows) {
 }
 
 async function loadAnswersContext(supabase, questionId, answerKey) {
-  const { data: answers } = await supabase
+  const { splitAnswerComments } = require("./_answer-comments.js");
+  let answers;
+  const first = await supabase
     .from("answers")
-    .select("user_jid, user_name, answer_letter, answer_comment")
+    .select("user_jid, user_name, answer_letter, answer_comment, ai_comment")
     .eq("question_id", questionId);
+  if (first.error && /column/i.test(first.error.message || "")) {
+    const retry = await supabase
+      .from("answers")
+      .select("user_jid, user_name, answer_letter, answer_comment")
+      .eq("question_id", questionId);
+    if (retry.error) throw retry.error;
+    answers = retry.data;
+  } else if (first.error) throw first.error;
+  else answers = first.data;
   const key = String(answerKey || "")
     .toUpperCase()
     .slice(0, 1);
@@ -264,15 +275,13 @@ async function loadAnswersContext(supabase, questionId, answerKey) {
       .toUpperCase()
       .slice(0, 1);
     const name = (row.user_name && String(row.user_name).trim()) || "Participante";
-    const comment =
-      row.answer_comment != null && String(row.answer_comment).trim()
-        ? String(row.answer_comment).trim()
-        : null;
+    const split = splitAnswerComments(row);
     return {
       userJid: String(row.user_jid || ""),
       userName: name,
       letter,
-      comment,
+      comment: split.comment,
+      aiComment: split.aiComment,
       correct: key ? letter === key : null
     };
   });

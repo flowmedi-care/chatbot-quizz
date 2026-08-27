@@ -1392,12 +1392,13 @@
         } else {
           for (const row of rowsForTable) {
             const commentCell = row.answerComment ? mdCell(row.answerComment) : "—";
+            const aiCell = row.answerAiComment ? mdCell(row.answerAiComment) : "";
             const catsCell =
               Array.isArray(row.categories) && row.categories.length
                 ? mdCell(row.categories.map((c) => c.name).join(", "))
                 : "—";
             lines.push(
-              `| ${mdCell(row.userName)} | ${formatMarcada(row.answerLetterDisplay, q)} | ${formatGabarito(q)} | ${row.correct ? "Certo" : "Errado"} | ${commentCell} | ${catsCell} |`
+              `| ${mdCell(row.userName)} | ${formatMarcada(row.answerLetterDisplay, q)} | ${formatGabarito(q)} | ${row.correct ? "Certo" : "Errado"} | ${commentCell}${aiCell ? ` / IA: ${aiCell}` : ""} | ${catsCell} |`
             );
           }
         }
@@ -1412,6 +1413,9 @@
           lines.push(`- **Marcou:** ${formatMarcada(row.answerLetterDisplay, q)}`);
           if (row.answerComment) {
             lines.push(`- **Comentário:** ${row.answerComment}`);
+          }
+          if (row.answerAiComment) {
+            lines.push(`- **IA:** ${row.answerAiComment}`);
           }
           const catNames =
             Array.isArray(row.categories) && row.categories.length
