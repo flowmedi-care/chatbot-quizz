@@ -196,7 +196,7 @@ const omissasOfferByUser = new Map<string, string[]>();
 const autoGabaritoPostedQuestionIds = new Set<string>();
 const autoGabaritoWaitingQuestionIds = new Set<string>();
 const AUTO_GABARITO_AI_WAIT_MS = 6000;
-const AUTO_GABARITO_AI_WAIT_TRIES = 8;
+const AUTO_GABARITO_AI_WAIT_TRIES = 12;
 
 function delayMs(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));

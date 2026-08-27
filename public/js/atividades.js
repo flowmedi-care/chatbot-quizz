@@ -75,7 +75,7 @@
     let n = 0;
     aiPollTimer = setInterval(() => {
       n += 1;
-      if (n > 15) {
+      if (n > 20) {
         stopAiPoll();
         quizUi.paintAiComment("", { warn: true });
         return;
@@ -1155,7 +1155,7 @@
               ${
                 item.yourAiComment
                   ? `<div class="omissas-ai-comment"><p class="omissas-ai-kicker">Resposta da IA</p><p class="omissas-ai-body">${esc(item.yourAiComment)}</p></div>`
-                  : `<p class="omissas-ai-warn">IA: sem resposta — crédito da API esgotado ou Via Aprovação ainda não vinculada.</p>`
+                  : `<p class="omissas-ai-warn">IA: sem resposta no momento — a IA demorou ou falhou.</p>`
               }
             </div>`
                 : ""

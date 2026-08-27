@@ -1,6 +1,6 @@
 const AI_SEP = "— Comentário da IA —";
 const AI_MISSING_HINT =
-  "sem resposta — crédito da API esgotado ou Via Aprovação ainda não vinculada.";
+  "sem resposta no momento — a IA demorou ou falhou. Se aparecer na Via Aprovação, entra no grupo em seguida.";
 
 function splitAnswerComments(row) {
   let raw = row && row.answer_comment != null ? String(row.answer_comment).trim() : "";

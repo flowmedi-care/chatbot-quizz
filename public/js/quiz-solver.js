@@ -281,7 +281,7 @@
       kicker.textContent = warn ? "IA" : pending ? "IA" : "Resposta da IA";
     }
     body.textContent = warn
-      ? "Sem resposta — crédito da API esgotado ou Via Aprovação ainda não vinculada."
+      ? "Sem resposta no momento — a IA demorou ou falhou. Se aparecer depois, entra neste card."
       : pending
         ? "Aguardando resposta da IA…"
         : t;
