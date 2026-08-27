@@ -49,6 +49,9 @@
   let selectedLetter = null;
   let eliminated = new Set();
   let resultsTimer = 0;
+  /** @type {Map<string, Promise<any>>} */
+  let pendingSaves = new Map();
+  let advancing = false;
 
   const timer = quizUi.createTimer({
     timer: $("q-timer"),
@@ -99,9 +102,12 @@
     const btn = ev.target && ev.target.closest && ev.target.closest(".btn-conf");
     if (!btn) return;
     const q = pending[index];
-    if (q && q.alreadyAnswered) return;
     const key = btn.dataset.conf;
     currentConfidence = currentConfidence === key ? "seguro" : key;
+    if (q) {
+      q.yourConfidence = currentConfidence;
+      q.dirty = true;
+    }
     syncConfidenceUi();
   });
 
@@ -295,10 +301,100 @@
   function scheduleShowResultsIfComplete() {
     cancelScheduledResults();
     if (!sessionAllAnswered()) return;
-    resultsTimer = window.setTimeout(() => {
-      resultsTimer = 0;
+    void showResults();
+  }
+
+  function saveDraftForCurrent() {
+    const q = pending[index];
+    if (!q) return;
+    const commentEl = $("q-comment");
+    if (commentEl) q.yourComment = commentEl.value || "";
+    q.yourConfidence = currentConfidence;
+    if (selectedLetter) {
+      q.yourLetter = selectedLetter;
+      q.yourAnswer = selectedLetter;
+    }
+    saveDraftCatsForCurrent();
+  }
+
+  function showQuizStatus(msg) {
+    const st = $("q-status");
+    if (!st) return;
+    if (!msg) {
+      st.classList.add("hidden");
+      st.textContent = "";
+      return;
+    }
+    st.classList.remove("hidden");
+    st.textContent = msg;
+  }
+
+  function saveAnswerInBackground(q) {
+    if (!q || !token) return Promise.resolve();
+    const letter = String(q.yourLetter || q.yourAnswer || "").toLowerCase();
+    if (!letter) return Promise.resolve();
+    const sid = catKey(q);
+    const seq = (q.saveSeq = (q.saveSeq || 0) + 1);
+    const payload = {
+      t: token,
+      shortId: q.shortId,
+      letter,
+      comment: q.yourComment || "",
+      categoryIds: Array.isArray(q.categoryIds) ? q.categoryIds : Array.from(selectedCategoryIds),
+      confidenceLevel: q.yourConfidence || "seguro",
+      durationMs: q.durationMs != null ? q.durationMs : timer.elapsed(),
+      checkComplete: sessionAllAnswered()
+    };
+    const p = fetchJson(API.answer, {
+      method: "POST",
+      body: JSON.stringify(payload)
+    })
+      .then((data) => {
+        if (q.saveSeq !== seq) return;
+        q.yourLetter = data.yourAnswer || letter;
+        q.yourAnswer = q.yourLetter;
+        q.answerKey = data.answerKey;
+        q.correct = data.correct;
+        if (data.durationMs != null) q.durationMs = data.durationMs;
+        q.dirty = false;
+        q.saveError = null;
+        if (pending[index] && pending[index].shortId === q.shortId) {
+          showQuizStatus("");
+        }
+      })
+      .catch((e) => {
+        if (q.saveSeq !== seq) return;
+        q.saveError = e.message || "Erro ao salvar.";
+        if (pending[index] && pending[index].shortId === q.shortId) {
+          showQuizStatus(q.saveError);
+          paintCurrentChoices();
+        }
+      })
+      .finally(() => {
+        if (pendingSaves.get(sid) === p) pendingSaves.delete(sid);
+      });
+    pendingSaves.set(sid, p);
+    return p;
+  }
+
+  function advanceAfterResolve() {
+    cancelScheduledResults();
+    setCatsPanelOpen(false);
+    const next = index + 1;
+    if (next < pending.length) {
+      index = next;
+      renderQuestion();
+      return;
+    }
+    if (sessionAllAnswered()) {
       void showResults();
-    }, 1100);
+      return;
+    }
+    const firstOpen = pending.findIndex((item) => !item.alreadyAnswered);
+    if (firstOpen >= 0) {
+      index = firstOpen;
+      renderQuestion();
+    }
   }
 
   function isTypingTarget(el) {
@@ -357,9 +453,11 @@
   }
 
   function navigateQuiz(delta) {
-    if (submitting || !pending.length) return;
+    if (!pending.length || advancing) return;
     cancelScheduledResults();
-    saveDraftCatsForCurrent();
+    saveDraftForCurrent();
+    const q = pending[index];
+    if (q && q.alreadyAnswered && q.dirty) void saveAnswerInBackground(q);
     setCatsPanelOpen(false);
     const next = index + delta;
     if (delta > 0 && next >= pending.length && sessionAllAnswered()) {
@@ -378,11 +476,11 @@
     const canGoResults = allDone && index >= pending.length - 1;
     const nextTitle = canGoResults ? "Ver resultado da seção (→)" : "Próxima (→)";
     prevBtns.forEach((prev) => {
-      prev.disabled = submitting || index <= 0;
+      prev.disabled = advancing || index <= 0;
       prev.title = "Anterior (←)";
     });
     nextBtns.forEach((next) => {
-      next.disabled = submitting || (index >= pending.length - 1 && !canGoResults);
+      next.disabled = advancing || (index >= pending.length - 1 && !canGoResults);
       if (next.id === "q-next-bottom") {
         next.textContent = canGoResults ? "Ver resultado ›" : "Próxima ›";
       } else {
@@ -737,15 +835,15 @@
     const q = pending[index];
     const hint = $("q-choices-hint");
     const btn = $("btn-resolve");
-    if (hint) hint.classList.toggle("hidden", Boolean(q && q.alreadyAnswered));
+    if (hint) hint.classList.remove("hidden");
     if (btn) {
-      btn.disabled = !selectedLetter || submitting || Boolean(q && q.alreadyAnswered);
-      btn.textContent = submitting ? "Resolvendo..." : "Resolver questão";
+      btn.disabled = !selectedLetter || advancing;
+      btn.textContent = q && q.alreadyAnswered ? "Atualizar e próxima" : "Resolver questão";
     }
     quizUi.paintChoices($("q-choices"), {
       selected: selectedLetter,
       eliminated,
-      locked: Boolean(q && q.alreadyAnswered) || submitting,
+      locked: advancing,
       answerKey: "",
       yourLetter: (q && (q.yourLetter || q.yourAnswer)) || selectedLetter,
       showResult: false
@@ -760,17 +858,20 @@
   function bindCurrentChoices(q) {
     quizUi.bindChoices($("q-choices"), {
       assistMode: () => assistMode,
-      isLocked: () => submitting || Boolean(pending[index] && pending[index].alreadyAnswered),
+      isLocked: () => advancing,
       onAssist: (letter) => useAssistOnLetter(letter),
       onSelect: (letter) => {
         const cur = pending[index];
-        if (!cur || cur.alreadyAnswered || submitting) return;
+        if (!cur || advancing) return;
         selectedLetter = letter;
+        cur.yourLetter = letter;
+        cur.yourAnswer = letter;
+        cur.dirty = true;
         paintCurrentChoices();
       },
       onToggleEliminated: (letter) => {
         const cur = pending[index];
-        if (!cur || cur.alreadyAnswered || submitting) return;
+        if (!cur || advancing) return;
         if (eliminated.has(letter)) eliminated.delete(letter);
         else {
           eliminated.add(letter);
@@ -877,10 +978,10 @@
     $("omissas-loading").classList.add("hidden");
     $("omissas-results").classList.add("hidden");
     $("omissas-quiz").classList.remove("hidden");
-    $("q-status").classList.add("hidden");
+    showQuizStatus(q.saveError || "");
     const commentEl = $("q-comment");
-    commentEl.value = q.alreadyAnswered ? q.yourComment || "" : "";
-    commentEl.readOnly = Boolean(q.alreadyAnswered);
+    commentEl.value = q.yourComment || "";
+    commentEl.readOnly = false;
     currentConfidence = q.yourConfidence || "seguro";
     questionOpenedAt = Date.now();
     syncConfidenceUi();
@@ -895,7 +996,7 @@
     if (q.creatorName) metaParts.push(`Por ${q.creatorName}`);
     $("q-meta").textContent = metaParts.join(" · ");
     $("q-progress").textContent = q.alreadyAnswered
-      ? `${index + 1} / ${pending.length} · respondida`
+      ? `${index + 1} / ${pending.length} · respondida (pode alterar)`
       : `${index + 1} / ${pending.length}`;
 
     $("q-statement").innerHTML = quizUi.statementHtml(q) || "<p>(Sem enunciado)</p>";
@@ -903,9 +1004,7 @@
     renderQuizCategoryToggles();
     syncQuizNavButtons();
 
-    selectedLetter = q.alreadyAnswered
-      ? String(q.yourLetter || q.yourAnswer || "").toLowerCase()
-      : null;
+    selectedLetter = String(q.yourLetter || q.yourAnswer || "").toLowerCase() || null;
     eliminated = new Set();
     timer.start(q.alreadyAnswered && q.durationMs ? q.durationMs : null);
     const sid = q.shortId;
@@ -951,68 +1050,51 @@
     }
   }
 
-  async function onChoose(letter) {
-    if (submitting) return;
+  function onChoose(letter) {
+    if (advancing) return;
     const q = pending[index];
-    if (!q || !letter || q.alreadyAnswered) return;
-    submitting = true;
+    if (!q || !letter) return;
+    advancing = true;
     assistMode = false;
-    syncQuizNavButtons();
-    paintCurrentChoices();
-    const btnAssist = $("btn-assist");
-    if (btnAssist) btnAssist.disabled = true;
-    $("q-status").classList.remove("hidden");
-    $("q-status").textContent = "Salvando…";
-    try {
-      const data = await fetchJson(API.answer, {
-        method: "POST",
-        body: JSON.stringify({
-          t: token,
-          shortId: q.shortId,
-          letter,
-          comment: $("q-comment").value || "",
-          categoryIds: Array.from(selectedCategoryIds),
-          confidenceLevel: currentConfidence,
-          durationMs: timer.elapsed()
-        })
-      });
-      q.alreadyAnswered = true;
-      q.yourLetter = data.yourAnswer || letter;
-      q.yourAnswer = data.yourAnswer || letter;
-      q.yourComment = $("q-comment").value || "";
-      q.answerKey = data.answerKey;
-      q.correct = data.correct;
-      q.categoryIds = Array.from(selectedCategoryIds);
-      draftCatsByShortId.set(catKey(q), q.categoryIds);
-      selectedLetter = String(q.yourLetter || letter).toLowerCase();
-      q.durationMs = data.durationMs != null ? data.durationMs : timer.elapsed();
-      timer.start(q.durationMs);
-      $("q-status").classList.add("hidden");
-      $("q-comment").readOnly = true;
-      updateQuestionDetails();
-      submitting = false;
-      syncQuizNavButtons();
+    saveDraftForCurrent();
+    q.yourLetter = letter;
+    q.yourAnswer = letter;
+    q.alreadyAnswered = true;
+    q.yourConfidence = currentConfidence;
+    if (q.durationMs == null) q.durationMs = timer.elapsed();
+    q.dirty = true;
+    void saveAnswerInBackground(q);
+    advanceAfterResolve();
+    window.setTimeout(() => {
+      advancing = false;
       paintCurrentChoices();
-      syncAssistUi(q);
-      if (sessionAllAnswered()) scheduleShowResultsIfComplete();
-    } catch (e) {
-      submitting = false;
       syncQuizNavButtons();
-      $("q-status").classList.remove("hidden");
-      $("q-status").textContent = e.message || "Erro ao salvar.";
-      paintCurrentChoices();
-      syncAssistUi(q);
-    }
+    }, 40);
   }
 
   async function showResults() {
     cancelScheduledResults();
     if (timer) timer.stop();
+    saveDraftForCurrent();
+    const current = pending[index];
+    if (current && current.alreadyAnswered && current.dirty && !pendingSaves.has(catKey(current))) {
+      void saveAnswerInBackground(current);
+    }
     $("omissas-quiz").classList.add("hidden");
     $("omissas-loading").classList.remove("hidden");
-    $("omissas-loading").textContent = "Montando resultado…";
+    $("omissas-loading").textContent = pendingSaves.size ? "Salvando respostas…" : "Montando resultado…";
     try {
-      const data = await fetchJson(API.results(token));
+      if (pendingSaves.size) await Promise.allSettled([...pendingSaves.values()]);
+      $("omissas-loading").textContent = "Montando resultado…";
+      let data;
+      try {
+        data = await fetchJson(API.results(token));
+      } catch (first) {
+        if (first.status !== 409) throw first;
+        await new Promise((r) => window.setTimeout(r, 280));
+        if (pendingSaves.size) await Promise.allSettled([...pendingSaves.values()]);
+        data = await fetchJson(API.results(token));
+      }
       $("omissas-loading").classList.add("hidden");
       $("omissas-results").classList.remove("hidden");
       const hello = firstName(data.userName || quizUserName || userName);
@@ -1173,7 +1255,7 @@
       if (btn) btn.addEventListener("click", () => navigateQuiz(1));
     });
     document.addEventListener("keydown", (ev) => {
-      if (!quizIsOpen() || submitting) return;
+      if (!quizIsOpen() || advancing) return;
       if (ev.altKey || ev.ctrlKey || ev.metaKey) return;
       if (isTypingTarget(ev.target)) return;
       if (ev.key === "ArrowLeft") {
@@ -1186,7 +1268,7 @@
     });
     if (quizUi.bindSwipeNav) {
       quizUi.bindSwipeNav($("omissas-quiz"), {
-        isEnabled: () => quizIsOpen() && !submitting,
+        isEnabled: () => quizIsOpen() && !advancing,
         onPrev: () => navigateQuiz(-1),
         onNext: () => navigateQuiz(1)
       });
@@ -1236,14 +1318,24 @@
     const btnResolve = $("btn-resolve");
     if (btnResolve) {
       btnResolve.addEventListener("click", () => {
-        if (!selectedLetter) return;
-        void onChoose(selectedLetter);
+        if (!selectedLetter || advancing) return;
+        onChoose(selectedLetter);
+      });
+    }
+    const commentEl = $("q-comment");
+    if (commentEl && !commentEl.dataset.dirtyBound) {
+      commentEl.dataset.dirtyBound = "1";
+      commentEl.addEventListener("input", () => {
+        const q = pending[index];
+        if (!q) return;
+        q.yourComment = commentEl.value || "";
+        q.dirty = true;
       });
     }
     const btnResults = $("btn-atv-results");
     if (btnResults) {
       btnResults.addEventListener("click", () => {
-        if (submitting) return;
+        if (advancing) return;
         void showResults();
       });
     }

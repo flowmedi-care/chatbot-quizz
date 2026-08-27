@@ -64,6 +64,9 @@
   /** @type {Map<string, number[]>} */
   let draftCatsByShortId = new Map();
   let resultsTimer = 0;
+  /** @type {Map<string, Promise<any>>} */
+  let pendingSaves = new Map();
+  let advancing = false;
 
   const quizUi = window.PapaQuizUi;
 
@@ -126,10 +129,98 @@
   function scheduleShowResultsIfComplete() {
     cancelScheduledResults();
     if (!sessionAllAnswered()) return;
-    resultsTimer = window.setTimeout(() => {
-      resultsTimer = 0;
+    void showResults();
+  }
+
+  function saveDraftForCurrent() {
+    const q = pending[index];
+    if (!q) return;
+    if (els.comment) q.yourComment = els.comment.value || "";
+    q.yourConfidence = currentConfidence;
+    if (selectedLetter) {
+      q.yourLetter = selectedLetter;
+      q.yourAnswer = selectedLetter;
+    }
+    saveDraftCatsForCurrent();
+  }
+
+  function showQuizStatus(msg) {
+    if (!els.status) return;
+    if (!msg) {
+      els.status.classList.add("hidden");
+      els.status.textContent = "";
+      return;
+    }
+    els.status.classList.remove("hidden");
+    els.status.textContent = msg;
+  }
+
+  function saveAnswerInBackground(q) {
+    if (!q || !token) return Promise.resolve();
+    const letter = String(q.yourLetter || q.yourAnswer || "").toLowerCase();
+    if (!letter) return Promise.resolve();
+    const sid = catKey(q);
+    const seq = (q.saveSeq = (q.saveSeq || 0) + 1);
+    const payload = {
+      t: token,
+      shortId: q.shortId,
+      letter,
+      comment: q.yourComment || "",
+      categoryIds: Array.isArray(q.categoryIds) ? q.categoryIds : Array.from(selectedCategoryIds),
+      confidenceLevel: q.yourConfidence || "seguro",
+      durationMs: q.durationMs != null ? q.durationMs : timer.elapsed(),
+      checkComplete: sessionAllAnswered()
+    };
+    const p = fetchJson(API.answer, {
+      method: "POST",
+      body: JSON.stringify(payload)
+    })
+      .then((data) => {
+        if (q.saveSeq !== seq) return;
+        q.yourLetter = data.yourAnswer || letter;
+        q.yourAnswer = q.yourLetter;
+        q.answerKey = data.answerKey;
+        q.correct = data.correct;
+        if (data.durationMs != null) q.durationMs = data.durationMs;
+        q.dirty = false;
+        q.saveError = null;
+        if (pending[index] && pending[index].shortId === q.shortId) {
+          showQuizStatus("");
+        }
+      })
+      .catch((e) => {
+        if (q.saveSeq !== seq) return;
+        q.saveError = e.message || "Erro ao salvar.";
+        if (pending[index] && pending[index].shortId === q.shortId) {
+          showQuizStatus(q.saveError);
+          paintCurrentChoices();
+        }
+      })
+      .finally(() => {
+        if (pendingSaves.get(sid) === p) pendingSaves.delete(sid);
+      });
+    pendingSaves.set(sid, p);
+    return p;
+  }
+
+  function advanceAfterResolve() {
+    cancelScheduledResults();
+    setCatsPanelOpen(false);
+    const next = index + 1;
+    if (next < pending.length) {
+      index = next;
+      renderQuestion();
+      return;
+    }
+    if (sessionAllAnswered()) {
       void showResults();
-    }, 1100);
+      return;
+    }
+    const firstOpen = pending.findIndex((item) => !item.alreadyAnswered);
+    if (firstOpen >= 0) {
+      index = firstOpen;
+      renderQuestion();
+    }
   }
 
   function saveDraftCatsForCurrent() {
@@ -287,9 +378,11 @@
   }
 
   function navigateQuiz(delta) {
-    if (submitting || !pending.length) return;
+    if (!pending.length || advancing) return;
     cancelScheduledResults();
-    saveDraftCatsForCurrent();
+    saveDraftForCurrent();
+    const q = pending[index];
+    if (q && q.alreadyAnswered && q.dirty) void saveAnswerInBackground(q);
     setCatsPanelOpen(false);
     const next = index + delta;
     if (delta > 0 && next >= pending.length && sessionAllAnswered()) {
@@ -312,11 +405,11 @@
     const canGoResults = allDone && index >= pending.length - 1;
     const nextTitle = canGoResults ? "Ver resultado da seção (→)" : "Próxima (→)";
     prevBtns.forEach((prev) => {
-      prev.disabled = submitting || index <= 0;
+      prev.disabled = advancing || index <= 0;
       prev.title = "Anterior (←)";
     });
     nextBtns.forEach((next) => {
-      next.disabled = submitting || (index >= pending.length - 1 && !canGoResults);
+      next.disabled = advancing || (index >= pending.length - 1 && !canGoResults);
       if (next.id === "q-next-bottom") {
         next.textContent = canGoResults ? "Ver resultado ›" : "Próxima ›";
       } else {
@@ -329,16 +422,16 @@
   function paintCurrentChoices() {
     const q = pending[index];
     if (els.choicesHint) {
-      els.choicesHint.classList.toggle("hidden", Boolean(q && q.alreadyAnswered));
+      els.choicesHint.classList.remove("hidden");
     }
     if (els.btnResolve) {
-      els.btnResolve.disabled = !selectedLetter || submitting || Boolean(q && q.alreadyAnswered);
-      els.btnResolve.textContent = submitting ? "Resolvendo..." : "Resolver questão";
+      els.btnResolve.disabled = !selectedLetter || advancing;
+      els.btnResolve.textContent = q && q.alreadyAnswered ? "Atualizar e próxima" : "Resolver questão";
     }
     quizUi.paintChoices(els.choices, {
       selected: selectedLetter,
       eliminated,
-      locked: Boolean(q && q.alreadyAnswered) || submitting,
+      locked: advancing,
       answerKey: "",
       yourLetter: (q && (q.yourLetter || q.yourAnswer)) || selectedLetter,
       showResult: false
@@ -352,17 +445,20 @@
   function bindCurrentChoices() {
     quizUi.bindChoices(els.choices, {
       assistMode: () => assistMode,
-      isLocked: () => submitting || Boolean(pending[index] && pending[index].alreadyAnswered),
+      isLocked: () => advancing,
       onAssist: (letter) => useAssistOnLetter(letter),
       onSelect: (letter) => {
         const cur = pending[index];
-        if (!cur || cur.alreadyAnswered || submitting) return;
+        if (!cur || advancing) return;
         selectedLetter = letter;
+        cur.yourLetter = letter;
+        cur.yourAnswer = letter;
+        cur.dirty = true;
         paintCurrentChoices();
       },
       onToggleEliminated: (letter) => {
         const cur = pending[index];
-        if (!cur || cur.alreadyAnswered || submitting) return;
+        if (!cur || advancing) return;
         if (eliminated.has(letter)) eliminated.delete(letter);
         else {
           eliminated.add(letter);
@@ -377,9 +473,12 @@
     const btn = ev.target && ev.target.closest && ev.target.closest(".btn-conf");
     if (!btn) return;
     const q = pending[index];
-    if (q && q.alreadyAnswered) return;
     const key = btn.dataset.conf;
     currentConfidence = currentConfidence === key ? "seguro" : key;
+    if (q) {
+      q.yourConfidence = currentConfidence;
+      q.dirty = true;
+    }
     document.querySelectorAll(".btn-conf").forEach((b) => {
       const on = b.dataset.conf === currentConfidence;
       b.style.background = on ? "#1e293b" : "#fff";
@@ -468,16 +567,14 @@
     els.loading.classList.add("hidden");
     els.results.classList.add("hidden");
     els.quiz.classList.remove("hidden");
-    els.status.classList.add("hidden");
-    els.comment.value = q.alreadyAnswered ? q.yourComment || "" : "";
-    els.comment.readOnly = Boolean(q.alreadyAnswered);
+    showQuizStatus(q.saveError || "");
+    els.comment.value = q.yourComment || "";
+    els.comment.readOnly = false;
     assistMode = false;
     currentConfidence = q.yourConfidence || "seguro";
     setCatsPanelOpen(false);
     loadDraftCatsForCurrent();
-    selectedLetter = q.alreadyAnswered
-      ? String(q.yourLetter || q.yourAnswer || "").toLowerCase()
-      : null;
+    selectedLetter = String(q.yourLetter || q.yourAnswer || "").toLowerCase() || null;
     eliminated = new Set();
     timer.start(q.alreadyAnswered && q.durationMs ? q.durationMs : null);
     const sid = q.shortId;
@@ -504,7 +601,7 @@
     if (q.creatorName) metaParts.push(`Por ${q.creatorName}`);
     els.meta.textContent = metaParts.join(" · ");
     els.progress.textContent = q.alreadyAnswered
-      ? `${index + 1} / ${pending.length} · respondida`
+      ? `${index + 1} / ${pending.length} · respondida (pode alterar)`
       : `${index + 1} / ${pending.length}`;
 
     els.statement.innerHTML = quizUi.statementHtml(q) || "<p>(Sem enunciado)</p>";
@@ -549,70 +646,52 @@
     }
   }
 
-  async function onChoose(letter) {
-    if (submitting) return;
+  function onChoose(letter) {
+    if (advancing) return;
     const q = pending[index];
-    if (!q || !letter || q.alreadyAnswered) return;
-
-    submitting = true;
+    if (!q || !letter) return;
+    advancing = true;
     assistMode = false;
-    syncQuizNavButtons();
-    paintCurrentChoices();
-    if (els.btnAssist) els.btnAssist.disabled = true;
-    els.status.classList.remove("hidden");
-    els.status.textContent = "Salvando…";
-
-    try {
-      const data = await fetchJson(API.answer, {
-        method: "POST",
-        body: JSON.stringify({
-          t: token,
-          shortId: q.shortId,
-          letter,
-          comment: els.comment.value || "",
-          categoryIds: Array.from(selectedCategoryIds),
-          confidenceLevel: currentConfidence,
-          durationMs: timer.elapsed()
-        })
-      });
-
-      q.alreadyAnswered = true;
-      q.yourLetter = data.yourAnswer || letter;
-      q.yourAnswer = data.yourAnswer || letter;
-      q.yourComment = els.comment.value || "";
-      q.answerKey = data.answerKey;
-      q.correct = data.correct;
-      q.categoryIds = Array.from(selectedCategoryIds);
-      draftCatsByShortId.set(catKey(q), q.categoryIds);
-      selectedLetter = String(q.yourLetter || letter).toLowerCase();
-      q.durationMs = data.durationMs != null ? data.durationMs : timer.elapsed();
-      timer.start(q.durationMs);
-      els.comment.readOnly = true;
-      els.status.classList.add("hidden");
-      updateQuestionDetails();
-      submitting = false;
-      syncQuizNavButtons();
+    saveDraftForCurrent();
+    q.yourLetter = letter;
+    q.yourAnswer = letter;
+    q.alreadyAnswered = true;
+    q.yourConfidence = currentConfidence;
+    if (q.durationMs == null) q.durationMs = timer.elapsed();
+    q.dirty = true;
+    void saveAnswerInBackground(q);
+    advanceAfterResolve();
+    window.setTimeout(() => {
+      advancing = false;
       paintCurrentChoices();
-      syncAssistUi(q);
-      if (sessionAllAnswered()) scheduleShowResultsIfComplete();
-    } catch (e) {
-      submitting = false;
       syncQuizNavButtons();
-      els.status.textContent = e.message || "Erro ao salvar.";
-      paintCurrentChoices();
-      syncAssistUi(q);
-    }
+    }, 40);
   }
 
   async function showResults() {
     cancelScheduledResults();
     timer.stop();
+    saveDraftForCurrent();
+    const current = pending[index];
+    if (current && current.alreadyAnswered && current.dirty && !pendingSaves.has(catKey(current))) {
+      void saveAnswerInBackground(current);
+    }
     els.quiz.classList.add("hidden");
     els.loading.classList.remove("hidden");
-    els.loading.textContent = "Montando resultado…";
+    els.loading.textContent = pendingSaves.size ? "Salvando respostas…" : "Montando resultado…";
 
     try {
-      const data = await fetchJson(API.results(token));
+      if (pendingSaves.size) await Promise.allSettled([...pendingSaves.values()]);
+      els.loading.textContent = "Montando resultado…";
+      let data;
+      try {
+        data = await fetchJson(API.results(token));
+      } catch (first) {
+        if (first.status !== 409) throw first;
+        await new Promise((r) => window.setTimeout(r, 280));
+        if (pendingSaves.size) await Promise.allSettled([...pendingSaves.values()]);
+        data = await fetchJson(API.results(token));
+      }
       els.loading.classList.add("hidden");
       els.results.classList.remove("hidden");
 
@@ -762,13 +841,22 @@
     }
     if (els.btnResolve) {
       els.btnResolve.addEventListener("click", () => {
-        if (!selectedLetter) return;
-        void onChoose(selectedLetter);
+        if (!selectedLetter || advancing) return;
+        onChoose(selectedLetter);
+      });
+    }
+    if (els.comment && !els.comment.dataset.dirtyBound) {
+      els.comment.dataset.dirtyBound = "1";
+      els.comment.addEventListener("input", () => {
+        const q = pending[index];
+        if (!q) return;
+        q.yourComment = els.comment.value || "";
+        q.dirty = true;
       });
     }
     if (els.btnNextQ) {
       els.btnNextQ.addEventListener("click", () => {
-        if (submitting) return;
+        if (advancing) return;
         void showResults();
       });
     }
@@ -781,7 +869,7 @@
       if (btn) btn.addEventListener("click", () => navigateQuiz(1));
     });
     document.addEventListener("keydown", (ev) => {
-      if (!quizIsOpen() || submitting) return;
+      if (!quizIsOpen() || advancing) return;
       if (ev.altKey || ev.ctrlKey || ev.metaKey) return;
       if (quizUi.isTypingTarget(ev.target)) return;
       if (ev.key === "ArrowLeft") {
@@ -793,7 +881,7 @@
       }
     });
     quizUi.bindSwipeNav(els.quiz, {
-      isEnabled: () => quizIsOpen() && !submitting,
+      isEnabled: () => quizIsOpen() && !advancing,
       onPrev: () => navigateQuiz(-1),
       onNext: () => navigateQuiz(1)
     });

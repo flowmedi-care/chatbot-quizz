@@ -517,11 +517,13 @@ async function handleOmissasAnswer(req, res) {
       wasUpdate: saveResult.wasUpdate,
       previousLetter: saveResult.previousLetter,
       sessionToken: session.token
+    }).catch((evErr) => {
+      console.warn("[omissas-answer] bot event:", evErr.message || evErr);
     });
 
     try {
       const { notifyStudyAppAnswer } = require("./_study-sync.js");
-      await notifyStudyAppAnswer(supabase, {
+      void notifyStudyAppAnswer(supabase, {
         userJid: session.userJid,
         shortId,
         publishedQuestionId: q.id,
@@ -531,23 +533,30 @@ async function handleOmissasAnswer(req, res) {
         durationMs,
         tags: (categories || []).map((c) => c.name).filter(Boolean),
         syncSource: "web"
+      }).catch((syncErr) => {
+        console.warn("[omissas-answer] study-sync:", syncErr.message || syncErr);
       });
     } catch (syncErr) {
       console.warn("[omissas-answer] study-sync:", syncErr.message || syncErr);
     }
 
-    const answers = await fetchUserAnswersForShortIds(supabase, session.userJid, session.shortIds);
-    const pendingIds = session.shortIds.filter((sid) => !answers.has(sid));
-    const allDone = pendingIds.length === 0;
-    if (allDone) {
-      await markSessionCompleted(supabase, session.token);
+    let answeredCount = null;
+    let pendingCount = null;
+    let allDone = false;
+    if (body.checkComplete === true || body.sessionComplete === true) {
+      const answers = await fetchUserAnswersForShortIds(supabase, session.userJid, session.shortIds);
+      const pendingIds = session.shortIds.filter((sid) => !answers.has(sid));
+      pendingCount = pendingIds.length;
+      answeredCount = session.shortIds.length - pendingIds.length;
+      allDone = pendingIds.length === 0;
+      if (allDone) await markSessionCompleted(supabase, session.token);
     }
 
     return res.status(200).json({
       ok: true,
       shortId,
-      answeredCount: session.shortIds.length - pendingIds.length,
-      pendingCount: pendingIds.length,
+      answeredCount,
+      pendingCount,
       sessionComplete: allDone,
       categories,
       answerId: saveResult.answerId || null,
@@ -592,6 +601,9 @@ async function handleOmissasResults(req, res) {
         error: "Ainda há questões pendentes nesta sessão.",
         pendingCount: unanswered.length
       });
+    }
+    if (!session.completedAt) {
+      await markSessionCompleted(supabase, session.token);
     }
 
     let correctCount = 0;

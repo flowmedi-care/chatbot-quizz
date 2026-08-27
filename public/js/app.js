@@ -161,6 +161,9 @@
 
   let currentShortId = null;
   let submitPayload = null;
+  /** @type {Map<string, any>} */
+  const practiceDetailCache = new Map();
+  let modalOpenGen = 0;
   /** @type {{ id: number, name: string }[]} */
   let modalUserCategories = [];
   /** @type {Set<number>} */
@@ -857,88 +860,110 @@
     renderModalCategoryToggles();
   }
 
+  function practiceCacheKey(shortId, userJid) {
+    return `${String(shortId || "").toUpperCase()}|${userJid || ""}`;
+  }
+
+  function paintModalQuestion(q, userJid) {
+    els.modalTitle.textContent = `Questão #${q.shortId}`;
+    els.modalAuthor.textContent = `Por ${q.creatorName}`;
+
+    let html = "";
+    if (q.statementText) html += `<div class="statement-text">${esc(q.statementText)}</div>`;
+
+    if (q.statementMediaUrl && q.statementMediaMimeType) {
+      if (q.statementMediaMimeType.startsWith("image/")) {
+        html += `<img src="${esc(q.statementMediaUrl)}" alt="Enunciado" crossorigin="anonymous" />`;
+      } else {
+        html += `<p><a href="${esc(q.statementMediaUrl)}" target="_blank" rel="noopener">Abrir documento (PDF/arquivo)</a></p>`;
+      }
+    }
+    els.modalStatement.innerHTML = html || "<p>(Sem enunciado)</p>";
+
+    const isTf = q.questionType === "true_false";
+    els.modalChoices.classList.toggle("tf", isTf);
+
+    modalUserCategories = Array.isArray(q.userCategories) ? q.userCategories : [];
+    modalSelectedCategoryIds = new Set(
+      (q.categories || []).map((c) => Number(c.id)).filter((n) => Number.isFinite(n))
+    );
+
+    const existingLetter = q.existingAnswer
+      ? String(q.existingAnswer.letter || "").toLowerCase()
+      : "";
+    modalHasAnswer = Boolean(q.existingAnswer);
+
+    if (isTf) {
+      els.modalChoices.innerHTML = `
+            <button type="button" class="btn-choice" data-letter="c">C — Certo</button>
+            <button type="button" class="btn-choice" data-letter="e">E — Errado</button>`;
+    } else {
+      els.modalChoices.innerHTML = ["A", "B", "C", "D", "E"]
+        .map(
+          (L) =>
+            `<button type="button" class="btn-choice" data-letter="${L.toLowerCase()}">${L}</button>`
+        )
+        .join("");
+    }
+    els.modalChoices.querySelectorAll(".btn-choice").forEach((b) => {
+      if (existingLetter && b.dataset.letter === existingLetter) b.classList.add("selected");
+      b.addEventListener("click", () => onAnswer(b.dataset.letter));
+    });
+
+    if (!userJid) {
+      showCategoriesPanel(
+        modalHasAnswer
+          ? "Selecione “Quem sou eu” para editar categorias."
+          : 'Selecione “Quem sou eu” acima para salvar resposta e categorias.'
+      );
+    } else if (modalHasAnswer) {
+      showCategoriesPanel("Resposta já registrada — clique outra letra para alterar, ou ajuste as categorias.");
+      if (els.modalSaveCats) els.modalSaveCats.classList.remove("hidden");
+    } else {
+      showCategoriesPanel("Marque categorias (opcional) e responda. A resposta será salva.");
+    }
+  }
+
+  function prefetchPracticeNeighbors(shortId, userJid) {
+    const ids = getNavigableShortIds();
+    const cur = String(shortId).toUpperCase();
+    const idx = ids.indexOf(cur);
+    if (idx < 0) return;
+    [ids[idx + 1], ids[idx - 1]].filter(Boolean).forEach((sid) => {
+      const key = practiceCacheKey(sid, userJid);
+      if (practiceDetailCache.has(key)) return;
+      void fetchJson(API.detail(sid, userJid || undefined))
+        .then((q) => {
+          practiceDetailCache.set(key, q);
+        })
+        .catch(() => {});
+    });
+  }
+
   async function openModal(shortId) {
+    const gen = ++modalOpenGen;
     currentShortId = shortId;
     resetModal();
     els.modal.classList.add("open");
     els.modal.setAttribute("aria-hidden", "false");
-    els.modalStatement.innerHTML = '<p class="loading">Carregando…</p>';
 
     const userJid = getPracticeUserJid();
+    const key = practiceCacheKey(shortId, userJid);
+    const cached = practiceDetailCache.get(key);
+    if (cached) paintModalQuestion(cached, userJid);
+    else els.modalStatement.innerHTML = '<p class="loading">Carregando…</p>';
+
     try {
       const q = await fetchJson(API.detail(shortId, userJid || undefined));
-      els.modalTitle.textContent = `Questão #${q.shortId}`;
-      els.modalAuthor.textContent = `Por ${q.creatorName}`;
-
-      let html = "";
-      if (q.statementText) html += `<div class="statement-text">${esc(q.statementText)}</div>`;
-
-      if (q.statementMediaUrl && q.statementMediaMimeType) {
-        if (q.statementMediaMimeType.startsWith("image/")) {
-          html += `<img src="${esc(q.statementMediaUrl)}" alt="Enunciado" crossorigin="anonymous" />`;
-        } else {
-          html += `<p><a href="${esc(q.statementMediaUrl)}" target="_blank" rel="noopener">Abrir documento (PDF/arquivo)</a></p>`;
-        }
-      }
-      els.modalStatement.innerHTML = html || "<p>(Sem enunciado)</p>";
-
-      const isTf = q.questionType === "true_false";
-      els.modalChoices.classList.toggle("tf", isTf);
-
-      modalUserCategories = Array.isArray(q.userCategories) ? q.userCategories : [];
-      modalSelectedCategoryIds = new Set(
-        (q.categories || []).map((c) => Number(c.id)).filter((n) => Number.isFinite(n))
-      );
-
-      if (q.existingAnswer) {
-        modalHasAnswer = true;
-        const letter = String(q.existingAnswer.letter || "").toLowerCase();
-        if (isTf) {
-          els.modalChoices.innerHTML = `
-            <button type="button" class="btn-choice" data-letter="c">C — Certo</button>
-            <button type="button" class="btn-choice" data-letter="e">E — Errado</button>`;
-        } else {
-          els.modalChoices.innerHTML = ["A", "B", "C", "D", "E"]
-            .map(
-              (L) =>
-                `<button type="button" class="btn-choice" data-letter="${L.toLowerCase()}">${L}</button>`
-            )
-            .join("");
-        }
-        els.modalChoices.querySelectorAll(".btn-choice").forEach((b) => {
-          if (b.dataset.letter === letter) b.classList.add("selected");
-          b.addEventListener("click", () => onAnswer(b.dataset.letter));
-        });
-        if (!userJid) {
-          showCategoriesPanel("Selecione “Quem sou eu” para editar categorias.");
-        } else {
-          showCategoriesPanel("Resposta já registrada — ajuste as categorias e salve.");
-          if (els.modalSaveCats) els.modalSaveCats.classList.remove("hidden");
-        }
-      } else {
-        if (isTf) {
-          els.modalChoices.innerHTML = `
-            <button type="button" class="btn-choice" data-letter="c">C — Certo</button>
-            <button type="button" class="btn-choice" data-letter="e">E — Errado</button>`;
-        } else {
-          els.modalChoices.innerHTML = ["A", "B", "C", "D", "E"]
-            .map(
-              (L) =>
-                `<button type="button" class="btn-choice" data-letter="${L.toLowerCase()}">${L}</button>`
-            )
-            .join("");
-        }
-        els.modalChoices.querySelectorAll(".btn-choice").forEach((b) => {
-          b.addEventListener("click", () => onAnswer(b.dataset.letter));
-        });
-        if (userJid) {
-          showCategoriesPanel("Marque categorias (opcional) e responda. A resposta será salva.");
-        } else {
-          showCategoriesPanel('Selecione “Quem sou eu” acima para salvar resposta e categorias.');
-        }
-      }
+      if (gen !== modalOpenGen) return;
+      practiceDetailCache.set(key, q);
+      paintModalQuestion(q, userJid);
+      prefetchPracticeNeighbors(shortId, userJid);
     } catch (e) {
-      els.modalStatement.innerHTML = `<p class="error-banner">${esc(e.message)}</p>`;
+      if (gen !== modalOpenGen) return;
+      if (!cached) {
+        els.modalStatement.innerHTML = `<p class="error-banner">${esc(e.message)}</p>`;
+      }
     }
   }
 
@@ -948,85 +973,71 @@
     currentShortId = null;
   }
 
-  async function onAnswer(letter) {
-    if (!currentShortId) return;
-    els.modalChoices.querySelectorAll(".btn-choice").forEach((b) => {
-      b.disabled = true;
-      if (b.dataset.letter === letter) b.classList.add("selected");
-    });
+  function rememberPracticeAnswer(shortId, letter, userJid, data) {
+    const key = practiceCacheKey(shortId, userJid);
+    const cached = practiceDetailCache.get(key);
+    if (cached) {
+      cached.existingAnswer = {
+        letter: String((data && data.yourAnswer) || letter).toLowerCase()
+      };
+      if (Array.isArray(data && data.categories)) cached.categories = data.categories;
+    }
+    if (!reportData || !userJid || !(data && data.persisted)) return;
+    const sid = String(shortId).toUpperCase();
+    const existing = (reportData.answers || []).find(
+      (a) => a.questionShortId === sid && a.userJid === userJid
+    );
+    const cats = (data && data.categories) || [];
+    if (existing) {
+      existing.answerLetter = String(letter).toLowerCase();
+      existing.answerLetterDisplay = String((data && data.yourAnswer) || letter).toUpperCase();
+      if (data && data.correct != null) existing.correct = Boolean(data.correct);
+      existing.categories = cats;
+    } else {
+      reportData.answers = reportData.answers || [];
+      reportData.answers.push({
+        questionShortId: sid,
+        userJid,
+        userName: getPracticeUserName(),
+        answerLetter: String(letter).toLowerCase(),
+        answerLetterDisplay: String((data && data.yourAnswer) || letter).toUpperCase(),
+        correct: Boolean(data && data.correct),
+        categories: cats
+      });
+    }
+  }
 
+  function onAnswer(letter) {
+    if (!currentShortId) return;
+    const shortId = currentShortId;
     const userJid = getPracticeUserJid();
-    const body = { shortId: currentShortId, letter };
+    const body = { shortId, letter };
     if (userJid) {
       body.userJid = userJid;
       body.userName = getPracticeUserName();
       body.categoryIds = Array.from(modalSelectedCategoryIds);
     }
 
-    try {
-      const data = await fetchJson(API.submit, {
-        method: "POST",
-        body: JSON.stringify(body)
+    rememberPracticeAnswer(shortId, letter, userJid, { persisted: Boolean(userJid), yourAnswer: letter });
+    navigateModal(1);
+
+    void fetchJson(API.submit, {
+      method: "POST",
+      body: JSON.stringify(body)
+    })
+      .then((data) => {
+        submitPayload = data;
+        rememberPracticeAnswer(shortId, letter, userJid, data);
+      })
+      .catch((e) => {
+        if (String(currentShortId || "").toUpperCase() !== String(shortId).toUpperCase()) return;
+        els.modalFeedback.classList.remove("hidden");
+        els.modalFeedback.classList.add("bad");
+        els.modalFeedback.textContent = e.message || "Erro ao enviar.";
+        els.modalChoices.querySelectorAll(".btn-choice").forEach((b) => {
+          b.disabled = false;
+        });
       });
-      submitPayload = data;
-      modalHasAnswer = Boolean(data.persisted) || modalHasAnswer;
-      if (Array.isArray(data.categories)) {
-        modalSelectedCategoryIds = new Set(data.categories.map((c) => Number(c.id)));
-      }
-
-      els.modalFeedback.classList.remove("hidden");
-      els.modalFeedback.classList.toggle("ok", data.correct);
-      els.modalFeedback.classList.toggle("bad", !data.correct);
-      let msg = data.correct
-        ? "Resposta correta!"
-        : `Não foi dessa vez. Sua resposta: ${data.yourAnswer}.`;
-      if (data.persisted) msg += " Salva no relatório.";
-      else if (!userJid) msg += " (não salva — escolha “Quem sou eu”).";
-      els.modalFeedback.textContent = msg;
-
-      els.modalRevealBtn.classList.remove("hidden");
-      els.modalRevealBox.classList.add("hidden");
-
-      if (userJid) {
-        showCategoriesPanel("Categorias salvas com a resposta.");
-        if (els.modalSaveCats) els.modalSaveCats.classList.add("hidden");
-      }
-
-      if (reportData && data.persisted) {
-        // refresh local answer cache lightly
-        const shortId = String(currentShortId).toUpperCase();
-        const existing = (reportData.answers || []).find(
-          (a) => a.questionShortId === shortId && a.userJid === userJid
-        );
-        const cats = data.categories || [];
-        if (existing) {
-          existing.answerLetter = String(letter).toLowerCase();
-          existing.answerLetterDisplay = String(data.yourAnswer || letter).toUpperCase();
-          existing.correct = Boolean(data.correct);
-          existing.categories = cats;
-        } else {
-          reportData.answers = reportData.answers || [];
-          reportData.answers.push({
-            questionShortId: shortId,
-            userJid,
-            userName: getPracticeUserName(),
-            answerLetter: String(letter).toLowerCase(),
-            answerLetterDisplay: String(data.yourAnswer || letter).toUpperCase(),
-            correct: Boolean(data.correct),
-            categories: cats
-          });
-        }
-      }
-
-      setTimeout(() => navigateModal(1), 450);
-    } catch (e) {
-      els.modalFeedback.classList.remove("hidden");
-      els.modalFeedback.classList.add("bad");
-      els.modalFeedback.textContent = e.message || "Erro ao enviar.";
-      els.modalChoices.querySelectorAll(".btn-choice").forEach((b) => {
-        b.disabled = false;
-      });
-    }
   }
 
   async function saveModalCategories() {
