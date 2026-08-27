@@ -735,6 +735,13 @@ function truncateForWhatsApp(text: string, max = 700): string {
   return `${t.slice(0, max)}…`;
 }
 
+function firstNameForAnnotation(name: string): string {
+  const first = String(name || "")
+    .trim()
+    .split(/\s+/)[0];
+  return (first || "alguém").toLowerCase();
+}
+
 function formatRespondentLines(
   respondents: {
     name: string;
@@ -746,18 +753,24 @@ function formatRespondentLines(
   if (!respondents.length) return "Ninguem";
   return respondents
     .map((r) => {
-      const lines = [`- ${r.name} (${r.letter})`];
-      if (r.comment) {
-        lines.push(`  Anotação: ${r.comment}`);
-        if (r.aiComment) {
-          lines.push(`  IA (resposta à anotação): ${r.aiComment}`);
-        } else {
-          lines.push(`  IA: ${AI_MISSING_HINT}`);
-        }
-      }
-      return lines.join("\n");
+      const base = `- ${r.name} (${r.letter})`;
+      return r.comment ? `${base}: ${r.comment}` : base;
     })
     .join("\n");
+}
+
+function formatAnnotationReplyBlocks(
+  result: Awaited<ReturnType<typeof getQuestionResult>>
+): string[] {
+  const all = [...result.correctRespondents, ...result.wrongRespondents];
+  const parts: string[] = [];
+  for (const r of all) {
+    if (!r.comment) continue;
+    if (parts.length) parts.push("");
+    parts.push(`---Resposta anotação ${firstNameForAnnotation(r.name)}---`);
+    parts.push(r.aiComment?.trim() || AI_MISSING_HINT);
+  }
+  return parts;
 }
 
 async function maybeWakeCadernoAfterAnswer(sock: WASocket, rawShortId: string): Promise<void> {
@@ -778,6 +791,7 @@ function buildResultMessage(
   const distributionLines = keys.map((key) => `${key} - ${result.distribution[key] ?? 0}`);
   const correct = formatRespondentLines(result.correctRespondents);
   const wrong = formatRespondentLines(result.wrongRespondents);
+  const annotationReplies = formatAnnotationReplyBlocks(result);
 
   const hasExplanation = Boolean(result.explanationText && result.explanationText.trim().length > 0);
   const hasExplanationMedia = Boolean(result.explanationMediaUrl && result.explanationMediaMimeType);
@@ -818,6 +832,7 @@ function buildResultMessage(
     "",
     "Erraram:",
     wrong,
+    ...(annotationReplies.length ? ["", ...annotationReplies] : []),
     "",
     "Comentario do autor:",
     explanationBlock,

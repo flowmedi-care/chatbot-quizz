@@ -30,16 +30,10 @@ export function formatAiGroupMessage(input: {
   studentComment?: string | null;
   aiComment: string;
 }): string {
-  const shortId = String(input.shortId || "").toUpperCase();
   const userName = String(input.userName || "").trim();
-  const student = String(input.studentComment || "").trim();
   const ai = String(input.aiComment || "").trim();
-  const who = userName || "alguém";
-  const lines = [`*IA — resposta à anotação de ${who} (#${shortId})*`];
-  if (student) lines.push(`Anotação: "${truncateText(student, 400)}"`);
-  if (ai) {
-    lines.push("");
-    lines.push(truncateText(ai, 1500));
-  }
+  const who = (userName.split(/\s+/)[0] || "alguém").toLowerCase();
+  const lines = [`---Resposta anotação ${who}---`];
+  if (ai) lines.push(truncateText(ai, 1500));
   return lines.join("\n");
 }
