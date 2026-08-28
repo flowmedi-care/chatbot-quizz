@@ -120,25 +120,58 @@ export function isOrphanCadernoGroupQuestion(
   return !publishedCadernoIds.has(questionId);
 }
 
-/** Próximo # sequencial para questões publicadas no grupo (não usa id da linha). */
-export async function nextGroupQuestionShortId(groupJid: string): Promise<string> {
-  const { data, error } = await supabase
-    .from("questions")
-    .select("short_id")
-    .eq("target_group_jid", groupJid);
+/** Próximo # sequencial para questões publicadas no grupo (não usa id da linha).
+ * PostgREST corta em 1000 — sem paginar, o max fica baixo e o UPDATE colide em short_id.
+ */
+const POSTGREST_PAGE = 1000;
 
-  if (error) {
-    throw new Error(`Erro ao calcular proximo numero da questao: ${error.message}`);
-  }
+function isShortIdUniqueViolation(error: { message?: string; details?: string } | null | undefined): boolean {
+  const msg = `${error?.message || ""} ${error?.details || ""}`.toLowerCase();
+  return msg.includes("questions_short_id_key") || (msg.includes("duplicate") && msg.includes("short_id"));
+}
 
+async function maxNumericQuestionShortId(): Promise<number> {
   let max = 0;
-  for (const row of data ?? []) {
-    const s = String(row.short_id ?? "").trim();
-    if (/^\d+$/.test(s)) {
-      max = Math.max(max, parseInt(s, 10));
+  let from = 0;
+  for (;;) {
+    const { data, error } = await supabase
+      .from("questions")
+      .select("short_id")
+      .not("short_id", "is", null)
+      .order("id", { ascending: true })
+      .range(from, from + POSTGREST_PAGE - 1);
+    if (error) {
+      throw new Error(`Erro ao calcular proximo numero da questao: ${error.message}`);
     }
+    const rows = data ?? [];
+    for (const row of rows) {
+      const s = String(row.short_id ?? "").trim();
+      if (/^\d+$/.test(s)) {
+        max = Math.max(max, parseInt(s, 10));
+      }
+    }
+    if (rows.length < POSTGREST_PAGE) break;
+    from += POSTGREST_PAGE;
   }
-  return String(max + 1);
+  return max;
+}
+
+export async function nextGroupQuestionShortId(_groupJid?: string): Promise<string> {
+  return String((await maxNumericQuestionShortId()) + 1);
+}
+
+async function assignNumericShortId(questionDbId: number): Promise<string> {
+  let n = await maxNumericQuestionShortId();
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const shortId = String(n + 1);
+    const { error } = await supabase.from("questions").update({ short_id: shortId }).eq("id", questionDbId);
+    if (!error) return shortId;
+    if (!isShortIdUniqueViolation(error)) {
+      throw new Error(`Erro ao atualizar short_id: ${error.message}`);
+    }
+    n = Math.max(n + 1, await maxNumericQuestionShortId());
+  }
+  throw new Error("Erro ao atualizar short_id: colisão repetida em questions_short_id_key");
 }
 
 async function ensureBucket(): Promise<void> {
@@ -255,16 +288,18 @@ export async function createQuestion(
   }
 
   const shortId = isGroupQuizTargetJid(input.targetGroupJid)
-    ? await nextGroupQuestionShortId(input.targetGroupJid)
+    ? await assignNumericShortId(Number(data.id))
     : toShortId(data.id);
 
-  const { error: updateError } = await supabase
-    .from("questions")
-    .update({ short_id: shortId })
-    .eq("id", data.id);
+  if (!isGroupQuizTargetJid(input.targetGroupJid)) {
+    const { error: updateError } = await supabase
+      .from("questions")
+      .update({ short_id: shortId })
+      .eq("id", data.id);
 
-  if (updateError) {
-    throw new Error(`Erro ao atualizar short_id: ${updateError.message}`);
+    if (updateError) {
+      throw new Error(`Erro ao atualizar short_id: ${updateError.message}`);
+    }
   }
 
   try {
@@ -3303,18 +3338,16 @@ export async function createQuestionFromCaderno(
     const tag = privateRecipientShortTag(recipientJid.trim());
     shortId =
       activeCount > 1 ? `${n}-${caderno.id}-${tag}` : `${n}-${caderno.id}`;
+    shortId = shortId.toUpperCase();
+    const { error: updateError } = await supabase
+      .from("questions")
+      .update({ short_id: shortId })
+      .eq("id", data.id);
+    if (updateError) {
+      throw new Error(`Erro ao atualizar short_id da questao do caderno: ${updateError.message}`);
+    }
   } else {
-    shortId = await nextGroupQuestionShortId(caderno.targetGroupJid);
-  }
-  shortId = shortId.toUpperCase();
-
-  const { error: updateError } = await supabase
-    .from("questions")
-    .update({ short_id: shortId })
-    .eq("id", data.id);
-
-  if (updateError) {
-    throw new Error(`Erro ao atualizar short_id da questao do caderno: ${updateError.message}`);
+    shortId = await assignNumericShortId(dbId);
   }
 
   return { shortId, dbId };

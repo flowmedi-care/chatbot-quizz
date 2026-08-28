@@ -86,6 +86,38 @@ async function fetchAllIn(supabase, table, select, column, ids, options = {}) {
   return all;
 }
 
+/**
+ * Maior short_id numérico (UNIQUE global). Sem paginação o max fica preso
+ * nas primeiras 1000 linhas e o próximo número colide.
+ */
+async function maxNumericShortId(supabase) {
+  const pageSize = 1000;
+  let max = 0;
+  let from = 0;
+  for (;;) {
+    const { data, error } = await supabase
+      .from("questions")
+      .select("short_id")
+      .not("short_id", "is", null)
+      .order("id", { ascending: true })
+      .range(from, from + pageSize - 1);
+    if (error) throw error;
+    const rows = data || [];
+    for (const row of rows) {
+      const s = String(row.short_id || "").trim();
+      if (/^\d+$/.test(s)) max = Math.max(max, parseInt(s, 10));
+    }
+    if (rows.length < pageSize) break;
+    from += pageSize;
+  }
+  return max;
+}
+
+function isShortIdUniqueViolation(error) {
+  const msg = `${error?.message || ""} ${error?.details || ""}`.toLowerCase();
+  return msg.includes("questions_short_id_key") || (msg.includes("duplicate") && msg.includes("short_id"));
+}
+
 /** Destino privado (caderno no PV), não o grupo do quiz. */
 function isPrivateQuizTargetJid(jid) {
   const t = String(jid || "").toLowerCase();
@@ -185,6 +217,8 @@ module.exports = {
   jidComparableKey,
   chunkList,
   fetchAllIn,
+  maxNumericShortId,
+  isShortIdUniqueViolation,
   fetchQuestionsForGroup,
   fetchPublishedCadernoQuestionIdsForGroup,
   isGroupQuizQuestion,

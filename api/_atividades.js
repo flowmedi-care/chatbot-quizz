@@ -3,7 +3,7 @@
  * Montado em omissas-web.js (limite Hobby de serverless functions).
  */
 const crypto = require("crypto");
-const { getClient, pickTargetGroupJid } = require("./_lib.js");
+const { getClient, pickTargetGroupJid, maxNumericShortId, isShortIdUniqueViolation } = require("./_lib.js");
 const {
   dateIsoInTimezone,
   startOfMonthIso,
@@ -113,21 +113,25 @@ async function listNextPending(supabase, caderno, limit) {
   return rows.slice(0, limit);
 }
 
-async function nextGroupShortId(supabase, groupJid) {
-  const { data, error } = await supabase
-    .from("questions")
-    .select("short_id")
-    .eq("target_group_jid", groupJid);
-  if (error) throw error;
-  let max = 0;
-  for (const row of data || []) {
-    const s = String(row.short_id || "").trim();
-    if (/^\d+$/.test(s)) max = Math.max(max, parseInt(s, 10));
+/** Aloca o próximo short_id numérico, com retry se outra publicação pegar o mesmo número. */
+async function allocateGroupShortId(supabase, dbId, cursor) {
+  if (cursor.next == null) {
+    cursor.next = (await maxNumericShortId(supabase)) + 1;
   }
-  return String(max + 1);
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const shortId = String(cursor.next);
+    const { error } = await supabase.from("questions").update({ short_id: shortId }).eq("id", dbId);
+    if (!error) {
+      cursor.next += 1;
+      return shortId;
+    }
+    if (!isShortIdUniqueViolation(error)) throw error;
+    cursor.next = (await maxNumericShortId(supabase)) + 1;
+  }
+  throw new Error("Falha ao alocar número da questão (short_id duplicado). Tente de novo.");
 }
 
-async function createQuestionFromCaderno(supabase, caderno, question) {
+async function createQuestionFromCaderno(supabase, caderno, question, shortIdCursor) {
   const creatorJid = `caderno:${caderno.id}@bot`;
   const explanation = [
     "Resolução completa no Tec Concursos:",
@@ -165,13 +169,12 @@ async function createQuestionFromCaderno(supabase, caderno, question) {
 
   if (error || !data) throw new Error(error?.message || "Falha ao criar questão");
   const dbId = Number(data.id);
-  const shortId = (await nextGroupShortId(supabase, caderno.targetGroupJid)).toUpperCase();
-  const { error: uErr } = await supabase.from("questions").update({ short_id: shortId }).eq("id", dbId);
-  if (uErr) throw uErr;
+  const shortId = await allocateGroupShortId(supabase, dbId, shortIdCursor);
   return { shortId, dbId };
 }
 
-async function adiantarCadernoDays(supabase, caderno, dayIsos, userJid) {
+async function adiantarCadernoDays(supabase, caderno, dayIsos, userJid, shortIdCursor) {
+  const cursor = shortIdCursor || { next: null };
   const todayIso = dateIsoInTimezone(new Date(), caderno.timezone || TZ);
   const unique = [...new Set(dayIsos.filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)))].sort();
   const N = caderno.questionsPerDay;
@@ -231,7 +234,7 @@ async function adiantarCadernoDays(supabase, caderno, dayIsos, userJid) {
     const shortIds = [];
     for (let slot = 0; slot < N && slot < pending.length; slot++) {
       const q = pending[slot];
-      const { shortId, dbId } = await createQuestionFromCaderno(supabase, caderno, q);
+      const { shortId, dbId } = await createQuestionFromCaderno(supabase, caderno, q, cursor);
       const { error } = await supabase.from("caderno_send_queue").insert({
         caderno_id: caderno.id,
         caderno_question_id: q.id,
@@ -490,8 +493,9 @@ async function handleAtividadesPost(req, res) {
     const summaries = [];
     const allShortIds = [];
     const prepaid = [];
+    const shortIdCursor = { next: null };
     for (const c of targets) {
-      const result = await adiantarCadernoDays(supabase, c, dayIsos, userJid);
+      const result = await adiantarCadernoDays(supabase, c, dayIsos, userJid, shortIdCursor);
       summaries.push(result.message);
       allShortIds.push(...result.shortIds);
       prepaid.push(...result.newlyPlannedDays);
