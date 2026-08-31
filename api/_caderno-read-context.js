@@ -3,6 +3,7 @@
  * Omissas / atrasadas / semana / mês só COMPÕEM estes loaders.
  */
 const { dateIsoInTimezone, publishedDayIso, weekDayIsos, monthDayIsos, formatDayLabelPt } = require("./_schedule.js");
+const { fetchAllEq } = require("./_lib.js");
 
 const ECONOMY_TZ = "America/Sao_Paulo";
 const WEEKDAY_LABELS = ["segunda", "terça", "quarta", "quinta", "sexta", "sábado", "domingo"];
@@ -477,25 +478,28 @@ async function listUnansweredOmissasForUser(supabase, userJid, groupJid, opts = 
   const dayIso = ctx.dayIso;
   const engagedCadernoIds = new Set(ctx.cadernos.engagedSinceMap.keys());
 
-  let q = await supabase
-    .from("questions")
-    .select("id, short_id, creator_jid, created_at, omissa_day_iso")
-    .eq("target_group_jid", groupJid)
-    .order("created_at", { ascending: false })
-    .limit(400);
-
-  if (q.error && String(q.error.message || "").toLowerCase().includes("omissa_day_iso")) {
-    q = await supabase
-      .from("questions")
-      .select("id, short_id, creator_jid, created_at")
-      .eq("target_group_jid", groupJid)
-      .order("created_at", { ascending: false })
-      .limit(400);
+  let qRows = [];
+  try {
+    qRows = await fetchAllEq(
+      supabase,
+      "questions",
+      "id, short_id, creator_jid, created_at, omissa_day_iso",
+      "target_group_jid",
+      groupJid
+    );
+  } catch (qErr) {
+    if (!String(qErr.message || "").toLowerCase().includes("omissa_day_iso")) throw qErr;
+    qRows = await fetchAllEq(
+      supabase,
+      "questions",
+      "id, short_id, creator_jid, created_at",
+      "target_group_jid",
+      groupJid
+    );
   }
-  if (q.error) throw q.error;
 
   const candidates = [];
-  for (const row of q.data || []) {
+  for (const row of qRows || []) {
     if (!row.short_id) continue;
     const sid = String(row.short_id).toUpperCase();
     if (isPrivateCadernoShortId(sid)) continue;

@@ -352,16 +352,18 @@ async function handleAtividadesGet(req, res) {
       listEngagedCadernos(supabase, userJid, groupJid)
     ]);
     const engaged = engagedRows.map((c) => ({ id: c.id, name: c.name }));
+    const pendingToday = [...new Set([...(omissas.shortIds || []), ...(buckets.today || [])])];
     return res.status(200).json({
       view: "day",
       todayIso,
       dayIso: day,
       engaged,
       ...omissas,
-      todayShortIds: buckets.today,
+      shortIds: pendingToday,
+      todayShortIds: pendingToday,
       atrasadasShortIds: buckets.atrasadas,
       dueOnDayCount: buckets.dueOnDayCount,
-      openOnDayCount: buckets.openOnDayCount
+      openOnDayCount: Math.max(Number(buckets.openOnDayCount) || 0, pendingToday.length)
     });
   }
 
@@ -435,8 +437,17 @@ async function handleAtividadesPost(req, res) {
     const mode = body.mode === "atrasadas" ? "atrasadas" : "hoje";
     const dayIso = String(body.dayIso || todayIso);
     if (mode === "hoje") {
-      const omissas = await listUnansweredToday(supabase, userJid, groupJid, dayIso);
-      if (!omissas.shortIds.length) {
+      const [omissas, buckets] = await Promise.all([
+        listUnansweredToday(supabase, userJid, groupJid, dayIso),
+        listUnansweredOmissasForUser(supabase, userJid, groupJid, {
+          dayIso,
+          todayLimit: 80,
+          atrasadasLimit: 0,
+          includeAtrasadas: false
+        })
+      ]);
+      const shortIds = [...new Set([...(omissas.shortIds || []), ...(buckets.today || [])])];
+      if (!shortIds.length) {
         return res.status(200).json({ token: null, shortIds: [], message: "Nada pendente hoje." });
       }
       const session = await createWebSession(supabase, {
@@ -444,7 +455,7 @@ async function handleAtividadesPost(req, res) {
         userName,
         groupJid,
         mode: "hoje",
-        shortIds: omissas.shortIds
+        shortIds
       });
       return res.status(200).json({ ...session, message: "Sessão criada." });
     }

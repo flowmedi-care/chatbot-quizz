@@ -87,6 +87,37 @@ async function fetchAllIn(supabase, table, select, column, ids, options = {}) {
 }
 
 /**
+ * `.eq()` + paginação. Sem range o PostgREST corta em 1000 linhas
+ * (relatório / omissas perdem questões recentes).
+ */
+async function fetchAllEq(supabase, table, select, column, value, options = {}) {
+  const pageSize = Math.min(1000, Math.max(1, Number(options.pageSize) || 1000));
+  const orderColumn = options.orderColumn || "id";
+  const all = [];
+  let from = 0;
+  let orderOk = Boolean(orderColumn);
+  for (;;) {
+    let q = supabase.from(table).select(select).eq(column, value);
+    if (orderOk) q = q.order(orderColumn, { ascending: true });
+    const { data, error } = await q.range(from, from + pageSize - 1);
+    if (error) {
+      const msg = String(error.message || "");
+      if (orderOk && /column|does not exist/i.test(msg)) {
+        orderOk = false;
+        continue;
+      }
+      throw error;
+    }
+    const rows = data || [];
+    all.push(...rows);
+    if (rows.length < pageSize) break;
+    from += pageSize;
+    if (from > 200000) break;
+  }
+  return all;
+}
+
+/**
  * Maior short_id numérico (UNIQUE global). Sem paginação o max fica preso
  * nas primeiras 1000 linhas e o próximo número colide.
  */
@@ -186,16 +217,13 @@ async function fetchQuestionsForGroup(supabase, groupJid, options = {}) {
     ? "id, short_id, creator_name, creator_jid, question_type, statement_text, statement_media_url, statement_media_mime_type, answer_key, explanation_text, explanation_media_url, explanation_media_mime_type, created_at, target_group_jid"
     : "id, short_id, creator_name, creator_jid, question_type, statement_text, statement_media_url, statement_media_mime_type, answer_key, created_at, target_group_jid";
 
-  const { data: byTarget, error: errTarget } = await supabase
-    .from("questions")
-    .select(sel)
-    .eq("target_group_jid", groupJid);
-
-  if (errTarget) throw errTarget;
-
+  const byTarget = await fetchAllEq(supabase, "questions", sel, "target_group_jid", groupJid);
   let byLegacy = [];
-  const legacyRes = await supabase.from("questions").select(sel).eq("group_jid", groupJid);
-  if (!legacyRes.error && legacyRes.data) byLegacy = legacyRes.data;
+  try {
+    byLegacy = await fetchAllEq(supabase, "questions", sel, "group_jid", groupJid);
+  } catch {
+    byLegacy = [];
+  }
 
   const map = new Map();
   for (const q of [...(byTarget || []), ...byLegacy]) {
@@ -217,6 +245,7 @@ module.exports = {
   jidComparableKey,
   chunkList,
   fetchAllIn,
+  fetchAllEq,
   maxNumericShortId,
   isShortIdUniqueViolation,
   fetchQuestionsForGroup,

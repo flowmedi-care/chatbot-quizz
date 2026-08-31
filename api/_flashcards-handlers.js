@@ -393,7 +393,6 @@ async function handleIngestAnswer(req, res) {
       user_jid: userJid,
       user_name: userName,
       answer_letter: letter,
-      answer_comment: comment || null,
       ai_comment: aiComment || null,
       source_message_id: `app:${Date.now()}`,
       sent_at: new Date().toISOString(),
@@ -401,6 +400,8 @@ async function handleIngestAnswer(req, res) {
       duration_ms: durationMs,
       sync_source: "app"
     };
+    if (comment) row.answer_comment = comment;
+    else if (!existing) row.answer_comment = null;
 
     let answerId;
     if (existing) {

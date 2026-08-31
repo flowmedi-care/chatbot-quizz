@@ -8,6 +8,9 @@ const {
 } = require("./_lib.js");
 const { mapCategoriesByAnswerIds, listUserCategories } = require("./_categories.js");
 const { listThreadsForShortIds } = require("./_discussions.js");
+const { publishedDayIso } = require("./_schedule.js");
+
+const REPORT_TZ = "America/Sao_Paulo";
 
 function normalizeLetter(raw) {
   const s = String(raw || "")
@@ -48,18 +51,29 @@ module.exports = async (req, res) => {
     }
 
     const supabase = getClient();
-    const rows = (await fetchQuestionsForGroup(supabase, groupJid, { extended: true })).slice(0, 500);
+    const rows = await fetchQuestionsForGroup(supabase, groupJid, { extended: true });
 
     const questionIds = rows.map((r) => r.id);
     let answersRaw = [];
     if (questionIds.length) {
-      answersRaw = await fetchAllIn(
-        supabase,
-        "answers",
-        "id, question_id, question_short_id, user_jid, user_name, answer_letter, answer_comment, ai_comment",
-        "question_id",
-        questionIds
-      );
+      try {
+        answersRaw = await fetchAllIn(
+          supabase,
+          "answers",
+          "id, question_id, question_short_id, user_jid, user_name, answer_letter, answer_comment, ai_comment, created_at, sent_at",
+          "question_id",
+          questionIds
+        );
+      } catch (ansErr) {
+        if (!String(ansErr.message || "").toLowerCase().includes("sent_at")) throw ansErr;
+        answersRaw = await fetchAllIn(
+          supabase,
+          "answers",
+          "id, question_id, question_short_id, user_jid, user_name, answer_letter, answer_comment, ai_comment, created_at",
+          "question_id",
+          questionIds
+        );
+      }
     }
 
     const answerIds = answersRaw.map((r) => Number(r.id)).filter((n) => Number.isFinite(n));
@@ -71,20 +85,36 @@ module.exports = async (req, res) => {
     }
 
     const cadernoByQuestionId = new Map();
+    const publishedAtByQuestionId = new Map();
     if (questionIds.length) {
       try {
-        const cqRows = await fetchAllIn(
-          supabase,
-          "caderno_questions",
-          "published_question_id, caderno_id",
-          "published_question_id",
-          questionIds
-        );
+        let cqRows = [];
+        try {
+          cqRows = await fetchAllIn(
+            supabase,
+            "caderno_questions",
+            "published_question_id, caderno_id, published_at",
+            "published_question_id",
+            questionIds
+          );
+        } catch (pubErr) {
+          if (!String(pubErr.message || "").toLowerCase().includes("published_at")) throw pubErr;
+          cqRows = await fetchAllIn(
+            supabase,
+            "caderno_questions",
+            "published_question_id, caderno_id",
+            "published_question_id",
+            questionIds
+          );
+        }
         for (const row of cqRows || []) {
           const qid = Number(row.published_question_id);
           const cid = Number(row.caderno_id);
           if (Number.isFinite(qid) && Number.isFinite(cid)) {
             cadernoByQuestionId.set(qid, cid);
+          }
+          if (Number.isFinite(qid) && row.published_at) {
+            publishedAtByQuestionId.set(qid, String(row.published_at));
           }
         }
       } catch (cqErr) {
@@ -135,7 +165,11 @@ module.exports = async (req, res) => {
         answerComment: split.comment,
         answerAiComment: split.aiComment,
         correct,
-        categories: categoriesByAnswer.get(answerId) || []
+        categories: categoriesByAnswer.get(answerId) || [],
+        answeredAt: row.sent_at || row.created_at || null,
+        answeredDay: row.sent_at || row.created_at
+          ? publishedDayIso(row.sent_at || row.created_at, REPORT_TZ)
+          : null
       };
     });
 
@@ -164,6 +198,7 @@ module.exports = async (req, res) => {
 
     const questions = rows.map((row) => {
       const cadernoId = cadernoByQuestionId.get(row.id) ?? null;
+      const pubAt = publishedAtByQuestionId.get(row.id) || row.created_at;
       return {
         id: row.id,
         shortId: String(row.short_id || "").toUpperCase(),
@@ -177,6 +212,7 @@ module.exports = async (req, res) => {
         explanationMediaUrl: row.explanation_media_url || null,
         explanationMediaMimeType: row.explanation_media_mime_type || null,
         createdAt: row.created_at,
+        publishedDay: pubAt ? publishedDayIso(pubAt, REPORT_TZ) : null,
         cadernoId,
         cadernoName: cadernoId != null ? cadernoNames.get(cadernoId) || `Caderno #${cadernoId}` : null
       };

@@ -630,7 +630,7 @@
     if (next) openModal(next);
   }
 
-  function questionPassesGeneralFilters(q) {
+  function questionPassesGeneralFilters(q, scopeJid) {
     if (els.reportCaderno) {
       const cVal = els.reportCaderno.value;
       if (cVal === "__manual__") {
@@ -640,16 +640,7 @@
       }
     }
 
-    if (els.reportDateFrom && els.reportDateFrom.value && q.createdAt) {
-      const from = els.reportDateFrom.value;
-      const day = String(q.createdAt).slice(0, 10);
-      if (day < from) return false;
-    }
-    if (els.reportDateTo && els.reportDateTo.value && q.createdAt) {
-      const to = els.reportDateTo.value;
-      const day = String(q.createdAt).slice(0, 10);
-      if (day > to) return false;
-    }
+    if (!questionPassesDateFilter(q, scopeJid)) return false;
 
     const sidNum = /^\d+$/.test(String(q.shortId || "")) ? Number(q.shortId) : null;
     if (els.reportQidFrom && els.reportQidFrom.value.trim()) {
@@ -669,6 +660,62 @@
       }
     }
     return true;
+  }
+
+  const REPORT_TZ = "America/Sao_Paulo";
+
+  function civilDayIso(value) {
+    if (value == null || value === "") return "";
+    const raw = String(value).trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+    const d = new Date(raw);
+    if (Number.isNaN(d.getTime())) {
+      return /^\d{4}-\d{2}-\d{2}/.test(raw) ? raw.slice(0, 10) : "";
+    }
+    try {
+      const parts = new Intl.DateTimeFormat("en-CA", {
+        timeZone: REPORT_TZ,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit"
+      }).formatToParts(d);
+      const y = parts.find((p) => p.type === "year")?.value;
+      const m = parts.find((p) => p.type === "month")?.value;
+      const day = parts.find((p) => p.type === "day")?.value;
+      if (y && m && day) return `${y}-${m}-${day}`;
+    } catch {
+      /* ignore */
+    }
+    return raw.slice(0, 10);
+  }
+
+  function questionDaysForReport(q, scopeJid) {
+    const days = new Set();
+    const pub = q.publishedDay || civilDayIso(q.createdAt);
+    if (pub) days.add(pub);
+    const answers = (reportData && reportData.answers) || [];
+    const sid = String(q.shortId || "").toUpperCase();
+    for (const a of answers) {
+      if (String(a.questionShortId || "").toUpperCase() !== sid) continue;
+      if (scopeJid && scopeJid !== "__all__" && !answerBelongsToScope(a, scopeJid)) continue;
+      const ad = a.answeredDay || civilDayIso(a.answeredAt || a.createdAt || a.sentAt);
+      if (ad) days.add(ad);
+    }
+    return days;
+  }
+
+  function questionPassesDateFilter(q, scopeJid) {
+    const from = els.reportDateFrom && els.reportDateFrom.value;
+    const to = els.reportDateTo && els.reportDateTo.value;
+    if (!from && !to) return true;
+    const days = questionDaysForReport(q, scopeJid);
+    if (!days.size) return true;
+    for (const day of days) {
+      if (from && day < from) continue;
+      if (to && day > to) continue;
+      return true;
+    }
+    return false;
   }
 
   function answerMatchesCategoryRule(ua, ruleKey) {
@@ -691,7 +738,7 @@
   }
 
   function selectQuestionsForReport(qsAll, scopeJid) {
-    const general = qsAll.filter((q) => questionPassesGeneralFilters(q));
+    const general = qsAll.filter((q) => questionPassesGeneralFilters(q, scopeJid));
     const filters = reportCategoryRules.filter((r) => r.mode === "filter");
     const incrementals = reportCategoryRules.filter((r) => r.mode === "incremental");
 

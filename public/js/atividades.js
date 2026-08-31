@@ -53,6 +53,7 @@
   let pendingSaves = new Map();
   let advancing = false;
   let aiPollTimer = 0;
+  let refreshSeq = 0;
 
   const timer = quizUi.createTimer({
     timer: $("q-timer"),
@@ -572,30 +573,39 @@
 
   async function refresh() {
     if (!userJid) return;
+    const seq = ++refreshSeq;
+    if (view === "day") {
+      const btnHoje = $("btn-responder-hoje");
+      const btnAtr = $("btn-atrasadas");
+      if (btnHoje) btnHoje.disabled = true;
+      if (btnAtr) btnAtr.disabled = true;
+    }
     showStatus("Carregando…");
     try {
-      if (view === "day") await loadDay();
+      if (view === "day") await loadDay(seq);
       else if (view === "week") await loadWeek();
       else await loadMonth();
+      if (seq !== refreshSeq) return;
       showStatus("");
     } catch (e) {
+      if (seq !== refreshSeq) return;
       showStatus(e.message || "Erro ao carregar");
     }
   }
 
-  async function loadDay() {
+  async function loadDay(seq) {
     const data = await fetchJson(
       API.atividades(`view=day&userJid=${encodeURIComponent(userJid)}`)
     );
+    if (seq != null && seq !== refreshSeq) return;
     $("day-subtitle").textContent = `Hoje ${data.dayIso || data.todayIso || ""}`;
 
     const body = $("day-body");
     const cards = data.byCaderno || [];
-    const hojeIds = data.todayShortIds || data.shortIds || [];
-    const openHoje =
-      data.openOnDayCount != null
-        ? Number(data.openOnDayCount)
-        : hojeIds.length;
+    const calendarPending = Array.isArray(data.shortIds) ? data.shortIds : [];
+    const hojeIds = data.todayShortIds || [];
+    const pendingToday = [...new Set([...calendarPending, ...hojeIds].map((id) => String(id)))];
+    const openHoje = pendingToday.length;
     $("hoje-count").textContent =
       openHoje > 0
         ? `${openHoje} pendente(s) de hoje`
@@ -638,7 +648,7 @@
       </article>`;
     }
 
-    $("btn-responder-hoje").disabled = openHoje === 0 && hojeIds.length === 0;
+    $("btn-responder-hoje").disabled = pendingToday.length === 0;
     $("btn-atrasadas").disabled = atrasadas.length === 0;
   }
 

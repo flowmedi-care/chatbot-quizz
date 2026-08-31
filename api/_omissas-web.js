@@ -178,7 +178,7 @@ async function upsertAnswer(supabase, input) {
 
   const { data: existingRows, error: findErr } = await supabase
     .from("answers")
-    .select("id, answer_letter, user_jid, duration_ms")
+    .select("id, answer_letter, user_jid, duration_ms, answer_comment")
     .eq("question_id", questionId);
 
   if (findErr) throw findErr;
@@ -186,13 +186,18 @@ async function upsertAnswer(supabase, input) {
   const userKey = jidComparableKey(userJid);
   const existing = (existingRows || []).find((r) => jidComparableKey(r.user_jid) === userKey) || null;
 
+  const nextComment = comment && String(comment).trim() ? String(comment).trim() : "";
   const row = {
     question_id: questionId,
     question_short_id: shortId,
     user_jid: existing ? existing.user_jid : userJid,
     user_name: userName || null,
     answer_letter: letter,
-    answer_comment: comment && String(comment).trim() ? String(comment).trim() : null,
+    answer_comment: nextComment
+      ? nextComment
+      : existing && existing.answer_comment
+        ? existing.answer_comment
+        : null,
     source_message_id: `web:${crypto.randomBytes(8).toString("hex")}`,
     sent_at: new Date().toISOString(),
     confidence_level: input.confidenceLevel || null,
