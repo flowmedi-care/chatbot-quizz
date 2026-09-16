@@ -1154,6 +1154,7 @@
             <div class="omissas-result-head"><h3>#${esc(item.shortId)}</h3>${badge}</div>
             <p><strong>Sua:</strong> ${(item.yourLetter || "—").toUpperCase()}
               · <strong>Gabarito:</strong> ${esc(item.answerKey || "—")}</p>
+            ${quizUi.tecLinkHtml(item)}
             ${
               item.yourComment || item.yourAiComment
                 ? `<div class="omissas-note-card">

@@ -1315,6 +1315,23 @@ table.ranking-table th {
   margin-top: 0.75rem;
 }
 
+.solver-tec-link {
+  margin: 0.75rem 0 0;
+  white-space: normal;
+  font-size: 0.88rem;
+}
+
+.solver-tec-link a {
+  color: var(--accent, #c2410c);
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.solver-tec-link a:hover {
+  opacity: 0.85;
+}
+
 .choice-grid {
   display: flex;
   flex-wrap: wrap;

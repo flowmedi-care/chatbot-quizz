@@ -184,6 +184,13 @@
     return { statement, options };
   }
 
+  function tecLinkHtml(q) {
+    const url = String((q && (q.tecUrl || q.tec_url)) || "").trim();
+    if (!url) return "";
+    if (!/^https?:\/\/(?:www\.)?tecconcursos\.com\.br\/questoes\/\d+/i.test(url)) return "";
+    return `<p class="solver-tec-link"><a href="${esc(url)}" target="_blank" rel="noopener noreferrer">Ver no Tec Concursos</a></p>`;
+  }
+
   function statementHtml(q) {
     const { statement } = normalizeQuestion(q);
     let html = "";
@@ -195,6 +202,7 @@
         html += `<p><a href="${esc(q.statementMediaUrl)}" target="_blank" rel="noopener">Abrir documento</a></p>`;
       }
     }
+    html += tecLinkHtml(q);
     return html || "<p>(Sem enunciado)</p>";
   }
 
@@ -490,6 +498,7 @@
     parseChoiceBlock,
     normalizeQuestion,
     statementHtml,
+    tecLinkHtml,
     renderChoices,
     paintChoices,
     bindChoices,

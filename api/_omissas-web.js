@@ -24,6 +24,13 @@ function isBotCreatorJid(creatorJid) {
     .startsWith("caderno:");
 }
 
+function tecUrlFromExplanation(text) {
+  const m = String(text || "").match(
+    /https?:\/\/(?:www\.)?tecconcursos\.com\.br\/questoes\/\d+/i
+  );
+  return m ? m[0] : null;
+}
+
 function normalizeLetter(letterRaw, questionType) {
   const raw = String(letterRaw || "")
     .trim()
@@ -357,15 +364,19 @@ async function handleOmissasSession(req, res) {
     const answers = await fetchUserAnswersForShortIds(supabase, session.userJid, session.shortIds);
     const qids = questions.map((q) => q.id).filter(Boolean);
     const optionsByQid = new Map();
+    const tecUrlByQid = new Map();
     if (qids.length) {
       const { data: cqRows } = await supabase
         .from("caderno_questions")
-        .select("published_question_id, options")
+        .select("published_question_id, options, tec_url")
         .in("published_question_id", qids);
       for (const row of cqRows || []) {
+        const qid = Number(row.published_question_id);
         if (Array.isArray(row.options) && row.options.length) {
-          optionsByQid.set(Number(row.published_question_id), row.options);
+          optionsByQid.set(qid, row.options);
         }
+        const tecUrl = String(row.tec_url || "").trim();
+        if (tecUrl) tecUrlByQid.set(qid, tecUrl);
       }
     }
     const userName = await resolveSessionUserName(supabase, session);
@@ -405,6 +416,8 @@ async function handleOmissasSession(req, res) {
           assistReveal: assist
         };
       }
+      const tecUrl =
+        tecUrlByQid.get(Number(q.id)) || tecUrlFromExplanation(q.explanation_text) || null;
       return {
         shortId: sid,
         creatorName: q.creator_name || "Autor",
@@ -412,6 +425,7 @@ async function handleOmissasSession(req, res) {
         statementText: q.statement_text || "",
         statementMediaUrl: q.statement_media_url || null,
         statementMediaMimeType: q.statement_media_mime_type || null,
+        tecUrl,
         options: optionsByQid.get(Number(q.id)) || [],
         alreadyAnswered: Boolean(ans),
         yourConfidence: ans && ans.confidence ? ans.confidence : null,
@@ -610,6 +624,19 @@ async function handleOmissasResults(req, res) {
     const answers = await fetchUserAnswersForShortIds(supabase, session.userJid, session.shortIds);
     const userName = await resolveSessionUserName(supabase, session);
 
+    const qids = questions.map((q) => q.id).filter(Boolean);
+    const tecUrlByQid = new Map();
+    if (qids.length) {
+      const { data: cqRows } = await supabase
+        .from("caderno_questions")
+        .select("published_question_id, tec_url")
+        .in("published_question_id", qids);
+      for (const row of cqRows || []) {
+        const tecUrl = String(row.tec_url || "").trim();
+        if (tecUrl) tecUrlByQid.set(Number(row.published_question_id), tecUrl);
+      }
+    }
+
     const playable = session.shortIds.filter((sid) => {
       const q = questions.find((x) => String(x.short_id).toUpperCase() === sid);
       return Boolean(q);
@@ -664,6 +691,7 @@ async function handleOmissasResults(req, res) {
         statementText: q.statement_text || "",
         statementMediaUrl: q.statement_media_url || null,
         statementMediaMimeType: q.statement_media_mime_type || null,
+        tecUrl: tecUrlByQid.get(Number(q.id)) || tecUrlFromExplanation(q.explanation_text) || null,
         yourLetter: yours,
         yourComment: ans ? ans.comment : null,
         yourAiComment: ans ? ans.aiComment : null,

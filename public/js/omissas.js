@@ -755,6 +755,7 @@
               <div class="statement-box">
                 <div class="statement-text">${esc(item.statementText || "")}</div>
                 ${media}
+                ${quizUi.tecLinkHtml(item)}
               </div>
               <p><strong>Sua resposta:</strong> ${(item.yourLetter || "—").toUpperCase()}
                 · <strong>Gabarito:</strong> ${esc(item.answerKey || "—")}</p>
