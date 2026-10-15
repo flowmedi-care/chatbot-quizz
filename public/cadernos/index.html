@@ -59,12 +59,17 @@
         <label class="cb-filter">
           Status
           <select id="cb-filter-status">
+            <option value="current" selected>Ativos e aguardando</option>
             <option value="all">Todos</option>
             <option value="active">Ativos</option>
             <option value="inactive">Inativos</option>
             <option value="paused_waiting_decision">Aguardando decisão</option>
             <option value="finished">Encerrados</option>
           </select>
+        </label>
+        <label class="cb-show-all">
+          <input type="checkbox" id="cb-show-all" />
+          Mostrar todos
         </label>
         <label class="cb-filter">
           Envio

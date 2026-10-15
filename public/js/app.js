@@ -148,10 +148,13 @@
   let cadernoUploadInFlight = false;
   const cadernosUi = {
     search: "",
-    status: "all",
+    status: "current",
     mode: "all",
-    sort: "name"
+    sort: "name",
+    showAll: false
   };
+  /** Aviso da API ou erro de carga; vazio quando a lista carregou. */
+  let cadernosLoadMessage = "";
 
   let questionsList = [];
   const QUESTIONS_PREVIEW_LIMIT = 9;
@@ -2377,10 +2380,16 @@
     return c.nextRunAt || null;
   }
 
+  function isCadernoInDefaultView(c) {
+    return c.status === "active" || c.status === "paused_waiting_decision";
+  }
+
   function getFilteredCadernos() {
     const q = cadernosUi.search.trim().toLowerCase();
     let list = cadernosCache.slice();
-    if (cadernosUi.status !== "all") {
+    if (cadernosUi.status === "current" || (cadernosUi.status === "all" && !cadernosUi.showAll)) {
+      list = list.filter(isCadernoInDefaultView);
+    } else if (cadernosUi.status !== "all") {
       list = list.filter((c) => c.status === cadernosUi.status);
     }
     if (cadernosUi.mode !== "all") {
@@ -2468,9 +2477,27 @@
       </div>`;
   }
 
+  function renderCadernosStatusLine() {
+    if (!IS_CADERNOS_PAGE || !els.cadernosStatus) return;
+    if (cadernosLoadMessage) {
+      els.cadernosStatus.textContent = cadernosLoadMessage;
+      return;
+    }
+    const ativos = cadernosCache.filter((c) => c.status === "active").length;
+    const hidden = cadernosCache.filter((c) => !isCadernoInDefaultView(c)).length;
+    const showingDefault = cadernosUi.status === "current" || (cadernosUi.status === "all" && !cadernosUi.showAll);
+    if (showingDefault && hidden > 0 && !cadernosUi.search.trim() && cadernosUi.mode === "all") {
+      const visible = cadernosCache.length - hidden;
+      els.cadernosStatus.textContent = `${visible} em andamento — ${hidden} inativo(s) ou encerrado(s) oculto(s).`;
+      return;
+    }
+    els.cadernosStatus.textContent = `${cadernosCache.length} caderno(s) — ${ativos} ativo(s).`;
+  }
+
   function renderCadernos() {
     if (!els.cadernosList) return;
     renderCadernosSummary();
+    renderCadernosStatusLine();
     const list = getFilteredCadernos();
     if (!cadernosCache.length) {
       els.cadernosList.innerHTML = IS_CADERNOS_PAGE
@@ -2479,8 +2506,16 @@
       return;
     }
     if (!list.length) {
+      const hiddenByDefault =
+        IS_CADERNOS_PAGE &&
+        (cadernosUi.status === "current" || (cadernosUi.status === "all" && !cadernosUi.showAll)) &&
+        !cadernosUi.search.trim() &&
+        cadernosUi.mode === "all" &&
+        cadernosCache.some((c) => !isCadernoInDefaultView(c));
       els.cadernosList.innerHTML = IS_CADERNOS_PAGE
-        ? `<li class="cb-empty"><strong>Nenhum resultado</strong>Ajuste busca ou filtros.</li>`
+        ? hiddenByDefault
+          ? `<li class="cb-empty"><strong>Nenhum caderno ativo ou aguardando decisão</strong>Marque “Mostrar todos” para ver inativos e encerrados.</li>`
+          : `<li class="cb-empty"><strong>Nenhum resultado</strong>Ajuste busca ou filtros.</li>`
         : '<li class="engagement-empty">Nenhum caderno com esses filtros.</li>';
       return;
     }
@@ -2506,6 +2541,7 @@
         const todayText =
           c.currentDayDate && c.status === "active" ? `${todaySent}/${perDay}` : "—";
         const isActive = c.status === "active";
+        const canPause = c.status === "active" || c.status === "paused_waiting_decision";
         const canResume = c.status !== "active" && c.status !== "finished";
         const canRecycle =
           c.status === "paused_waiting_decision" || c.status === "finished";
@@ -2539,7 +2575,7 @@
           </div>
           <div class="caderno-card-actions">
             <button type="button" data-action="edit">Editar</button>
-            <button type="button" data-action="pause" ${isActive ? "" : "disabled"}>Pausar</button>
+            <button type="button" data-action="pause" ${canPause ? "" : "disabled"}>Pausar</button>
             <button type="button" data-action="resume" ${canResume ? "" : "disabled"}>Retomar</button>
           </div>
         </li>`;
@@ -2575,7 +2611,7 @@
             <button type="button" class="btn-primary-action" data-action="trigger" ${isActive ? "" : "disabled"} title="Envia a próxima questão agora (até 60s)">Enviar agora</button>
             <button type="button" data-action="edit">Editar</button>
             <button type="button" data-action="toggle-random" title="Clique para alternar">${c.randomOrder ? "Aleatório" : "Ordem do PDF"}</button>
-            <button type="button" data-action="pause" ${isActive ? "" : "disabled"}>Pausar</button>
+            <button type="button" data-action="pause" ${canPause ? "" : "disabled"}>Pausar</button>
             <button type="button" data-action="resume" ${canResume ? "" : "disabled"}>${
           canRecycle ? "Retomar do começo" : "Retomar"
         }</button>
@@ -2594,16 +2630,15 @@
       const data = await fetchJson(API.cadernos);
       cadernosCache = data.cadernos || [];
       if (data.warning) {
-        els.cadernosStatus.textContent = data.warning;
+        cadernosLoadMessage = data.warning;
       } else if (!cadernosCache.length) {
-        els.cadernosStatus.textContent = "Você ainda não tem cadernos cadastrados.";
+        cadernosLoadMessage = "Você ainda não tem cadernos cadastrados.";
       } else {
-        const ativos = cadernosCache.filter((c) => c.status === "active").length;
-        els.cadernosStatus.textContent = `${cadernosCache.length} caderno(s) — ${ativos} ativo(s).`;
+        cadernosLoadMessage = "";
       }
       renderCadernos();
     } catch (e) {
-      els.cadernosStatus.textContent = e.message || "Não foi possível carregar.";
+      cadernosLoadMessage = e.message || "Não foi possível carregar.";
       cadernosCache = [];
       renderCadernos();
     }
@@ -3285,6 +3320,7 @@
   const cbFilterStatus = document.getElementById("cb-filter-status");
   const cbFilterMode = document.getElementById("cb-filter-mode");
   const cbSort = document.getElementById("cb-sort");
+  const cbShowAll = document.getElementById("cb-show-all");
   const cbReload = document.getElementById("cb-reload");
   if (cbSearch) {
     cbSearch.addEventListener("input", () => {
@@ -3294,7 +3330,22 @@
   }
   if (cbFilterStatus) {
     cbFilterStatus.addEventListener("change", () => {
-      cadernosUi.status = cbFilterStatus.value;
+      cadernosUi.status = cbFilterStatus.value || "current";
+      cadernosUi.showAll = cadernosUi.status === "all";
+      if (cbShowAll) cbShowAll.checked = cadernosUi.showAll;
+      renderCadernos();
+    });
+  }
+  if (cbShowAll) {
+    cbShowAll.addEventListener("change", () => {
+      cadernosUi.showAll = cbShowAll.checked;
+      if (cbShowAll.checked) {
+        cadernosUi.status = "all";
+        if (cbFilterStatus) cbFilterStatus.value = "all";
+      } else if (cadernosUi.status === "all") {
+        cadernosUi.status = "current";
+        if (cbFilterStatus) cbFilterStatus.value = "current";
+      }
       renderCadernos();
     });
   }

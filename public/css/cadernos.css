@@ -193,6 +193,26 @@ body[data-page="cadernos"] {
   min-width: 140px;
 }
 
+.cb-show-all {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin: 0 0 0.15rem;
+  padding: 0.5rem 0.15rem;
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: var(--text, #3d3024);
+  cursor: pointer;
+  user-select: none;
+}
+
+.cb-show-all input {
+  width: 1rem;
+  height: 1rem;
+  margin: 0;
+  accent-color: var(--navy, #1e3a5f);
+}
+
 .cb-status {
   margin: 0 0 1rem;
   font-size: 0.9rem;
