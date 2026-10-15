@@ -1,6 +1,7 @@
 const pdfParse = require("pdf-parse/lib/pdf-parse.js");
 const { getClient, applyCors, pickTargetGroupJid } = require("./_lib.js");
 const { parseTecConcursosPdf } = require("./_pdf-parser.js");
+const { parseCadernoMarkdown } = require("./_md-parser.js");
 const { checkFlashcardsInboundAuth } = require("./_flashcards-inbound-auth.js");
 const {
   parseSchedule,
@@ -84,8 +85,18 @@ module.exports = async (req, res) => {
   let questions = [];
   let warnings = [];
   let totalGabaritoEntries = 0;
+  const markdown = String(body.markdown || body.md || "").trim();
 
-  if (forceJson) {
+  if (markdown) {
+    const parsedMd = parseCadernoMarkdown(markdown);
+    const parsed = normalizeIncomingQuestions(parsedMd.questions);
+    questions = parsed.questions;
+    warnings = [...(parsedMd.warnings || []), ...parsed.warnings];
+    totalGabaritoEntries = questions.length;
+    if (questions.length === 0) {
+      return res.status(400).json({ error: "Nenhuma questao valida no Markdown.", warnings });
+    }
+  } else if (forceJson) {
     const parsed = normalizeIncomingQuestions(body.questions);
     questions = parsed.questions;
     warnings = parsed.warnings;
@@ -95,7 +106,9 @@ module.exports = async (req, res) => {
     }
   } else {
     if (!pdfBase64) {
-      return res.status(400).json({ error: "Envie pdfBase64 (PDF em base64) ou questions (JSON)." });
+      return res.status(400).json({
+        error: "Envie pdfBase64 (PDF Tec), markdown (questões de IA) ou questions (JSON)."
+      });
     }
     let pdfBuffer;
     try {

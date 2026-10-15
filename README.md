@@ -151,7 +151,10 @@ TUTORIAL_GRUPO.md        # texto para colar no grupo (tutorial usuarios)
 ## 8) Cadernões (upload de PDF Tec Concursos)
 
 Permite carregar um PDF do Tec Concursos pelo site Papa Vagas e agendar envio
-automático das questões no grupo.
+automático das questões no grupo. Também aceita **Markdown** de questões de IA
+(arquivo `.md` com seções `## Q1`, `## Q2`… — metadados `tipo:`, `gabarito:`,
+`banca:`, `materia:`, `tec_id:` opcional). PDF do Estratégia: converter para
+esse Markdown antes de importar.
 
 ### Setup do banco
 

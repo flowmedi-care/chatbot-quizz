@@ -98,7 +98,7 @@
         <div class="modal-header wizard-header">
           <div>
             <h3 id="caderno-add-title">Importar caderno</h3>
-            <p class="report-sub" id="wizard-step-caption">Passo 1 de 5 — Preparar PDF no TEC</p>
+            <p class="report-sub" id="wizard-step-caption">Passo 1 de 5 — PDF Tec ou Markdown de IA</p>
           </div>
           <button type="button" id="caderno-add-close" class="btn-close" aria-label="Fechar">×</button>
         </div>
@@ -132,12 +132,43 @@
 
           <!-- Step 2: PDF -->
           <section class="wizard-panel" data-wizard-step="2">
-            <h4 class="wizard-panel-title">Enviar o PDF</h4>
-            <p class="report-sub">Use o mesmo arquivo gerado pelo TEC (gabarito no fim).</p>
+            <h4 class="wizard-panel-title">Enviar o arquivo</h4>
+            <p class="report-sub">
+              PDF do Tec Concursos (gabarito no fim) <strong>ou</strong> Markdown de questões de IA
+              (<code>.md</code>, seções <code>## Q1</code>, <code>## Q2</code>…).
+            </p>
             <label class="report-field">
-              <span>PDF do Tec Concursos</span>
-              <input type="file" id="caderno-pdf" accept="application/pdf" />
+              <span>PDF do Tec ou Markdown (.md)</span>
+              <input type="file" id="caderno-pdf" accept="application/pdf,.md,text/markdown,text/plain" />
             </label>
+            <details class="report-sub" style="margin: 0.5rem 0">
+              <summary>Formato Markdown (questões de IA)</summary>
+              <pre style="white-space: pre-wrap; font-size: 0.8rem; margin-top: 0.5rem"># Políticas Públicas — bloco 1
+
+## Q1
+tipo: certo_errado
+gabarito: C
+banca: INÉDITA
+materia: Políticas públicas
+tec_id:
+
+Enunciado aqui...
+
+Certo
+Errado
+
+## Q2
+tipo: multiple_choice
+gabarito: B
+
+Enunciado...
+
+a) alternativa
+b) alternativa
+c) alternativa
+d) alternativa
+e) alternativa</pre>
+            </details>
             <div class="wizard-inline-actions">
               <button type="button" id="btn-caderno-preview" class="btn-tutorial">Pré-visualizar parser</button>
             </div>

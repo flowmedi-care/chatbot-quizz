@@ -583,12 +583,38 @@ export async function updateUserAnswer(input: AnswerInput): Promise<{ answerId: 
   return { answerId: Number(updatedRows[0]!.id) };
 }
 
+export type ConfidenceLevel = "seguro" | "inseguro" | "chute";
+
+export const SKIPPED_AUTO_GABARITO_PREFIX = "skip:all-correct:";
+
+export function parseRespondentConfidence(raw: unknown): ConfidenceLevel {
+  const v = String(raw || "")
+    .toLowerCase()
+    .trim();
+  return v === "inseguro" || v === "chute" ? v : "seguro";
+}
+
+export function isSkippedResultWaMessageId(id: string | null | undefined): boolean {
+  return String(id || "").startsWith(SKIPPED_AUTO_GABARITO_PREFIX);
+}
+
+/** Grupo: só posta gabarito se alguém errou ou marcou chute. */
+export function shouldPostGroupAutoGabarito(result: {
+  wrongRespondents: { confidence?: ConfidenceLevel }[];
+  correctRespondents: { confidence?: ConfidenceLevel }[];
+}): boolean {
+  if (result.wrongRespondents.length > 0) return true;
+  const all = [...result.correctRespondents, ...result.wrongRespondents];
+  return all.some((r) => r.confidence === "chute");
+}
+
 export type QuestionRespondent = {
   name: string;
   letter: string;
   comment: string | null;
   aiComment: string | null;
   userJid: string | null;
+  confidence: ConfidenceLevel;
 };
 
 export type QuestionResult = {
@@ -658,26 +684,40 @@ export async function getQuestionResult(shortId: string): Promise<QuestionResult
     throw new Error("Questao nao encontrada.");
   }
 
-  const { data: answers, error } = await supabase
-    .from("answers")
-    .select("answer_letter, user_name, user_jid, answer_comment, ai_comment")
-    .eq("question_short_id", normalizedId);
-
-  if (error) {
-    if (/column/i.test(error.message || "")) {
-      const retry = await supabase
-        .from("answers")
-        .select("answer_letter, user_name, user_jid, answer_comment")
-        .eq("question_short_id", normalizedId);
-      if (retry.error) {
-        throw new Error(`Erro ao buscar respostas: ${retry.error.message}`);
-      }
-      return finishQuestionResult(question, retry.data || []);
+  const selects = [
+    "answer_letter, user_name, user_jid, answer_comment, ai_comment, confidence_level",
+    "answer_letter, user_name, user_jid, answer_comment, ai_comment",
+    "answer_letter, user_name, user_jid, answer_comment"
+  ];
+  let answers: {
+    answer_letter: string;
+    user_name: string | null;
+    user_jid: string;
+    answer_comment?: string | null;
+    ai_comment?: string | null;
+    confidence_level?: string | null;
+  }[] = [];
+  let lastError: string | null = null;
+  for (const sel of selects) {
+    const { data, error } = await supabase
+      .from("answers")
+      .select(sel)
+      .eq("question_short_id", normalizedId);
+    if (!error) {
+      answers = (data || []) as unknown as typeof answers;
+      lastError = null;
+      break;
     }
-    throw new Error(`Erro ao buscar respostas: ${error.message}`);
+    lastError = error.message;
+    if (!/column/i.test(error.message || "")) {
+      throw new Error(`Erro ao buscar respostas: ${error.message}`);
+    }
+  }
+  if (lastError) {
+    throw new Error(`Erro ao buscar respostas: ${lastError}`);
   }
 
-  return finishQuestionResult(question, answers || []);
+  return finishQuestionResult(question, answers);
 }
 
 function finishQuestionResult(
@@ -699,6 +739,7 @@ function finishQuestionResult(
     user_jid: string;
     answer_comment?: string | null;
     ai_comment?: string | null;
+    confidence_level?: string | null;
   }[]
 ): QuestionResult {
   const distribution: Record<string, number> =
@@ -721,7 +762,8 @@ function finishQuestionResult(
       letter,
       comment: split.comment,
       aiComment: split.aiComment,
-      userJid: row.user_jid ? String(row.user_jid) : null
+      userJid: row.user_jid ? String(row.user_jid) : null,
+      confidence: parseRespondentConfidence(row.confidence_level)
     };
 
     if (letter === String(question.answer_key).toUpperCase()) {
@@ -4343,6 +4385,20 @@ export async function insertQuestionWaMessage(input: {
     }
     console.warn("[discussions] insertQuestionWaMessage:", error.message);
   }
+}
+
+export async function markAutoGabaritoSkipped(input: {
+  questionId: number;
+  shortId: string;
+  groupJid: string;
+}): Promise<void> {
+  await insertQuestionWaMessage({
+    questionId: input.questionId,
+    shortId: input.shortId,
+    groupJid: input.groupJid,
+    waMessageId: `${SKIPPED_AUTO_GABARITO_PREFIX}${input.questionId}`,
+    role: "result"
+  });
 }
 
 /** Cria ou promove post. early não entra no feed; auto_gabarito/gabarito seta feed_at. */

@@ -25,6 +25,13 @@ function answerIsCorrect(answerLetter, answerKey) {
   return normalizeLetter(answerLetter) === String(answerKey || "").toUpperCase().slice(0, 1);
 }
 
+function parseConfidenceLevel(raw) {
+  const v = String(raw || "")
+    .toLowerCase()
+    .trim();
+  return v === "inseguro" || v === "chute" ? v : "seguro";
+}
+
 function parseCadernoIdFromCreator(creatorJid) {
   const m = String(creatorJid || "").match(/^caderno:(\d+)@bot$/i);
   if (!m) return null;
@@ -56,24 +63,26 @@ module.exports = async (req, res) => {
     const questionIds = rows.map((r) => r.id);
     let answersRaw = [];
     if (questionIds.length) {
-      try {
-        answersRaw = await fetchAllIn(
-          supabase,
-          "answers",
-          "id, question_id, question_short_id, user_jid, user_name, answer_letter, answer_comment, ai_comment, created_at, sent_at",
-          "question_id",
-          questionIds
-        );
-      } catch (ansErr) {
-        if (!String(ansErr.message || "").toLowerCase().includes("sent_at")) throw ansErr;
-        answersRaw = await fetchAllIn(
-          supabase,
-          "answers",
-          "id, question_id, question_short_id, user_jid, user_name, answer_letter, answer_comment, ai_comment, created_at",
-          "question_id",
-          questionIds
-        );
+      const answerSelects = [
+        "id, question_id, question_short_id, user_jid, user_name, answer_letter, answer_comment, ai_comment, confidence_level, created_at, sent_at",
+        "id, question_id, question_short_id, user_jid, user_name, answer_letter, answer_comment, ai_comment, created_at, sent_at",
+        "id, question_id, question_short_id, user_jid, user_name, answer_letter, answer_comment, ai_comment, created_at"
+      ];
+      let lastAnsErr = null;
+      for (const sel of answerSelects) {
+        try {
+          answersRaw = await fetchAllIn(supabase, "answers", sel, "question_id", questionIds);
+          lastAnsErr = null;
+          break;
+        } catch (ansErr) {
+          lastAnsErr = ansErr;
+          const msg = String(ansErr.message || "").toLowerCase();
+          if (!msg.includes("sent_at") && !msg.includes("confidence_level") && !msg.includes("column")) {
+            throw ansErr;
+          }
+        }
       }
+      if (lastAnsErr) throw lastAnsErr;
     }
 
     const answerIds = answersRaw.map((r) => Number(r.id)).filter((n) => Number.isFinite(n));
@@ -86,26 +95,42 @@ module.exports = async (req, res) => {
 
     const cadernoByQuestionId = new Map();
     const publishedAtByQuestionId = new Map();
+    const tecMetaByQuestionId = new Map();
     if (questionIds.length) {
       try {
         let cqRows = [];
-        try {
-          cqRows = await fetchAllIn(
-            supabase,
-            "caderno_questions",
-            "published_question_id, caderno_id, published_at",
-            "published_question_id",
-            questionIds
-          );
-        } catch (pubErr) {
-          if (!String(pubErr.message || "").toLowerCase().includes("published_at")) throw pubErr;
-          cqRows = await fetchAllIn(
-            supabase,
-            "caderno_questions",
-            "published_question_id, caderno_id",
-            "published_question_id",
-            questionIds
-          );
+        const cqSelects = [
+          "published_question_id, caderno_id, published_at, tec_question_id, tec_url, banca, subject",
+          "published_question_id, caderno_id, published_at",
+          "published_question_id, caderno_id"
+        ];
+        let lastCqErr = null;
+        for (const sel of cqSelects) {
+          try {
+            cqRows = await fetchAllIn(
+              supabase,
+              "caderno_questions",
+              sel,
+              "published_question_id",
+              questionIds
+            );
+            lastCqErr = null;
+            break;
+          } catch (pubErr) {
+            lastCqErr = pubErr;
+            const msg = String(pubErr.message || "").toLowerCase();
+            if (
+              !msg.includes("published_at") &&
+              !msg.includes("tec_question_id") &&
+              !msg.includes("tec_url") &&
+              !msg.includes("column")
+            ) {
+              throw pubErr;
+            }
+          }
+        }
+        if (lastCqErr && !cqRows.length) {
+          throw lastCqErr;
         }
         for (const row of cqRows || []) {
           const qid = Number(row.published_question_id);
@@ -115,6 +140,14 @@ module.exports = async (req, res) => {
           }
           if (Number.isFinite(qid) && row.published_at) {
             publishedAtByQuestionId.set(qid, String(row.published_at));
+          }
+          if (Number.isFinite(qid)) {
+            tecMetaByQuestionId.set(qid, {
+              tecQuestionId: row.tec_question_id != null ? String(row.tec_question_id).trim() : "",
+              tecUrl: row.tec_url != null ? String(row.tec_url).trim() : "",
+              banca: row.banca != null ? String(row.banca).trim() : "",
+              subject: row.subject != null ? String(row.subject).trim() : ""
+            });
           }
         }
       } catch (cqErr) {
@@ -164,6 +197,7 @@ module.exports = async (req, res) => {
         answerLetterDisplay: normalizeLetter(row.answer_letter),
         answerComment: split.comment,
         answerAiComment: split.aiComment,
+        confidenceLevel: parseConfidenceLevel(row.confidence_level),
         correct,
         categories: categoriesByAnswer.get(answerId) || [],
         answeredAt: row.sent_at || row.created_at || null,
@@ -199,6 +233,7 @@ module.exports = async (req, res) => {
     const questions = rows.map((row) => {
       const cadernoId = cadernoByQuestionId.get(row.id) ?? null;
       const pubAt = publishedAtByQuestionId.get(row.id) || row.created_at;
+      const tec = tecMetaByQuestionId.get(row.id) || {};
       return {
         id: row.id,
         shortId: String(row.short_id || "").toUpperCase(),
@@ -214,7 +249,11 @@ module.exports = async (req, res) => {
         createdAt: row.created_at,
         publishedDay: pubAt ? publishedDayIso(pubAt, REPORT_TZ) : null,
         cadernoId,
-        cadernoName: cadernoId != null ? cadernoNames.get(cadernoId) || `Caderno #${cadernoId}` : null
+        cadernoName: cadernoId != null ? cadernoNames.get(cadernoId) || `Caderno #${cadernoId}` : null,
+        tecQuestionId: tec.tecQuestionId || null,
+        tecUrl: tec.tecUrl || null,
+        banca: tec.banca || null,
+        subject: tec.subject || null
       };
     });
 

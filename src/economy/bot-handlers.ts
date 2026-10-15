@@ -41,6 +41,7 @@ import {
   getDiscussionCommentById,
   getDiscussionPostById,
   getResultWaMessageIdForQuestion,
+  isSkippedResultWaMessageId,
   markDiscussionCommentSharedToWa,
   listDiscussionCommentsForPost,
   getQuestionResult
@@ -153,12 +154,12 @@ async function handleAiCommentPending(
   const questionId = Number(payload.questionId);
   if (Number.isFinite(questionId) && questionId > 0) {
     const posted = await getResultWaMessageIdForQuestion(questionId, groupJid);
-    if (!posted) return;
+    if (!posted || isSkippedResultWaMessageId(posted)) return;
   } else {
     try {
       const result = await getQuestionResult(shortId);
       const posted = await getResultWaMessageIdForQuestion(result.questionId, groupJid);
-      if (!posted) return;
+      if (!posted || isSkippedResultWaMessageId(posted)) return;
     } catch {
       return;
     }

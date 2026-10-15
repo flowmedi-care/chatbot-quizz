@@ -85,7 +85,9 @@ import {
   listDiscussionCommentsForPost,
   formatDiscussionCommentsTree,
   markDiscussionCommentsSharedToWa,
-  getResultWaMessageIdForQuestion
+  getResultWaMessageIdForQuestion,
+  markAutoGabaritoSkipped,
+  shouldPostGroupAutoGabarito
 } from "./supabase";
 import {
   computeNextRunAt,
@@ -110,7 +112,6 @@ import {
 import { notifyGroupOmissasEntered } from "./economy/omissas";
 import { ECONOMY_TZ } from "./economy/constants";
 import { MediaPayload, QuestionDraft, QuestionType } from "./types";
-import { AI_MISSING_HINT } from "./answer-comments";
 
 function toIsoTimestamp(value: unknown): string {
   if (typeof value === "number") {
@@ -530,17 +531,23 @@ async function maybePostAutoGabaritoToGroup(sock: WASocket, rawShortId: string):
 
     autoGabaritoWaitingQuestionIds.add(shortUp);
     try {
-      let result = await getQuestionResult(shortUp);
+      const result = await getQuestionResult(shortUp);
       const alreadyPosted = await getResultWaMessageIdForQuestion(result.questionId, groupJid);
       if (alreadyPosted) {
         autoGabaritoPostedQuestionIds.add(shortUp);
         return;
       }
 
-      result = await waitForPendingAiComments(shortUp, groupJid, result);
-      const postedAfterWait = await getResultWaMessageIdForQuestion(result.questionId, groupJid);
-      if (postedAfterWait) {
+      if (!shouldPostGroupAutoGabarito(result)) {
+        await markAutoGabaritoSkipped({
+          questionId: result.questionId,
+          shortId: result.shortId,
+          groupJid
+        });
         autoGabaritoPostedQuestionIds.add(shortUp);
+        console.log(
+          `[auto-gabarito] #${shortUp} omitido no grupo (todos acertaram, nenhum chute).`
+        );
         return;
       }
 
@@ -729,17 +736,17 @@ async function publishQuestionToGroup(
   });
 }
 
-function truncateForWhatsApp(text: string, max = 700): string {
-  const t = text.trim();
-  if (t.length <= max) return t;
-  return `${t.slice(0, max)}…`;
-}
-
 function firstNameForAnnotation(name: string): string {
   const first = String(name || "")
     .trim()
     .split(/\s+/)[0];
   return (first || "alguém").toLowerCase();
+}
+
+function formatConfidenceTag(confidence?: string | null): string {
+  const v = String(confidence || "").toLowerCase();
+  if (v === "chute" || v === "inseguro") return ` [${v}]`;
+  return "";
 }
 
 function formatRespondentLines(
@@ -748,12 +755,13 @@ function formatRespondentLines(
     letter: string;
     comment: string | null;
     aiComment?: string | null;
+    confidence?: string | null;
   }[]
 ): string {
   if (!respondents.length) return "Ninguem";
   return respondents
     .map((r) => {
-      const base = `- ${r.name} (${r.letter})`;
+      const base = `- ${r.name} (${r.letter})${formatConfidenceTag(r.confidence)}`;
       return r.comment ? `${base}: ${r.comment}` : base;
     })
     .join("\n");
@@ -765,10 +773,11 @@ function formatAnnotationReplyBlocks(
   const all = [...result.correctRespondents, ...result.wrongRespondents];
   const parts: string[] = [];
   for (const r of all) {
-    if (!r.comment) continue;
+    const ai = r.aiComment?.trim();
+    if (!ai) continue;
     if (parts.length) parts.push("");
     parts.push(`---Resposta anotação ${firstNameForAnnotation(r.name)}---`);
-    parts.push(r.aiComment?.trim() || AI_MISSING_HINT);
+    parts.push(ai);
   }
   return parts;
 }
@@ -805,17 +814,15 @@ function buildResultMessage(
   const statementBlock: string[] = [];
   const sendsStatementMedia =
     Boolean(result.statementMediaUrl && result.statementMediaMimeType);
-  if (result.statementText && !sendsStatementMedia) {
-    if (opts?.statementSentSeparately) {
-      statementBlock.push("Enunciado: (mensagem(ns) acima)", "");
-    } else {
-      statementBlock.push("Enunciado:", truncateForWhatsApp(result.statementText), "");
-    }
-  } else if (sendsStatementMedia) {
+  if (opts?.statementSentSeparately) {
     statementBlock.push(
-      opts?.statementSentSeparately ? "Enunciado: (midia e texto acima)" : "Enunciado: (veja acima)",
+      sendsStatementMedia ? "Enunciado: (midia e texto acima)" : "Enunciado: (mensagem(ns) acima)",
       ""
     );
+  } else if (result.statementText) {
+    statementBlock.push("Enunciado:", result.statementText.trim(), "");
+  } else if (sendsStatementMedia) {
+    statementBlock.push("Enunciado: (veja acima)", "");
   }
 
   return [
@@ -870,12 +877,7 @@ async function sendStatementMedia(
 ): Promise<string | null> {
   if (!result.statementMediaUrl || !result.statementMediaMimeType) return null;
 
-  const captionParts = [`Enunciado — Questao #${result.shortId}`];
-  const statementText = result.statementText?.trim() ?? "";
-  if (statementText && statementText.length <= 900) {
-    captionParts.push("", statementText);
-  }
-  const caption = captionParts.join("\n");
+  const caption = `Enunciado — Questao #${result.shortId}`;
 
   let sent;
   if (result.statementMediaMimeType.startsWith("image/")) {
@@ -957,12 +959,9 @@ async function publishQuestionResult(
   if (hasStatementMedia) {
     const mediaId = await sendStatementMedia(sock, jid, result);
     if (mediaId) statementIds.push(mediaId);
-    if (statementText.length > 900) {
-      const textIds = await sendFullStatementBeforeResult(sock, jid, result.shortId, statementText);
-      statementIds.push(...textIds);
-      statementSentSeparately = true;
-    }
-  } else if (statementText) {
+    statementSentSeparately = true;
+  }
+  if (statementText) {
     const textIds = await sendFullStatementBeforeResult(sock, jid, result.shortId, statementText);
     statementIds.push(...textIds);
     statementSentSeparately = true;

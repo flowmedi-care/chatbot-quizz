@@ -1355,6 +1355,10 @@
       );
       lines.push(`- **Autor:** ${mdCell(q.creatorName)}`);
       if (q.cadernoName) lines.push(`- **Caderno:** ${mdCell(q.cadernoName)} (#${q.cadernoId})`);
+      if (q.tecQuestionId) lines.push(`- **TEC id:** ${mdCell(q.tecQuestionId)}`);
+      if (q.banca) lines.push(`- **Banca:** ${mdCell(q.banca)}`);
+      if (q.subject) lines.push(`- **Matéria:** ${mdCell(q.subject)}`);
+      if (q.tecUrl) lines.push(`- **URL TEC:** ${q.tecUrl}`);
       lines.push("");
 
       let stmtMediaName = null;
@@ -1425,8 +1429,8 @@
       if (scopeJid === "__all__") {
         lines.push("### Respostas");
         lines.push("");
-        lines.push("| Participante | Marcou | Gabarito | Resultado | Comentário | Categorias |");
-        lines.push("| --- | --- | --- | --- | --- | --- |");
+        lines.push("| Participante | Marcou | Gabarito | Resultado | Confiança | Comentário | Categorias |");
+        lines.push("| --- | --- | --- | --- | --- | --- | --- |");
         const rowsForTable = mergedParticipants()
           .map((p) => {
             const row = pickAnswerForScope(answersHere, p.userJid);
@@ -1435,17 +1439,18 @@
           .filter(Boolean)
           .sort((a, b) => a.userName.localeCompare(b.userName, "pt-BR"));
         if (!rowsForTable.length) {
-          lines.push("| — | — | — | Nenhuma resposta registrada | — | — |");
+          lines.push("| — | — | — | Nenhuma resposta registrada | — | — | — |");
         } else {
           for (const row of rowsForTable) {
             const commentCell = row.answerComment ? mdCell(row.answerComment) : "—";
             const aiCell = row.answerAiComment ? mdCell(row.answerAiComment) : "";
+            const confCell = mdCell(row.confidenceLevel || "seguro");
             const catsCell =
               Array.isArray(row.categories) && row.categories.length
                 ? mdCell(row.categories.map((c) => c.name).join(", "))
                 : "—";
             lines.push(
-              `| ${mdCell(row.userName)} | ${formatMarcada(row.answerLetterDisplay, q)} | ${formatGabarito(q)} | ${row.correct ? "Certo" : "Errado"} | ${commentCell}${aiCell ? ` / IA: ${aiCell}` : ""} | ${catsCell} |`
+              `| ${mdCell(row.userName)} | ${formatMarcada(row.answerLetterDisplay, q)} | ${formatGabarito(q)} | ${row.correct ? "Certo" : "Errado"} | ${confCell} | ${commentCell}${aiCell ? ` / IA: ${aiCell}` : ""} | ${catsCell} |`
             );
           }
         }
@@ -1458,6 +1463,7 @@
           lines.push("*Sem resposta registrada para esta questão.*");
         } else {
           lines.push(`- **Marcou:** ${formatMarcada(row.answerLetterDisplay, q)}`);
+          lines.push(`- **Confiança:** ${row.confidenceLevel || "seguro"}`);
           if (row.answerComment) {
             lines.push(`- **Comentário:** ${row.answerComment}`);
           }
@@ -2788,17 +2794,21 @@
 
   async function callCadernoUpload(extra) {
     const form = getCadernoFormPayload();
-    if (!form.file) throw new Error("Selecione um PDF.");
+    if (!form.file) throw new Error("Selecione um PDF do Tec ou um arquivo Markdown (.md).");
     if (!extra.previewOnly && !form.name) throw new Error("Informe um nome para o caderno.");
-    const dataUrl = await readFileAsDataUrl(form.file);
+    const isMarkdown = /\.md$/i.test(form.file.name || "") || /markdown|text\/plain/i.test(form.file.type || "");
     const body = {
       name: form.name,
       schedule: form.schedule,
-      pdfBase64: dataUrl,
       deliveryMode: form.deliveryMode,
       createdByJid: form.createdByJid,
       ...extra
     };
+    if (isMarkdown) {
+      body.markdown = await form.file.text();
+    } else {
+      body.pdfBase64 = await readFileAsDataUrl(form.file);
+    }
     if (form.deliveryMode === "private" && Array.isArray(form.privateRecipients)) {
       body.privateRecipients = form.privateRecipients;
     }
@@ -2811,7 +2821,7 @@
   async function onCadernoPreview() {
     if (cadernoUploadInFlight) return;
     cadernoUploadInFlight = true;
-    els.cadernoAddStatus.textContent = "Lendo PDF e extraindo…";
+    els.cadernoAddStatus.textContent = "Lendo arquivo e extraindo…";
     renderCadernoPreview(null);
     try {
       const result = await callCadernoUpload({ previewOnly: true });
