@@ -305,6 +305,7 @@ async function handleIngestAnswer(req, res) {
         const slim = { ...payload };
         delete slim.confidence_level;
         delete slim.duration_ms;
+        delete slim.wants_discussion;
         delete slim.sync_source;
         delete slim.ai_comment;
         const retry = isUpdate
@@ -398,6 +399,7 @@ async function handleIngestAnswer(req, res) {
       sent_at: new Date().toISOString(),
       confidence_level: confidence === "inseguro" || confidence === "chute" ? confidence : "seguro",
       duration_ms: durationMs,
+      wants_discussion: body.wantsDiscussion === true || body.wants_discussion === true,
       sync_source: "app"
     };
     if (comment) row.answer_comment = comment;

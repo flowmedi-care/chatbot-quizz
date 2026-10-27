@@ -419,6 +419,7 @@ export async function insertAnswer(input: AnswerInput): Promise<{ answerId: numb
       sent_at: input.sentAt
     };
   if (input.confidenceLevel) insertRow.confidence_level = input.confidenceLevel;
+  if (input.wantsDiscussion != null) insertRow.wants_discussion = Boolean(input.wantsDiscussion);
   if (input.durationMs != null) insertRow.duration_ms = input.durationMs;
   else if (question.sent_at && input.sentAt) {
     const ms = new Date(input.sentAt).getTime() - new Date(String(question.sent_at)).getTime();
@@ -523,16 +524,21 @@ export async function updateUserAnswer(input: AnswerInput): Promise<{ answerId: 
     input.userJid
   );
 
+  const updateRow: Record<string, unknown> = {
+    question_short_id: input.questionShortId.toUpperCase(),
+    user_name: input.userName,
+    answer_letter: input.answerLetter.toLowerCase(),
+    answer_comment: input.answerComment?.trim() || null,
+    source_message_id: input.sourceMessageId,
+    sent_at: input.sentAt
+  };
+  if (input.confidenceLevel) updateRow.confidence_level = input.confidenceLevel;
+  if (input.wantsDiscussion != null) updateRow.wants_discussion = Boolean(input.wantsDiscussion);
+  if (input.durationMs != null) updateRow.duration_ms = input.durationMs;
+
   const { data: updatedRows, error } = await supabase
     .from("answers")
-    .update({
-      question_short_id: input.questionShortId.toUpperCase(),
-      user_name: input.userName,
-      answer_letter: input.answerLetter.toLowerCase(),
-      answer_comment: input.answerComment?.trim() || null,
-      source_message_id: input.sourceMessageId,
-      sent_at: input.sentAt
-    })
+    .update(updateRow)
     .eq("question_id", question.id)
     .eq("user_jid", input.userJid)
     .select("id");
@@ -598,14 +604,14 @@ export function isSkippedResultWaMessageId(id: string | null | undefined): boole
   return String(id || "").startsWith(SKIPPED_AUTO_GABARITO_PREFIX);
 }
 
-/** Grupo: só posta gabarito se alguém errou ou marcou chute. */
+/** Grupo: posta gabarito se alguém errou, chutou ou pediu discussão. */
 export function shouldPostGroupAutoGabarito(result: {
-  wrongRespondents: { confidence?: ConfidenceLevel }[];
-  correctRespondents: { confidence?: ConfidenceLevel }[];
+  wrongRespondents: { confidence?: ConfidenceLevel; wantsDiscussion?: boolean }[];
+  correctRespondents: { confidence?: ConfidenceLevel; wantsDiscussion?: boolean }[];
 }): boolean {
   if (result.wrongRespondents.length > 0) return true;
   const all = [...result.correctRespondents, ...result.wrongRespondents];
-  return all.some((r) => r.confidence === "chute");
+  return all.some((r) => r.confidence === "chute" || r.wantsDiscussion === true);
 }
 
 export type QuestionRespondent = {
@@ -615,6 +621,7 @@ export type QuestionRespondent = {
   aiComment: string | null;
   userJid: string | null;
   confidence: ConfidenceLevel;
+  wantsDiscussion: boolean;
 };
 
 export type QuestionResult = {
@@ -685,6 +692,7 @@ export async function getQuestionResult(shortId: string): Promise<QuestionResult
   }
 
   const selects = [
+    "answer_letter, user_name, user_jid, answer_comment, ai_comment, confidence_level, wants_discussion",
     "answer_letter, user_name, user_jid, answer_comment, ai_comment, confidence_level",
     "answer_letter, user_name, user_jid, answer_comment, ai_comment",
     "answer_letter, user_name, user_jid, answer_comment"
@@ -696,6 +704,7 @@ export async function getQuestionResult(shortId: string): Promise<QuestionResult
     answer_comment?: string | null;
     ai_comment?: string | null;
     confidence_level?: string | null;
+    wants_discussion?: boolean | null;
   }[] = [];
   let lastError: string | null = null;
   for (const sel of selects) {
@@ -740,6 +749,7 @@ function finishQuestionResult(
     answer_comment?: string | null;
     ai_comment?: string | null;
     confidence_level?: string | null;
+    wants_discussion?: boolean | null;
   }[]
 ): QuestionResult {
   const distribution: Record<string, number> =
@@ -763,7 +773,8 @@ function finishQuestionResult(
       comment: split.comment,
       aiComment: split.aiComment,
       userJid: row.user_jid ? String(row.user_jid) : null,
-      confidence: parseRespondentConfidence(row.confidence_level)
+      confidence: parseRespondentConfidence(row.confidence_level),
+      wantsDiscussion: row.wants_discussion === true
     };
 
     if (letter === String(question.answer_key).toUpperCase()) {

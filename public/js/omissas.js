@@ -46,6 +46,7 @@
   let assistQty = 0;
   let userName = "";
   let currentConfidence = "seguro";
+  let wantsDiscussion = false;
   let userJid = "";
   let assistMode = false;
   let assistBusy = false;
@@ -149,6 +150,7 @@
     if (!q) return;
     if (els.comment) q.yourComment = els.comment.value || "";
     q.yourConfidence = currentConfidence;
+    q.wantsDiscussion = wantsDiscussion;
     if (selectedLetter) {
       q.yourLetter = selectedLetter;
       q.yourAnswer = selectedLetter;
@@ -180,6 +182,7 @@
       comment: q.yourComment || "",
       categoryIds: Array.isArray(q.categoryIds) ? q.categoryIds : Array.from(selectedCategoryIds),
       confidenceLevel: q.yourConfidence || "seguro",
+      wantsDiscussion: q.wantsDiscussion === true,
       durationMs: q.durationMs != null ? q.durationMs : timer.elapsed(),
       checkComplete: sessionAllAnswered()
     };
@@ -481,7 +484,33 @@
     });
   }
 
+  function syncDiscussUi() {
+    document.querySelectorAll(".btn-discuss").forEach((btn) => {
+      btn.style.background = wantsDiscussion ? "#1e293b" : "#fff";
+      btn.style.color = wantsDiscussion ? "#fff" : "#334155";
+      btn.style.border = "1px solid #cbd5e1";
+      btn.style.borderRadius = "6px";
+      btn.style.padding = "4px 10px";
+      btn.style.fontSize = "12px";
+    });
+  }
+
   document.addEventListener("click", (ev) => {
+    const discussBtn = ev.target && ev.target.closest && ev.target.closest(".btn-discuss");
+    if (discussBtn) {
+      const q = pending[index];
+      wantsDiscussion = !wantsDiscussion;
+      if (q) {
+        q.wantsDiscussion = wantsDiscussion;
+        q.dirty = true;
+        if (q.yourLetter || q.yourAnswer || selectedLetter) {
+          saveDraftForCurrent();
+          void saveAnswerInBackground(q);
+        }
+      }
+      syncDiscussUi();
+      return;
+    }
     const btn = ev.target && ev.target.closest && ev.target.closest(".btn-conf");
     if (!btn) return;
     const q = pending[index];
@@ -584,6 +613,7 @@
     els.comment.readOnly = false;
     assistMode = false;
     currentConfidence = q.yourConfidence || "seguro";
+    wantsDiscussion = q.wantsDiscussion === true || q.yourWantsDiscussion === true;
     setCatsPanelOpen(false);
     loadDraftCatsForCurrent();
     selectedLetter = String(q.yourLetter || q.yourAnswer || "").toLowerCase() || null;
@@ -613,6 +643,7 @@
     });
     const hint = document.getElementById("q-conf-hint");
     if (hint) hint.textContent = currentConfidence === "seguro" ? "(Seguro — padrão)" : "";
+    syncDiscussUi();
 
     const hello = firstName(userName);
     els.title.textContent = `Questão #${q.shortId}`;
@@ -677,6 +708,7 @@
     q.yourAnswer = letter;
     q.alreadyAnswered = true;
     q.yourConfidence = currentConfidence;
+    q.wantsDiscussion = wantsDiscussion;
     if (q.durationMs == null) q.durationMs = timer.elapsed();
     q.dirty = true;
     void saveAnswerInBackground(q);

@@ -41,5 +41,7 @@ export type AnswerInput = {
   sourceMessageId: string;
   confidenceLevel?: "seguro" | "inseguro" | "chute" | null;
   durationMs?: number | null;
+  /** Manda a correção ao grupo mesmo com acerto e sem chute. */
+  wantsDiscussion?: boolean | null;
   syncSource?: "whatsapp" | "app" | "web" | null;
 };

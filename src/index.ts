@@ -86,6 +86,7 @@ import {
   formatDiscussionCommentsTree,
   markDiscussionCommentsSharedToWa,
   getResultWaMessageIdForQuestion,
+  isSkippedResultWaMessageId,
   markAutoGabaritoSkipped,
   shouldPostGroupAutoGabarito
 } from "./supabase";
@@ -533,20 +534,21 @@ async function maybePostAutoGabaritoToGroup(sock: WASocket, rawShortId: string):
     try {
       const result = await getQuestionResult(shortUp);
       const alreadyPosted = await getResultWaMessageIdForQuestion(result.questionId, groupJid);
-      if (alreadyPosted) {
+      if (alreadyPosted && !isSkippedResultWaMessageId(alreadyPosted)) {
         autoGabaritoPostedQuestionIds.add(shortUp);
         return;
       }
 
       if (!shouldPostGroupAutoGabarito(result)) {
-        await markAutoGabaritoSkipped({
-          questionId: result.questionId,
-          shortId: result.shortId,
-          groupJid
-        });
-        autoGabaritoPostedQuestionIds.add(shortUp);
+        if (!alreadyPosted) {
+          await markAutoGabaritoSkipped({
+            questionId: result.questionId,
+            shortId: result.shortId,
+            groupJid
+          });
+        }
         console.log(
-          `[auto-gabarito] #${shortUp} omitido no grupo (todos acertaram, nenhum chute).`
+          `[auto-gabarito] #${shortUp} omitido no grupo (todos acertaram, sem chute nem discussão).`
         );
         return;
       }

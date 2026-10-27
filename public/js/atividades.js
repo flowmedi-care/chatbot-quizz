@@ -28,6 +28,7 @@
   let weekData = null;
   let monthData = null;
   let currentConfidence = "seguro";
+  let wantsDiscussion = false;
   let questionOpenedAt = 0;
 
   // quiz state
@@ -117,7 +118,33 @@
     if (hint) hint.textContent = currentConfidence === "seguro" ? "(Seguro — padrão)" : "";
   }
 
+  function syncDiscussUi() {
+    document.querySelectorAll(".btn-discuss").forEach((btn) => {
+      btn.style.background = wantsDiscussion ? "#1e293b" : "#fff";
+      btn.style.color = wantsDiscussion ? "#fff" : "#334155";
+      btn.style.border = "1px solid #cbd5e1";
+      btn.style.borderRadius = "6px";
+      btn.style.padding = "4px 10px";
+      btn.style.fontSize = "12px";
+    });
+  }
+
   document.addEventListener("click", (ev) => {
+    const discussBtn = ev.target && ev.target.closest && ev.target.closest(".btn-discuss");
+    if (discussBtn) {
+      const q = pending[index];
+      wantsDiscussion = !wantsDiscussion;
+      if (q) {
+        q.wantsDiscussion = wantsDiscussion;
+        q.dirty = true;
+        if (q.yourLetter || q.yourAnswer || selectedLetter) {
+          saveDraftForCurrent();
+          void saveAnswerInBackground(q);
+        }
+      }
+      syncDiscussUi();
+      return;
+    }
     const btn = ev.target && ev.target.closest && ev.target.closest(".btn-conf");
     if (!btn) return;
     const q = pending[index];
@@ -329,6 +356,7 @@
     const commentEl = $("q-comment");
     if (commentEl) q.yourComment = commentEl.value || "";
     q.yourConfidence = currentConfidence;
+    q.wantsDiscussion = wantsDiscussion;
     if (selectedLetter) {
       q.yourLetter = selectedLetter;
       q.yourAnswer = selectedLetter;
@@ -361,6 +389,7 @@
       comment: q.yourComment || "",
       categoryIds: Array.isArray(q.categoryIds) ? q.categoryIds : Array.from(selectedCategoryIds),
       confidenceLevel: q.yourConfidence || "seguro",
+      wantsDiscussion: q.wantsDiscussion === true,
       durationMs: q.durationMs != null ? q.durationMs : timer.elapsed(),
       checkComplete: sessionAllAnswered()
     };
@@ -1011,8 +1040,10 @@
     commentEl.value = q.yourComment || "";
     commentEl.readOnly = false;
     currentConfidence = q.yourConfidence || "seguro";
+    wantsDiscussion = q.wantsDiscussion === true || q.yourWantsDiscussion === true;
     questionOpenedAt = Date.now();
     syncConfidenceUi();
+    syncDiscussUi();
     assistMode = false;
     setCatsPanelOpen(false);
     loadDraftCatsForCurrent();
@@ -1097,6 +1128,7 @@
     q.yourAnswer = letter;
     q.alreadyAnswered = true;
     q.yourConfidence = currentConfidence;
+    q.wantsDiscussion = wantsDiscussion;
     if (q.durationMs == null) q.durationMs = timer.elapsed();
     q.dirty = true;
     void saveAnswerInBackground(q);

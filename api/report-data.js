@@ -64,7 +64,8 @@ module.exports = async (req, res) => {
     let answersRaw = [];
     if (questionIds.length) {
       const answerSelects = [
-        "id, question_id, question_short_id, user_jid, user_name, answer_letter, answer_comment, ai_comment, confidence_level, created_at, sent_at",
+        "id, question_id, question_short_id, user_jid, user_name, answer_letter, answer_comment, ai_comment, confidence_level, duration_ms, wants_discussion, created_at, sent_at",
+        "id, question_id, question_short_id, user_jid, user_name, answer_letter, answer_comment, ai_comment, confidence_level, duration_ms, created_at, sent_at",
         "id, question_id, question_short_id, user_jid, user_name, answer_letter, answer_comment, ai_comment, created_at, sent_at",
         "id, question_id, question_short_id, user_jid, user_name, answer_letter, answer_comment, ai_comment, created_at"
       ];
@@ -198,6 +199,9 @@ module.exports = async (req, res) => {
         answerComment: split.comment,
         answerAiComment: split.aiComment,
         confidenceLevel: parseConfidenceLevel(row.confidence_level),
+        durationMs:
+          row.duration_ms != null && Number(row.duration_ms) > 0 ? Number(row.duration_ms) : null,
+        wantsDiscussion: row.wants_discussion === true,
         correct,
         categories: categoriesByAnswer.get(answerId) || [],
         answeredAt: row.sent_at || row.created_at || null,

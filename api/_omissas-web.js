@@ -115,7 +115,7 @@ async function fetchUserAnswersForShortIds(supabase, userJid, shortIds) {
   let data;
   const first = await supabase
     .from("answers")
-    .select("id, question_short_id, answer_letter, answer_comment, ai_comment, user_jid, confidence_level, duration_ms")
+    .select("id, question_short_id, answer_letter, answer_comment, ai_comment, user_jid, confidence_level, duration_ms, wants_discussion")
     .in("question_short_id", shortIds);
   if (first.error && /column/i.test(first.error.message || "")) {
     const retry = await supabase
@@ -139,6 +139,7 @@ async function fetchUserAnswersForShortIds(supabase, userJid, shortIds) {
       comment: split.comment,
       aiComment: split.aiComment,
       confidence: row.confidence_level != null ? String(row.confidence_level) : null,
+      wantsDiscussion: row.wants_discussion === true,
       durationMs:
         row.duration_ms != null && Number(row.duration_ms) > 0 ? Number(row.duration_ms) : null
     });
@@ -208,6 +209,7 @@ async function upsertAnswer(supabase, input) {
     source_message_id: `web:${crypto.randomBytes(8).toString("hex")}`,
     sent_at: new Date().toISOString(),
     confidence_level: input.confidenceLevel || null,
+    wants_discussion: input.wantsDiscussion === true,
     duration_ms:
       existing?.duration_ms != null && Number(existing.duration_ms) > 0
         ? Number(existing.duration_ms)
@@ -221,6 +223,7 @@ async function upsertAnswer(supabase, input) {
     const s = { ...row };
     delete s.confidence_level;
     delete s.duration_ms;
+    delete s.wants_discussion;
     delete s.sync_source;
     return s;
   }
@@ -429,6 +432,7 @@ async function handleOmissasSession(req, res) {
         options: optionsByQid.get(Number(q.id)) || [],
         alreadyAnswered: Boolean(ans),
         yourConfidence: ans && ans.confidence ? ans.confidence : null,
+        yourWantsDiscussion: Boolean(ans && ans.wantsDiscussion),
         yourLetter,
         yourComment: ans ? ans.comment : null,
         yourAiComment: ans ? ans.aiComment : null,
@@ -482,6 +486,7 @@ async function handleOmissasAnswer(req, res) {
   const confidenceLevel = ["seguro", "inseguro", "chute"].includes(String(body.confidenceLevel || "").toLowerCase())
     ? String(body.confidenceLevel).toLowerCase()
     : "seguro";
+  const wantsDiscussion = body.wantsDiscussion === true || body.wants_discussion === true;
   const { capDurationMs } = require("./_study-sync.js");
   const durationMs = capDurationMs(body.durationMs);
 
@@ -521,6 +526,7 @@ async function handleOmissasAnswer(req, res) {
         creatorJid: q.creator_jid,
         confidenceLevel,
         durationMs,
+        wantsDiscussion,
         syncSource: "web"
       });
     } catch (e) {

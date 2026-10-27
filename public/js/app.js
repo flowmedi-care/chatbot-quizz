@@ -1298,6 +1298,104 @@
     }
   }
 
+  function formatBrDate(iso) {
+    const m = String(iso || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (!m) return iso ? String(iso) : "";
+    return `${m[3]}/${m[2]}/${m[1]}`;
+  }
+
+  function formatDurationMs(ms) {
+    const n = Number(ms);
+    if (!Number.isFinite(n) || n <= 0) return "—";
+    const sec = Math.round(n / 1000);
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    if (m >= 60) {
+      const h = Math.floor(m / 60);
+      return `${h}h ${String(m % 60).padStart(2, "0")}min`;
+    }
+    if (m > 0) return `${m}min ${String(s).padStart(2, "0")}s`;
+    return `${s}s`;
+  }
+
+  function formatConfidenceLabel(level) {
+    if (level === "chute") return "Chute";
+    if (level === "inseguro") return "Inseguro";
+    return "Seguro";
+  }
+
+  function formatAnsweredAt(value) {
+    if (!value) return "—";
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return "—";
+    try {
+      return new Intl.DateTimeFormat("pt-BR", {
+        timeZone: REPORT_TZ,
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit"
+      }).format(d);
+    } catch {
+      return String(value);
+    }
+  }
+
+  function categoryRuleLabel(key, scopeJid) {
+    if (key === "__all__") return "Todas";
+    if (key === "__none__") return "Sem categorias";
+    const id = Number(key);
+    const catalog = scopeJid && scopeJid !== "__all__" ? categoriesForScope(scopeJid) : [];
+    const hit = catalog.find((c) => Number(c.id) === id);
+    return hit ? hit.name : `Categoria #${key}`;
+  }
+
+  function describeReportFilters(scopeJid) {
+    const lines = ["## Filtros usados", ""];
+    const person =
+      scopeJid === "__all__"
+        ? "Todos os participantes (consolidado)"
+        : nomeParticipante(scopeJid);
+    lines.push(`- **Participante:** ${mdCell(person)}`);
+    const cadOpt = els.reportCaderno && els.reportCaderno.selectedOptions[0];
+    lines.push(`- **Caderno:** ${mdCell(cadOpt ? cadOpt.textContent.trim() : "Todos")}`);
+    const from = els.reportDateFrom && els.reportDateFrom.value;
+    const to = els.reportDateTo && els.reportDateTo.value;
+    lines.push(`- **Data de:** ${from ? formatBrDate(from) : "sem filtro"}`);
+    lines.push(`- **Data até:** ${to ? formatBrDate(to) : "sem filtro"}`);
+    const qFrom = els.reportQidFrom && els.reportQidFrom.value.trim();
+    const qTo = els.reportQidTo && els.reportQidTo.value.trim();
+    lines.push(`- **Questão de (#):** ${qFrom ? mdCell(qFrom) : "sem filtro"}`);
+    lines.push(`- **Questão até (#):** ${qTo ? mdCell(qTo) : "sem filtro"}`);
+    const outcomeLabels = {
+      all: "Todas",
+      correct: "Certas",
+      wrong: "Erradas",
+      unanswered: "Sem resposta"
+    };
+    const outcome = els.reportOutcome ? els.reportOutcome.value : "all";
+    lines.push(`- **Resultado:** ${outcomeLabels[outcome] || outcome}`);
+    if (scopeJid === "__all__" && outcome !== "all") {
+      lines.push("- Resultado por acerto/erro só entra quando o relatório é de uma pessoa.");
+    }
+    if (!reportCategoryRules.length) {
+      lines.push("- **Categorias:** nenhuma regra");
+    } else {
+      lines.push("- **Categorias:**");
+      for (const rule of reportCategoryRules) {
+        const mode = rule.mode === "incremental" ? "incremental (OR)" : "filtro (AND)";
+        lines.push(`  - ${mdCell(categoryRuleLabel(rule.key, scopeJid))} — ${mode}`);
+      }
+    }
+    const withDiscussions = Boolean(
+      els.reportIncludeDiscussions && els.reportIncludeDiscussions.checked
+    );
+    lines.push(`- **Discussões no arquivo:** ${withDiscussions ? "sim" : "não"}`);
+    lines.push("");
+    return lines;
+  }
+
   async function buildReportZip(scopeJid) {
     await ensureJSZip();
 
@@ -1317,8 +1415,9 @@
     lines.push("");
     lines.push(`> Gerado em: ${stamp}`);
     lines.push(`> Escopo: ${scopeJid === "__all__" ? "Todos os participantes (consolidado)" : nomeParticipante(scopeJid)}`);
-    lines.push(`> Filtros: ${qs.length} de ${qsAll.length} questão(ões)`);
+    lines.push(`> Questões neste arquivo: ${qs.length} de ${qsAll.length}`);
     lines.push("");
+    lines.push(...describeReportFilters(scopeJid));
     lines.push(
       "Este relatório usa respostas gravadas na tabela `answers` (WhatsApp, omissas/site e app de estudo, quando a identidade foi salva). Comentário da resposta entra em Discussões se não houver o mesmo texto na thread."
     );
@@ -1361,6 +1460,7 @@
       if (q.tecQuestionId) lines.push(`- **TEC id:** ${mdCell(q.tecQuestionId)}`);
       if (q.banca) lines.push(`- **Banca:** ${mdCell(q.banca)}`);
       if (q.subject) lines.push(`- **Matéria:** ${mdCell(q.subject)}`);
+      if (q.publishedDay) lines.push(`- **Publicada em:** ${formatBrDate(q.publishedDay)}`);
       if (q.tecUrl) lines.push(`- **URL TEC:** ${q.tecUrl}`);
       lines.push("");
 
@@ -1432,8 +1532,10 @@
       if (scopeJid === "__all__") {
         lines.push("### Respostas");
         lines.push("");
-        lines.push("| Participante | Marcou | Gabarito | Resultado | Confiança | Comentário | Categorias |");
-        lines.push("| --- | --- | --- | --- | --- | --- | --- |");
+        lines.push(
+          "| Participante | Marcou | Gabarito | Resultado | Confiança | Tempo | Respondida em | Discutir | Comentário | Categorias |"
+        );
+        lines.push("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |");
         const rowsForTable = mergedParticipants()
           .map((p) => {
             const row = pickAnswerForScope(answersHere, p.userJid);
@@ -1442,18 +1544,18 @@
           .filter(Boolean)
           .sort((a, b) => a.userName.localeCompare(b.userName, "pt-BR"));
         if (!rowsForTable.length) {
-          lines.push("| — | — | — | Nenhuma resposta registrada | — | — | — |");
+          lines.push("| — | — | — | Nenhuma resposta registrada | — | — | — | — | — | — |");
         } else {
           for (const row of rowsForTable) {
             const commentCell = row.answerComment ? mdCell(row.answerComment) : "—";
             const aiCell = row.answerAiComment ? mdCell(row.answerAiComment) : "";
-            const confCell = mdCell(row.confidenceLevel || "seguro");
+            const confCell = mdCell(formatConfidenceLabel(row.confidenceLevel));
             const catsCell =
               Array.isArray(row.categories) && row.categories.length
                 ? mdCell(row.categories.map((c) => c.name).join(", "))
                 : "—";
             lines.push(
-              `| ${mdCell(row.userName)} | ${formatMarcada(row.answerLetterDisplay, q)} | ${formatGabarito(q)} | ${row.correct ? "Certo" : "Errado"} | ${confCell} | ${commentCell}${aiCell ? ` / IA: ${aiCell}` : ""} | ${catsCell} |`
+              `| ${mdCell(row.userName)} | ${formatMarcada(row.answerLetterDisplay, q)} | ${formatGabarito(q)} | ${row.correct ? "Certo" : "Errado"} | ${confCell} | ${formatDurationMs(row.durationMs)} | ${formatAnsweredAt(row.answeredAt)} | ${row.wantsDiscussion ? "sim" : "não"} | ${commentCell}${aiCell ? ` / IA: ${aiCell}` : ""} | ${catsCell} |`
             );
           }
         }
@@ -1466,7 +1568,10 @@
           lines.push("*Sem resposta registrada para esta questão.*");
         } else {
           lines.push(`- **Marcou:** ${formatMarcada(row.answerLetterDisplay, q)}`);
-          lines.push(`- **Confiança:** ${row.confidenceLevel || "seguro"}`);
+          lines.push(`- **Confiança:** ${formatConfidenceLabel(row.confidenceLevel)}`);
+          lines.push(`- **Tempo:** ${formatDurationMs(row.durationMs)}`);
+          lines.push(`- **Respondida em:** ${formatAnsweredAt(row.answeredAt)}`);
+          lines.push(`- **Discutir no grupo:** ${row.wantsDiscussion ? "sim" : "não"}`);
           if (row.answerComment) {
             lines.push(`- **Comentário:** ${row.answerComment}`);
           }
