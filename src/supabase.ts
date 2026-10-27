@@ -3722,6 +3722,48 @@ export type ListOmissasOptions = {
   includeAtrasadas?: boolean;
 };
 
+type OmissasQuestionRow = {
+  id: number;
+  short_id: string | null;
+  creator_jid: string | null;
+  created_at: string | null;
+  omissa_day_iso?: string | null;
+};
+
+/** Todas as questões do grupo. PostgREST corta em 1000; sem paginar o bônus de omissas mente. */
+async function fetchGroupQuestionsForOmissas(groupJid: string): Promise<OmissasQuestionRow[]> {
+  const pageSize = 1000;
+  const selectWith = "id, short_id, creator_jid, created_at, omissa_day_iso";
+  const selectWithout = "id, short_id, creator_jid, created_at";
+  let select = selectWith;
+  const all: OmissasQuestionRow[] = [];
+  let from = 0;
+  for (;;) {
+    const { data, error } = await supabase
+      .from("questions")
+      .select(select)
+      .eq("target_group_jid", groupJid)
+      .order("id", { ascending: true })
+      .range(from, from + pageSize - 1);
+    if (error) {
+      if (
+        select === selectWith &&
+        String(error.message || "").toLowerCase().includes("omissa_day_iso")
+      ) {
+        select = selectWithout;
+        continue;
+      }
+      throw new Error(`Erro ao listar questoes: ${error.message}`);
+    }
+    const rows = (data ?? []) as unknown as OmissasQuestionRow[];
+    all.push(...rows);
+    if (rows.length < pageSize) break;
+    from += pageSize;
+    if (from > 200000) break;
+  }
+  return all;
+}
+
 /**
  * Questões em aberto do usuário, separadas em “do dia” vs atrasadas.
  * Streak / bônus de zerar / miss eval usam só `today`.
@@ -3745,52 +3787,10 @@ export async function listUnansweredOmissasForUser(
   const pubDayByQuestionId = ctx.pubDayEconomyByQuestionId;
   const unreleasedPlannedDay = ctx.queue.unreleasedPlannedDayByQuestionId;
 
-  const { data: questions, error: qErr } = await supabase
-    .from("questions")
-    .select("id, short_id, creator_jid, created_at, omissa_day_iso")
-    .eq("target_group_jid", groupJid)
-    .order("created_at", { ascending: false })
-    .limit(400);
-
-  if (qErr) {
-    // Coluna nova pode não existir ainda — fallback sem omissa_day_iso.
-    if (String(qErr.message || "").toLowerCase().includes("omissa_day_iso")) {
-      const retry = await supabase
-        .from("questions")
-        .select("id, short_id, creator_jid, created_at")
-        .eq("target_group_jid", groupJid)
-        .order("created_at", { ascending: false })
-        .limit(400);
-      if (retry.error) {
-        throw new Error(`Erro ao listar questoes: ${retry.error.message}`);
-      }
-      return listUnansweredOmissasForUserFromRows(
-        userJid,
-        groupJid,
-        opts,
-        dayIso,
-        todayLimit,
-        atrasadasLimit,
-        includeAtrasadas,
-        (retry.data ?? []) as {
-          id: number;
-          short_id: string | null;
-          creator_jid: string | null;
-          created_at: string | null;
-          omissa_day_iso?: string | null;
-        }[],
-        pubDayByQuestionId,
-        unreleasedPlannedDay,
-        engagedCadernoIds,
-        ctx.passiveTodayDbIds,
-        ctx.engagedRestrictedCadernos,
-        ctx.engagedSinceAllowedDbIds,
-        ctx.visibleCadernoQuestionIds,
-        ctx.cadernos.globallyEngaged
-      );
-    }
-    throw new Error(`Erro ao listar questoes: ${qErr.message}`);
-  }
+  // Pagina o grupo inteiro. O corte nas 400 mais novas por created_at
+  // deixava de fora questão de caderno criada antes (adiantada/órfã) e
+  // publicada hoje — a lista vinha vazia e o bônus de “zerou” disparava.
+  const questions = await fetchGroupQuestionsForOmissas(groupJid);
 
   return listUnansweredOmissasForUserFromRows(
     userJid,
@@ -3855,9 +3855,11 @@ async function listUnansweredOmissasForUserFromRows(
       continue;
     }
 
-    // Adiantadas ainda não liberadas: não entram em /omissas nem /atrasadas.
+    // Reserva futura ainda não publicada: não é omissa.
+    // Questão já publicada conta mesmo se a fila ficou com dia futuro.
     const plannedFuture = unreleasedPlannedDay.get(qid);
-    if (plannedFuture && plannedFuture > dayIso) {
+    const publishedDay = pubDayByQuestionId.get(qid);
+    if (plannedFuture && plannedFuture > dayIso && !(publishedDay && publishedDay <= dayIso)) {
       continue;
     }
 

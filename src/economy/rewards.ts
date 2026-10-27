@@ -270,9 +270,14 @@ async function maybeFirstOmissasClear(
 ): Promise<void> {
     // First to zero today's omissas opens a 1h window; anyone who clears within it also gets the bonus.
   try {
-    const { listUnansweredShortIdsForUser } = await import("../supabase");
-    const open = await listUnansweredShortIdsForUser(userJid, groupJid, 50);
-    if (open.length > 0) return;
+    const { listUnansweredOmissasForUser } = await import("../supabase");
+    const buckets = await listUnansweredOmissasForUser(userJid, groupJid, {
+      todayLimit: 1,
+      atrasadasLimit: 0,
+      includeAtrasadas: false
+    });
+    // Lista vazia sem questão do dia não é “zerou” — evita aura à toa.
+    if (buckets.dueOnDayCount === 0 || buckets.openOnDayCount > 0) return;
 
     const day = todayIso();
     const aura = REWARDS.firstOmissasClear.aura;

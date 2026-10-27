@@ -85,7 +85,7 @@ async function runMissEval(sock: WASocket, groupJid: string): Promise<void> {
           includeAtrasadas: false
         });
         row.hadDueYesterday = buckets.dueOnDayCount > 0;
-        row.completedYesterday = buckets.openOnDayCount === 0;
+        row.completedYesterday = buckets.dueOnDayCount > 0 && buckets.openOnDayCount === 0;
         const { data: ans } = await economyDb()
           .from("economy_ledger")
           .select("id")

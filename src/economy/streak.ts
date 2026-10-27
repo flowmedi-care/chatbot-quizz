@@ -104,8 +104,8 @@ export async function markStreakDayComplete(input: {
     .update({ milestones_claimed: [...milestones], updated_at: new Date().toISOString() })
     .eq("user_jid", input.userJid);
 
-  const isMilestone = MILESTONES.includes(nextCurrent) || (nextCurrent > 30 && nextCurrent > bestBefore);
-  if (isMilestone && nextCurrent >= bestBefore && input.groupJid) {
+  const hitRecordStep = nextCurrent > bestBefore && nextCurrent > 0 && nextCurrent % 10 === 0;
+  if (hitRecordStep && input.groupJid) {
     const ok = await tryGroupAnnounceOnce({
       groupJid: input.groupJid,
       dayIso: input.dayIso,

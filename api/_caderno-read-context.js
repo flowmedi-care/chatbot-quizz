@@ -508,7 +508,8 @@ async function listUnansweredOmissasForUser(supabase, userJid, groupJid, opts = 
     if (creatorJid && jidKey(creatorJid) === jidKey(userJid)) continue;
 
     const plannedFuture = ctx.queue.unreleasedPlannedDayByQuestionId.get(qid);
-    if (plannedFuture && plannedFuture > dayIso) continue;
+    const publishedDay = ctx.pubDayEconomyByQuestionId.get(qid);
+    if (plannedFuture && plannedFuture > dayIso && !(publishedDay && publishedDay <= dayIso)) continue;
 
     if (isBotCreatorJid(creatorJid)) {
       const cadernoId = parseCadernoIdFromCreatorJid(creatorJid);

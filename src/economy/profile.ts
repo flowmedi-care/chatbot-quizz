@@ -213,43 +213,36 @@ export async function buildAurasBoardText(limit = 40): Promise<string> {
   return lines.join("\n");
 }
 
+async function buildActiveCadernoPercentLines(groupJid: string): Promise<string[]> {
+  if (!groupJid) return [];
+  const { listActiveGroupCadernos, getCadernoProgress } = await import("../supabase");
+  const cadernos = await listActiveGroupCadernos(groupJid);
+  const lines: string[] = [];
+  for (const c of cadernos) {
+    const progress = await getCadernoProgress(c.id);
+    const total = progress?.totalQuestions ?? 0;
+    const resolved = !progress
+      ? 0
+      : progress.engagedCount > 0
+        ? progress.resolvedByEngaged
+        : progress.withAnyAnswer;
+    const pct = total === 0 ? 0 : Math.round((resolved / total) * 100);
+    lines.push(`#${c.id} ${c.name} · ${pct}% resolvido`);
+  }
+  return lines;
+}
+
 export async function buildDiarioOficialDigest(input: {
   dayIso: string;
-  cadernoLines: string[];
   groupJid: string;
 }): Promise<string> {
-  const db = economyDb();
-  const { data: ecos } = await db
-    .from("user_economy")
-    .select("user_jid, display_name, aura, active_title")
-    .order("aura", { ascending: false })
-    .limit(25);
-  const jids = (ecos || []).map((e) => e.user_jid);
-  const { data: streaks } = jids.length
-    ? await db.from("user_streak").select("user_jid, current_streak").in("user_jid", jids)
-    : { data: [] as { user_jid: string; current_streak: number }[] };
-  const streakMap = new Map((streaks || []).map((s) => [s.user_jid, s.current_streak]));
-
+  const cadernoLines = await buildActiveCadernoPercentLines(input.groupJid);
   const lines = [
     "📰 Diário Oficial do Papa Vagas",
     input.dayIso.split("-").reverse().join("/"),
     "",
-    ...(input.cadernoLines.length ? input.cadernoLines : ["Sem cadernos ativos."]),
-    "",
-    "⏱️ Corte 15h: questão avulsa ou destravar caderno depois disso entram nas omissas de amanhã.",
-    "",
-    "🏛️ Quadro do dia"
+    ...(cadernoLines.length ? cadernoLines : ["Nenhum caderno ativo."])
   ];
-
-  for (const e of ecos || []) {
-    if (String(e.user_jid || "").startsWith("caderno:")) continue;
-    const auraInfo = getAuraLevel(e.aura);
-    const st = streakMap.get(e.user_jid) || 0;
-    const name = friendlyEconomyLabel(null, e.display_name, e.user_jid);
-    lines.push(`✨ ${name} — Aura ${e.aura} (${auraInfo.shortLabel}) · 🔥 ${st}`);
-  }
-
-  lines.push("", "/omissas · /atrasadas · /aura · /auras · /ranking");
   return lines.join("\n");
 }
 

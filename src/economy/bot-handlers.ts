@@ -34,7 +34,7 @@ import {
   type RewardSideEffects
 } from "./index";
 import {
-  listUnansweredShortIdsForUser,
+  listUnansweredOmissasForUser,
   listUnprocessedBotPendingEvents,
   markBotPendingEventProcessed,
   getCadernoIdForQuestion,
@@ -330,8 +330,12 @@ export async function processEconomyAfterAnswer(
     // Streak: se zerou omissas de hoje, marca dia
     const gj = input.groupJid || quizGroupJid();
     if (gj) {
-      const open = await listUnansweredShortIdsForUser(input.userJid, gj, 50);
-      if (open.length === 0) {
+      const buckets = await listUnansweredOmissasForUser(input.userJid, gj, {
+        todayLimit: 1,
+        atrasadasLimit: 0,
+        includeAtrasadas: false
+      });
+      if (buckets.dueOnDayCount > 0 && buckets.openOnDayCount === 0) {
         const streakFx = await markStreakDayComplete({
           userJid: input.userJid,
           userName: input.userName,
@@ -458,7 +462,6 @@ export async function handleEconomyCommand(
   if (cmd.kind === "diario") {
     const text = await buildDiarioOficialDigest({
       dayIso: todayIso(),
-      cadernoLines: ["(Use o digest do grupo pela manhã para cadernos do dia.)"],
       groupJid: groupJid || ""
     });
     await sock.sendMessage(remoteJid, { text });

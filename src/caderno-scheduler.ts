@@ -14,13 +14,11 @@ import {
   effectivePrivateRecipientSchedule,
   getEngagedDisplayNameForUser,
   getCadernoById,
-  getCadernoProgress,
   getCadernoQuestionById,
   getCadernoSendQueueItem,
   isCadernoDayCompleteForEngaged,
   isPrivateRecipientDayComplete,
   listActiveGroupCadernos,
-  listCadernoQuestionsPublishedOnDate,
   listCadernosDueForRun,
   listNextCadernoQuestionsToSend,
   listNextPrivateCadernoQuestionsToSend,
@@ -859,52 +857,13 @@ function earliestDigestGateUtc(cadernos: CadernoRow[], dayIso: string, tz: strin
   return resolveDailySlotUtc(dayIso, 0, tz, fallbackSlots);
 }
 
-async function buildGroupDailyDigestText(
-  groupJid: string,
-  dayIso: string,
-  cadernos: CadernoRow[]
-): Promise<string> {
-  const cadernoLines: string[] = [];
-
-  let totalToday = 0;
-  let totalPlanned = 0;
-
-  for (const c of cadernos) {
-    const progress = await getCadernoProgress(c.id);
-    const publishedToday = await listCadernoQuestionsPublishedOnDate(
-      c.id,
-      dayIso,
-      c.timezone || DEFAULT_TZ
-    );
-    const shortIds: string[] = [];
-    for (const p of publishedToday) {
-      const sid = await getQuestionShortIdByDbId(p.publishedQuestionId);
-      if (sid) shortIds.push(`#${sid}`);
-    }
-    totalToday += publishedToday.length;
-    totalPlanned += Math.max(1, c.questionsPerDay);
-
-    const bits = [`Cadernos: #${c.id} ${c.name}`];
-    if (shortIds.length > 0) bits.push(`${shortIds.length} questões hoje (${shortIds.join(", ")})`);
-    else bits.push(`até ${c.questionsPerDay}/dia`);
-    cadernoLines.push(bits.join(" · "));
-    void progress;
-  }
-
-  cadernoLines.push("Enunciados: /omissas");
-  cadernoLines.push(
-    `Corte ${OMISSAS_SCHEDULE.cutoffHour}h: questão avulsa / destravar depois disso → omissas de amanhã.`
-  );
-  if (totalToday || totalPlanned) {
-    cadernoLines.push(`Total liberado hoje: ${totalToday} (planejado ~${totalPlanned}).`);
-  }
-
+async function buildGroupDailyDigestText(groupJid: string, dayIso: string): Promise<string> {
   try {
     const { buildDiarioOficialDigest } = await import("./economy/profile");
-    return await buildDiarioOficialDigest({ dayIso, cadernoLines, groupJid });
+    return await buildDiarioOficialDigest({ dayIso, groupJid });
   } catch (e) {
     console.warn("[caderno-scheduler] diario oficial economy:", (e as Error).message);
-    return ["📰 Diário Oficial do Papa Vagas", dayIso, "", ...cadernoLines].join("\n");
+    return ["📰 Diário Oficial do Papa Vagas", dayIso].join("\n");
   }
 }
 
@@ -939,7 +898,7 @@ async function maybeSendGroupDailyDigest(sock: WASocket): Promise<void> {
   if (!recorded) return;
 
   try {
-    const text = await buildGroupDailyDigestText(groupJid, dayIso, cadernos);
+    const text = await buildGroupDailyDigestText(groupJid, dayIso);
     await sock.sendMessage(groupJid, { text });
     console.log(`[caderno-scheduler] digest diario enviado para ${groupJid} (${dayIso})`);
   } catch (e) {
