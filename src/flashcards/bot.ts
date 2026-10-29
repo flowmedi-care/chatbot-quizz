@@ -43,6 +43,7 @@ const awaitingRatingByJid = new Map<
 let pollTimer: NodeJS.Timeout | null = null;
 let baseCfg: FlashcardsBaseConfig | null = null;
 const lastMorningIsoDateByJid = new Map<string, string>();
+const lastEventsMorningIsoDateByJid = new Map<string, string>();
 
 function normalizeInboundText(text: string): string {
   return text.trim().toLowerCase().normalize("NFD").replace(/\p{M}/gu, "");
@@ -218,7 +219,9 @@ async function runMorningReminderForUser(
   const today = dateIsoInTimezone(new Date(), tz);
   const startHour = settings.start_hour != null ? Number(settings.start_hour) : 7;
   if (hourInTimezone(tz) !== startHour) return;
-  if (lastMorningIsoDateByJid.get(targetJid) === today) return;
+  const cardsDone = lastMorningIsoDateByJid.get(targetJid) === today;
+  const eventsDone = lastEventsMorningIsoDateByJid.get(targetJid) === today;
+  if (cardsDone && eventsDone) return;
 
   const resolved = resolveTargetJid(settings);
   if (resolved && resolved !== targetJid) return;
@@ -230,6 +233,23 @@ async function runMorningReminderForUser(
     console.warn(`[flashcards] pending ${targetJid}:`, (e as Error).message);
     return;
   }
+
+  const eventsText = pending.events_message?.trim() ?? "";
+  if (!eventsDone) {
+    if (!eventsText) {
+      lastEventsMorningIsoDateByJid.set(targetJid, today);
+    } else {
+      try {
+        await sock.sendMessage(targetJid, { text: eventsText });
+        lastEventsMorningIsoDateByJid.set(targetJid, today);
+        console.log(`[flashcards] eventos do dia -> ${targetJid}`);
+      } catch (e) {
+        console.error(`[flashcards] eventos ${targetJid}:`, (e as Error).message);
+      }
+    }
+  }
+
+  if (cardsDone) return;
 
   if (!pending.should_remind) {
     lastMorningIsoDateByJid.set(targetJid, today);
@@ -527,4 +547,5 @@ export function stopFlashcardsBot(): void {
   }
   baseCfg = null;
   lastMorningIsoDateByJid.clear();
+  lastEventsMorningIsoDateByJid.clear();
 }

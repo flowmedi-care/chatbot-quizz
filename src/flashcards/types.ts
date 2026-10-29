@@ -15,6 +15,8 @@ export type FlashcardPendingResponse = {
   should_remind: boolean;
   message_template?: string;
   card_ids?: string[];
+  events_should_remind?: boolean;
+  events_message?: string | null;
 };
 
 export type FlashcardSession = {
